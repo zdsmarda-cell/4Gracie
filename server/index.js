@@ -89,7 +89,7 @@ const getDb = async () => {
       connectionLimit: 10,
       queueLimit: 0,
       connectTimeout: 10000,
-      ssl: { rejectUnauthorized: false }
+      // SSL removed as server does not support it (HANDSHAKE_NO_SSL_SUPPORT)
     });
     
     // Explicitly test connection to capture error immediately
