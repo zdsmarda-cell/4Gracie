@@ -287,29 +287,19 @@ const withDb = (handler) => async (req, res) => {
   }
 };
 
-// --- AUTH EMAIL ENDPOINT ---
+// --- AUTH ENDPOINTS ---
+
 app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
   const { email } = req.body;
-  
-  // 1. Check if user exists
   const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
-  
   if (rows.length === 0) {
-    // Security: Don't reveal if user exists, but success=true so frontend shows "If account exists, email sent"
     return res.json({ success: true, message: 'Pokud je email registrován, instrukce byly odeslány.' });
   }
-
-  // 2. Generate Link
-  // Note: For simplicity in this project, we create a basic base64 token containing email and expiry.
-  // In a highly secure system, store a random token in DB.
   const tokenPayload = JSON.stringify({ email, exp: Date.now() + 3600000 }); // 1 hour expiry
   const token = Buffer.from(tokenPayload).toString('base64');
-  
-  // Determine frontend origin (handle dev localhost vs production)
   const origin = req.get('origin') || (req.protocol + '://' + req.get('host'));
   const link = `${origin}/#/reset-password?token=${token}`;
 
-  // 3. Send Email
   if (transporter) {
     const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
@@ -332,6 +322,45 @@ app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
   } else {
     res.json({ success: false, message: 'Chyba serveru: Emailová služba není nakonfigurována.' });
   }
+}));
+
+app.post('/api/auth/reset-password-confirm', withDb(async (req, res, db) => {
+    const { token, newPasswordHash } = req.body;
+    
+    if (!token || !newPasswordHash) {
+        return res.status(400).json({ success: false, message: 'Chybějící údaje.' });
+    }
+
+    try {
+        const decodedString = Buffer.from(token, 'base64').toString('ascii');
+        const payload = JSON.parse(decodedString);
+        
+        if (payload.exp < Date.now()) {
+            return res.json({ success: false, message: 'Platnost odkazu vypršela.' });
+        }
+
+        const email = payload.email;
+        const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+        
+        if (rows.length === 0) {
+            return res.json({ success: false, message: 'Uživatel nenalezen.' });
+        }
+
+        // Update password hash inside the JSON data AND update the users record
+        // Note: In this architecture, passwordHash is inside the JSON blob 'data', 
+        // but we might want to store it separately or ensure JSON update is correct.
+        // The table has: id, email, role, data (JSON).
+        // We need to fetch the existing data, update the hash, and save back.
+        
+        // Use JSON_SET for efficient atomic update
+        await db.query(`UPDATE users SET data=JSON_SET(data, '$.passwordHash', ?) WHERE email=?`, [newPasswordHash, email]);
+        
+        res.json({ success: true, message: 'Heslo bylo úspěšně změněno. Nyní se můžete přihlásit.' });
+
+    } catch (e) {
+        console.error('Reset Confirm Error:', e);
+        res.status(400).json({ success: false, message: 'Neplatný token.' });
+    }
 }));
 
 app.post('/api/orders', withDb(async (req, res, db) => {

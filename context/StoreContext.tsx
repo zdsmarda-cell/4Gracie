@@ -66,7 +66,7 @@ interface StoreContextType {
   updateUserAdmin: (user: User) => Promise<boolean>; 
   toggleUserBlock: (userId: string) => Promise<boolean>;
   sendPasswordReset: (email: string) => Promise<void>;
-  resetPasswordByToken: (token: string, newPass: string) => PasswordChangeResult;
+  resetPasswordByToken: (token: string, newPass: string) => Promise<PasswordChangeResult>;
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
   addUser: (name: string, email: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
   
@@ -807,10 +807,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // Other simple functions
   const login = (email: string, password?: string) => {
-    // If in API mode, ensure we have the latest user list to check credentials
-    if (dataSource === 'api') {
-        fetchData(); // Trigger background refresh just in case
-    }
+    // REMOVED fetchData() call here to prevent UI flash/race condition.
+    // The user list should already be loaded via useEffect or previous actions.
     
     const foundUser = allUsers.find(u => u.email === email);
     if (foundUser) {
@@ -825,7 +823,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const register = (name: string, email: string, password?: string) => {
-    if (allUsers.find(u => u.email === email)) { alert('Existuje.'); return; }
+    if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) { 
+        showNotify('Tento email je již registrován.', 'error');
+        return; 
+    }
     const newUser: User = { id: Date.now().toString(), name, email, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(password || '1234') };
     
     if (dataSource === 'api') {
@@ -869,7 +870,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const resetPasswordByToken = (t: string, p: string) => ({ success: true, message: 'Heslo změněno' });
+  const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => {
+      if (dataSource === 'api') {
+          const newHash = hashPassword(newPass);
+          const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash });
+          if (res && res.success) {
+              // REFRESH DATA IMMEDIATELY so the user can login with new password
+              await fetchData();
+              return { success: true, message: res.message || 'Heslo úspěšně změněno.' };
+          } else {
+              return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' };
+          }
+      } else {
+          return { success: true, message: 'Heslo změněno (Lokální simulace)' };
+      }
+  };
   
   const changePassword = (o: string, n: string) => {
      if (!user) return { success: false, message: 'Login required' };

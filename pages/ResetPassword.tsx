@@ -23,7 +23,7 @@ export const ResetPassword: React.FC = () => {
     }
   }, [token]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (pass1 !== pass2) {
       setStatus('error');
@@ -37,7 +37,8 @@ export const ResetPassword: React.FC = () => {
     }
     if (!token) return;
 
-    const result = resetPasswordByToken(token, pass1);
+    const result = await resetPasswordByToken(token, pass1);
+    
     if (result.success) {
       setStatus('success');
       setMsg(result.message);
