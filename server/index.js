@@ -58,15 +58,18 @@ if (process.env.SMTP_HOST) {
 }
 
 const sendEmail = async (to, subject, html) => {
-    if (!transporter) return false;
+    if (!transporter) {
+        console.warn(`⚠️ Cannot send email to ${to}: Transporter not configured.`);
+        return false;
+    }
     try {
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
             from: process.env.EMAIL_FROM || '"4Gracie" <info@4gracie.cz>',
             to,
             subject,
             html,
         });
-        console.log(`📧 Email sent to ${to}`);
+        console.log(`📧 Email sent to ${to}: ${info.messageId}`);
         return true;
     } catch (error) {
         console.error('❌ Email sending failed:', error);
@@ -180,7 +183,8 @@ app.get('/api/health', async (req, res) => {
   res.json({
     server: 'Running',
     databaseStatus: pool ? 'Connected' : 'Disconnected',
-    lastDbError: lastDbError
+    lastDbError: lastDbError,
+    smtpConfigured: !!process.env.SMTP_HOST
   });
 });
 
@@ -268,6 +272,49 @@ const withDb = (handler) => async (req, res) => {
   }
 };
 
+// --- AUTH EMAIL ENDPOINT ---
+app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
+  const { email } = req.body;
+  
+  // 1. Check if user exists
+  const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+  
+  if (rows.length === 0) {
+    // Security: Don't reveal if user exists, but success=true so frontend shows "If account exists, email sent"
+    return res.json({ success: true, message: 'Pokud je email registrován, instrukce byly odeslány.' });
+  }
+
+  // 2. Generate Link
+  // Note: For simplicity in this project, we create a basic base64 token containing email and expiry.
+  // In a highly secure system, store a random token in DB.
+  const tokenPayload = JSON.stringify({ email, exp: Date.now() + 3600000 }); // 1 hour expiry
+  const token = Buffer.from(tokenPayload).toString('base64');
+  
+  // Determine frontend origin (handle dev localhost vs production)
+  const origin = req.get('origin') || (req.protocol + '://' + req.get('host'));
+  const link = `${origin}/#/reset-password?token=${token}`;
+
+  // 3. Send Email
+  if (transporter) {
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h1 style="color: #1f2937;">Obnova hesla</h1>
+        <p>Obdrželi jsme žádost o obnovu hesla pro účet spojený s emailem <strong>${email}</strong>.</p>
+        <p>Pro nastavení nového hesla klikněte na tlačítko níže:</p>
+        <br>
+        <a href="${link}" style="background-color: #9333ea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Nastavit nové heslo</a>
+        <br><br>
+        <p style="color: #6b7280; font-size: 12px;">Odkaz je platný 1 hodinu. Pokud jste o změnu nežádali, tento email ignorujte.</p>
+      </div>
+    `;
+    
+    await sendEmail(email, 'Obnova hesla - 4Gracie', html);
+    res.json({ success: true, message: 'Email s instrukcemi byl odeslán.' });
+  } else {
+    res.json({ success: false, message: 'Chyba serveru: Emailová služba není nakonfigurována.' });
+  }
+}));
+
 app.post('/api/orders', withDb(async (req, res, db) => {
   const o = req.body;
   const isNew = !o.statusHistory || o.statusHistory.length <= 1; // Simplistic check if it's a fresh creation or first insert
@@ -341,14 +388,20 @@ app.post('/api/users', withDb(async (req, res, db) => {
   
   await db.query('INSERT INTO users (id, email, role, data) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE email=?, role=?, data=?', [u.id, u.email, u.role, JSON.stringify(u), u.email, u.role, JSON.stringify(u)]);
   
-  // Send Welcome/Password Reset Email for new users (Mocked link)
+  // Send Welcome/Password Reset Email for new users
   if (isNew && transporter) {
+      // Logic same as reset-password but with welcome message
+      const tokenPayload = JSON.stringify({ email: u.email, exp: Date.now() + 3600000 * 24 }); // 24h
+      const token = Buffer.from(tokenPayload).toString('base64');
+      const origin = req.get('origin') || (req.protocol + '://' + req.get('host'));
+      const link = `${origin}/#/reset-password?token=${token}`;
+
       const subject = `Vítejte v 4Gracie Catering`;
       const html = `
         <h1>Vítejte, ${u.name}!</h1>
         <p>Váš účet byl úspěšně vytvořen.</p>
-        <p>Vaše role: ${u.role}</p>
-        <p>Pro nastavení hesla kontaktujte administrátora nebo použijte funkci "Zapomenuté heslo".</p>
+        <p>Pro nastavení vašeho hesla a první přihlášení klikněte zde:</p>
+        <a href="${link}">Nastavit heslo</a>
       `;
       sendEmail(u.email, subject, html);
   }

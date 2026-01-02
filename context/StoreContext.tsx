@@ -65,7 +65,7 @@ interface StoreContextType {
   updateUser: (user: User) => Promise<boolean>; 
   updateUserAdmin: (user: User) => Promise<boolean>; 
   toggleUserBlock: (userId: string) => Promise<boolean>;
-  sendPasswordReset: (email: string) => void;
+  sendPasswordReset: (email: string) => Promise<void>;
   resetPasswordByToken: (token: string, newPass: string) => PasswordChangeResult;
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
   addUser: (name: string, email: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
@@ -855,7 +855,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
      }
      return false;
   };
-  const sendPasswordReset = (email: string) => alert('Reset link odeslán (simulace).');
+  
+  const sendPasswordReset = async (email: string) => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/auth/reset-password', 'POST', { email });
+        if (res && res.success) {
+            showNotify(res.message || 'Email odeslán.');
+        } else {
+            showNotify(res?.message || 'Chyba serveru', 'error');
+        }
+    } else {
+        alert('Simulace (Lokální mód): Reset link odeslán.');
+    }
+  };
+
   const resetPasswordByToken = (t: string, p: string) => ({ success: true, message: 'Heslo změněno' });
   
   const changePassword = (o: string, n: string) => {
