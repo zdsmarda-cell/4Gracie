@@ -196,14 +196,28 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type });
   };
 
+  // Helper pro sestavení URL v produkci (obejde Apache a jde na Node port 3000)
+  const getFullApiUrl = (endpoint: string) => {
+    // Explicitní přetypování pro jistotu (fixuje "Property 'env' does not exist")
+    // @ts-ignore
+    const env = (import.meta as any).env;
+
+    // V dev módu (Vite) necháme relativní cestu, proxy to vyřeší
+    if (env.DEV) return endpoint;
+    
+    // V produkci: Pokud uživatel nezadal vlastní URL, předpokládáme backend na stejném hostu na portu 3000
+    // Toto je klíčová oprava pro chybu 500 na Apache
+    const baseUrl = env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
+    return `${baseUrl}${endpoint}`;
+  };
+
   // API Helper with ROBUST TIMEOUT (Promise.race)
-  const apiCall = async (url: string, method: string, body?: any) => {
+  const apiCall = async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
     
-    // UI Loader Timer: Only show spinner if request takes > 500ms
-    const loadingTimer = setTimeout(() => {
-        setIsOperationPending(true);
-    }, 500);
+    // Show spinner IMMEDIATELY to avoid "missing" feedback feeling
+    // Removing debounce to fix user report of missing thermometer
+    setIsOperationPending(true);
 
     // Hard Timeout Promise
     const timeoutPromise = new Promise((_, reject) => {
@@ -214,6 +228,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
 
     try {
+      // Move getFullApiUrl inside try to catch potential errors
+      const url = getFullApiUrl(endpoint);
+      console.log('[API] Requesting:', url); // Debug log pro kontrolu
+
       // Race between the actual fetch and the 3s timeout
       const res: any = await Promise.race([
         fetch(url, {
@@ -224,9 +242,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }),
         timeoutPromise
       ]);
-      
-      // Stop the loader timer immediately if successful (prevents spinner if < 500ms)
-      clearTimeout(loadingTimer);
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -240,13 +255,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
          showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
       } else {
-         console.warn(`[API] Call to ${url} failed:`, e);
+         console.warn(`[API] Call to ${endpoint} failed:`, e);
          showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
       }
       return null;
     } finally {
-        // ALWAYS clear timers and reset pending state
-        clearTimeout(loadingTimer);
+        // ALWAYS reset pending state
         setIsOperationPending(false); 
     }
   };
@@ -256,46 +270,52 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const fetchData = async () => {
       setIsLoading(true);
       
-      if (dataSource === 'api') {
-        // STRICT MODE: Clear everything first to ensure no local bleed-through
-        setAllUsers([]);
-        setProducts([]);
-        setOrders([]);
-        setDiscountCodes([]);
-        setDayConfigs([]);
-        // Force EMPTY settings initially so we don't see mock data if DB fails
-        setSettings(EMPTY_SETTINGS);
-        
-        const data = await apiCall('/api/bootstrap', 'GET');
-        
-        if (data) {
-            // Success: Load data from API/DB
-            setAllUsers(data.users || []);
-            setProducts(data.products || []);
-            setOrders(data.orders || []);
-            // Only set settings if valid, otherwise keep defaults (server should ideally seed defaults)
-            if (data.settings) setSettings(data.settings); 
-            setDiscountCodes(data.discountCodes || []);
-            setDayConfigs(data.dayConfigs || []);
-            showNotify("Připojeno k databázi.", 'success');
+      try {
+        if (dataSource === 'api') {
+          // STRICT MODE: Clear everything first to ensure no local bleed-through
+          setAllUsers([]);
+          setProducts([]);
+          setOrders([]);
+          setDiscountCodes([]);
+          setDayConfigs([]);
+          // Force EMPTY settings initially so we don't see mock data if DB fails
+          setSettings(EMPTY_SETTINGS);
+          
+          const data = await apiCall('/api/bootstrap', 'GET');
+          
+          if (data) {
+              // Success: Load data from API/DB
+              setAllUsers(data.users || []);
+              setProducts(data.products || []);
+              setOrders(data.orders || []);
+              // Only set settings if valid, otherwise keep defaults (server should ideally seed defaults)
+              if (data.settings) setSettings(data.settings); 
+              setDiscountCodes(data.discountCodes || []);
+              setDayConfigs(data.dayConfigs || []);
+              showNotify("Připojeno k databázi.", 'success');
+          } else {
+              // Failure: Already notified by apiCall. 
+              // We explicitly leave data empty so user sees "nothing" instead of old local data.
+              // No extra notification needed here, apiCall handles it.
+          }
         } else {
-            // Failure: Already notified by apiCall. 
-            // We explicitly leave data empty so user sees "nothing" instead of old local data.
-            // No extra notification needed here, apiCall handles it.
+          // LOCAL MODE
+          console.log('⚡ Running in LOCAL MEMORY mode');
+          setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
+          setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
+          setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
+          setSettings(loadFromStorage('db_settings', DEFAULT_SETTINGS));
+          setDiscountCodes(loadFromStorage('db_discounts', []));
+          setDayConfigs(loadFromStorage('db_dayconfigs', []));
+          showNotify("Přepnuto na lokální paměť.", 'success');
         }
-      } else {
-        // LOCAL MODE
-        console.log('⚡ Running in LOCAL MEMORY mode');
-        setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
-        setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
-        setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
-        setSettings(loadFromStorage('db_settings', DEFAULT_SETTINGS));
-        setDiscountCodes(loadFromStorage('db_discounts', []));
-        setDayConfigs(loadFromStorage('db_dayconfigs', []));
-        showNotify("Přepnuto na lokální paměť.", 'success');
+      } catch (err: any) {
+        console.error('Fatal error during data fetch:', err);
+        showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
+      } finally {
+        // ENSURE loading state is turned off regardless of errors
+        setIsLoading(false);
       }
-      
-      setIsLoading(false);
     };
     fetchData();
   }, [dataSource]);
