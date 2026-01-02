@@ -4,6 +4,8 @@ import mysql from 'mysql2/promise';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
+import https from 'https';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -381,6 +383,30 @@ app.delete('/api/calendar/:date', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
-});
+// --- SERVER STARTUP (HTTP/HTTPS) ---
+
+const startServer = () => {
+  // Check for SSL configuration in ENV
+  if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
+    try {
+      const httpsOptions = {
+        key: fs.readFileSync(process.env.SSL_KEY_PATH),
+        cert: fs.readFileSync(process.env.SSL_CERT_PATH)
+      };
+      
+      https.createServer(httpsOptions, app).listen(PORT, () => {
+        console.log(`🔒 SECURE Backend running on https://localhost:${PORT}`);
+      });
+      return;
+    } catch (error) {
+      console.error('⚠️ Failed to start HTTPS server (check SSL paths), falling back to HTTP:', error.message);
+    }
+  }
+
+  // Fallback or default HTTP
+  app.listen(PORT, () => {
+    console.log(`🔓 Backend running on http://localhost:${PORT}`);
+  });
+};
+
+startServer();

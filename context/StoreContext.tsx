@@ -196,19 +196,34 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type });
   };
 
-  // Helper pro sestavení URL v produkci (obejde Apache a jde na Node port 3000)
+  // Helper pro sestavení URL v produkci
   const getFullApiUrl = (endpoint: string) => {
-    // Explicitní přetypování pro jistotu (fixuje "Property 'env' does not exist")
     // @ts-ignore
     const env = (import.meta as any).env;
 
     // V dev módu (Vite) necháme relativní cestu, proxy to vyřeší
     if (env.DEV) return endpoint;
     
-    // V produkci: Pokud uživatel nezadal vlastní URL, předpokládáme backend na stejném hostu na portu 3000
-    // Toto je klíčová oprava pro chybu 500 na Apache
-    const baseUrl = env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
-    return `${baseUrl}${endpoint}`;
+    // V produkci:
+    // 1. Pokud je nastavena VITE_API_URL, použijeme ji (může být absolutní nebo relativní pro proxy)
+    // 2. Pokud není, odhadneme URL na stejném hostu s portem 3000 (standardní Node setup)
+    //    Automaticky použijeme protokol okna (http/https), což funguje díky tomu,
+    //    že jsme na backendu přidali podporu HTTPS certifikátů.
+    let baseUrl = env.VITE_API_URL;
+    
+    if (!baseUrl) {
+       baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
+    }
+
+    // Odstranit koncové lomítko z baseUrl, pokud existuje
+    if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.slice(0, -1);
+    }
+    
+    // Odstranit počáteční lomítko z endpointu, pokud existuje (abychom neměli //)
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+    return `${baseUrl}${cleanEndpoint}`;
   };
 
   // API Helper with ROBUST TIMEOUT (Promise.race)
@@ -224,7 +239,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setTimeout(() => {
             controller.abort();
             reject(new Error('TIMEOUT_LIMIT_REACHED'));
-        }, 3000);
+        }, 8000); // Increased timeout for production connection negotiation
     });
 
     try {
@@ -232,7 +247,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const url = getFullApiUrl(endpoint);
       console.log('[API] Requesting:', url); // Debug log pro kontrolu
 
-      // Race between the actual fetch and the 3s timeout
+      // Race between the actual fetch and the timeout
       const res: any = await Promise.race([
         fetch(url, {
           method,
