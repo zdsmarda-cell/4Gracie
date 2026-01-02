@@ -30,9 +30,15 @@ export const ResetPassword: React.FC = () => {
   }, [token]);
 
   const handleFinish = () => {
-    // Navigate home AND replace history to clear the token from the address bar
+    // 1. Force navigation to homepage and clean history stack
+    // This removes the /reset-password route so the component unmounts immediately
     navigate('/', { replace: true });
-    openAuthModal();
+    
+    // 2. Open the login modal slightly after navigation starts
+    // This ensures the modal opens over the Homepage, not the ResetPage
+    setTimeout(() => {
+        openAuthModal();
+    }, 100);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -58,10 +64,10 @@ export const ResetPassword: React.FC = () => {
           setStatus('success');
           setMsg(result.message);
           
-          // Auto-redirect after 2 seconds to prevent "back button cycling"
+          // Optional: Auto-redirect after 3 seconds if user doesn't click
           setTimeout(() => {
              handleFinish();
-          }, 2000);
+          }, 3000);
         } else {
           setStatus('error');
           setMsg(result.message);
@@ -90,13 +96,13 @@ export const ResetPassword: React.FC = () => {
             <div className="bg-green-50 text-green-700 p-6 rounded-xl mb-6">
               <CheckCircle className="mx-auto mb-2" size={32} />
               <p className="font-bold">{msg}</p>
-              <p className="text-xs mt-2 opacity-75">Budete přesměrováni...</p>
+              <p className="text-xs mt-2 opacity-75">Budete přesměrováni na přihlášení...</p>
             </div>
             <button 
               onClick={handleFinish}
               className="w-full bg-primary text-white py-3 rounded-xl font-bold shadow-lg hover:bg-black transition flex items-center justify-center"
             >
-              Přihlásit se <ArrowRight size={16} className="ml-2"/>
+              Přihlásit se nyní <ArrowRight size={16} className="ml-2"/>
             </button>
           </div>
         ) : (
@@ -110,6 +116,7 @@ export const ResetPassword: React.FC = () => {
                 value={pass1}
                 onChange={e => setPass1(e.target.value)}
                 disabled={isSubmitting}
+                placeholder="Min. 4 znaky"
               />
             </div>
             <div>
@@ -121,6 +128,7 @@ export const ResetPassword: React.FC = () => {
                 value={pass2}
                 onChange={e => setPass2(e.target.value)}
                 disabled={isSubmitting}
+                placeholder="Zadejte znovu"
               />
             </div>
 

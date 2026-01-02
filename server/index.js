@@ -413,7 +413,11 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                   `).join('');
 
                   const discountSum = orderData.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
-                  const finalTotal = Math.max(0, orderData.totalPrice - discountSum) + orderData.packagingFee + (orderData.deliveryFee || 0);
+                  // Ensure we handle potential undefined deliveryFee gracefully
+                  const deliveryFee = orderData.deliveryFee || 0;
+                  const packagingFee = orderData.packagingFee || 0;
+                  const itemTotal = orderData.items.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+                  const finalTotal = Math.max(0, itemTotal - discountSum) + packagingFee + deliveryFee;
 
                   const discountsHtml = orderData.appliedDiscounts?.map(d => `
                     <tr>
@@ -443,12 +447,12 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                           ${discountsHtml}
                           <tr>
                             <td colspan="2" style="padding: 8px; color: #666;">Balné</td>
-                            <td style="padding: 8px; text-align: right;">${orderData.packagingFee} Kč</td>
+                            <td style="padding: 8px; text-align: right;">${packagingFee} Kč</td>
                           </tr>
-                          ${orderData.deliveryFee > 0 ? `
+                          ${deliveryFee > 0 ? `
                           <tr>
                             <td colspan="2" style="padding: 8px; color: #666;">Doprava</td>
-                            <td style="padding: 8px; text-align: right;">${orderData.deliveryFee} Kč</td>
+                            <td style="padding: 8px; text-align: right;">${deliveryFee} Kč</td>
                           </tr>` : ''}
                           <tr style="font-size: 1.2em; font-weight: bold; background-color: #f9fafb;">
                             <td colspan="2" style="padding: 12px; border-top: 2px solid #ddd;">CELKEM</td>
