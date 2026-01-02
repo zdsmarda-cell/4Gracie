@@ -402,15 +402,68 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
           if (rows.length > 0) {
               const orderData = typeof rows[0].data === 'string' ? JSON.parse(rows[0].data) : rows[0].data;
               const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [orderData.userId]);
+              
               if (userRows.length > 0) {
+                  const itemsHtml = orderData.items.map(item => `
+                    <tr>
+                      <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.quantity}x</td>
+                      <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${item.name}</strong></td>
+                      <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${item.price * item.quantity} Kč</td>
+                    </tr>
+                  `).join('');
+
+                  const discountSum = orderData.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
+                  const finalTotal = Math.max(0, orderData.totalPrice - discountSum) + orderData.packagingFee + (orderData.deliveryFee || 0);
+
+                  const discountsHtml = orderData.appliedDiscounts?.map(d => `
+                    <tr>
+                      <td colspan="2" style="padding: 8px; color: green;">Sleva (${d.code})</td>
+                      <td style="padding: 8px; text-align: right; color: green;">-${d.amount} Kč</td>
+                    </tr>
+                  `).join('') || '';
+
                   const subject = `Aktualizace objednávky #${id}`;
                   const html = `
-                    <h1>Změna stavu objednávky</h1>
-                    <p>Vaše objednávka <strong>#${id}</strong> změnila stav na:</p>
-                    <h2 style="color: #9333ea;">${req.body.status.toUpperCase()}</h2>
-                    <br/>
-                    <p>Tým 4Gracie</p>
+                    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+                      <h1 style="color: #1f2937;">Změna stavu objednávky</h1>
+                      <p>Vaše objednávka <strong>#${id}</strong> má nyní stav:</p>
+                      <h2 style="color: #9333ea; border-bottom: 2px solid #9333ea; padding-bottom: 10px; display: inline-block;">${req.body.status.toUpperCase()}</h2>
+                      
+                      <h3 style="margin-top: 30px;">Rekapitulace objednávky</h3>
+                      <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+                        <thead>
+                          <tr style="background-color: #f3f4f6;">
+                            <th style="padding: 8px; text-align: left;">Ks</th>
+                            <th style="padding: 8px; text-align: left;">Položka</th>
+                            <th style="padding: 8px; text-align: right;">Cena</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${itemsHtml}
+                          ${discountsHtml}
+                          <tr>
+                            <td colspan="2" style="padding: 8px; color: #666;">Balné</td>
+                            <td style="padding: 8px; text-align: right;">${orderData.packagingFee} Kč</td>
+                          </tr>
+                          ${orderData.deliveryFee > 0 ? `
+                          <tr>
+                            <td colspan="2" style="padding: 8px; color: #666;">Doprava</td>
+                            <td style="padding: 8px; text-align: right;">${orderData.deliveryFee} Kč</td>
+                          </tr>` : ''}
+                          <tr style="font-size: 1.2em; font-weight: bold; background-color: #f9fafb;">
+                            <td colspan="2" style="padding: 12px; border-top: 2px solid #ddd;">CELKEM</td>
+                            <td style="padding: 12px; border-top: 2px solid #ddd; text-align: right; color: #9333ea;">${finalTotal} Kč</td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                      <p>Datum doručení: <strong>${orderData.deliveryDate}</strong></p>
+                      
+                      <br/>
+                      <p style="font-size: 0.9em; color: #666;">Děkujeme, že využíváte naše služby.<br/>Tým 4Gracie</p>
+                    </div>
                   `;
+                  
                   sendEmail(userRows[0].email, subject, html);
               }
           }

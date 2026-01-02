@@ -2,12 +2,12 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
-import { Lock, CheckCircle, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Lock, CheckCircle, AlertTriangle, ArrowRight, Loader2 } from 'lucide-react';
 
 export const ResetPassword: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { resetPasswordByToken, openAuthModal } = useStore();
+  const { resetPasswordByToken, openAuthModal, logout } = useStore();
   
   const token = searchParams.get('token');
   
@@ -15,6 +15,12 @@ export const ResetPassword: React.FC = () => {
   const [pass2, setPass2] = useState('');
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [msg, setMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // LOGOUT ON MOUNT: Ensures clean state, prevents "cycling" if admin is logged in
+  useEffect(() => {
+    logout();
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -23,8 +29,16 @@ export const ResetPassword: React.FC = () => {
     }
   }, [token]);
 
+  const handleFinish = () => {
+    // Navigate home AND replace history to clear the token from the address bar
+    navigate('/', { replace: true });
+    openAuthModal();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     if (pass1 !== pass2) {
       setStatus('error');
       setMsg('Hesla se neshodují.');
@@ -37,14 +51,26 @@ export const ResetPassword: React.FC = () => {
     }
     if (!token) return;
 
-    const result = await resetPasswordByToken(token, pass1);
-    
-    if (result.success) {
-      setStatus('success');
-      setMsg(result.message);
-    } else {
-      setStatus('error');
-      setMsg(result.message);
+    setIsSubmitting(true);
+    try {
+        const result = await resetPasswordByToken(token, pass1);
+        if (result.success) {
+          setStatus('success');
+          setMsg(result.message);
+          
+          // Auto-redirect after 2 seconds to prevent "back button cycling"
+          setTimeout(() => {
+             handleFinish();
+          }, 2000);
+        } else {
+          setStatus('error');
+          setMsg(result.message);
+        }
+    } catch (e) {
+        setStatus('error');
+        setMsg('Neznámá chyba.');
+    } finally {
+        setIsSubmitting(false);
     }
   };
 
@@ -64,9 +90,10 @@ export const ResetPassword: React.FC = () => {
             <div className="bg-green-50 text-green-700 p-6 rounded-xl mb-6">
               <CheckCircle className="mx-auto mb-2" size={32} />
               <p className="font-bold">{msg}</p>
+              <p className="text-xs mt-2 opacity-75">Budete přesměrováni...</p>
             </div>
             <button 
-              onClick={() => { navigate('/'); openAuthModal(); }}
+              onClick={handleFinish}
               className="w-full bg-primary text-white py-3 rounded-xl font-bold shadow-lg hover:bg-black transition flex items-center justify-center"
             >
               Přihlásit se <ArrowRight size={16} className="ml-2"/>
@@ -82,6 +109,7 @@ export const ResetPassword: React.FC = () => {
                 className="w-full border rounded-xl p-3 text-sm focus:ring-2 focus:ring-accent outline-none"
                 value={pass1}
                 onChange={e => setPass1(e.target.value)}
+                disabled={isSubmitting}
               />
             </div>
             <div>
@@ -92,6 +120,7 @@ export const ResetPassword: React.FC = () => {
                 className="w-full border rounded-xl p-3 text-sm focus:ring-2 focus:ring-accent outline-none"
                 value={pass2}
                 onChange={e => setPass2(e.target.value)}
+                disabled={isSubmitting}
               />
             </div>
 
@@ -104,10 +133,10 @@ export const ResetPassword: React.FC = () => {
 
             <button 
               type="submit" 
-              disabled={!token}
-              className="w-full bg-accent text-white py-3 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50"
+              disabled={!token || isSubmitting}
+              className="w-full bg-accent text-white py-3 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50 flex justify-center items-center"
             >
-              Uložit heslo
+              {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : 'Uložit heslo'}
             </button>
           </form>
         )}

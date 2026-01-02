@@ -45,6 +45,12 @@ interface RegionDateInfo {
 
 export type DataSourceMode = 'local' | 'api';
 
+interface GlobalNotification {
+  message: string;
+  type: 'success' | 'error';
+  autoClose: boolean;
+}
+
 interface StoreContextType {
   dataSource: DataSourceMode;
   setDataSource: (mode: DataSourceMode) => void;
@@ -111,7 +117,7 @@ interface StoreContextType {
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => ImportResult;
   
-  globalNotification: { message: string, type: 'success' | 'error' } | null;
+  globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
 
   // Auth Modal State
@@ -171,7 +177,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isOperationPending, setIsOperationPending] = useState(false); // Visual Loading State
   const [language, setLanguage] = useState<Language>(Language.CS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [globalNotification, setGlobalNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
 
   // Data State
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
@@ -192,8 +198,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setDataSourceState(mode);
   };
 
-  const showNotify = (message: string, type: 'success' | 'error' = 'success') => {
-    setGlobalNotification({ message, type });
+  const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
+    setGlobalNotification({ message, type, autoClose });
   };
 
   // Helper pro sestavení URL v produkci
@@ -456,7 +462,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             return o;
           }));
           const msg = notify ? `Stav změněn a emaily odeslány (${ids.length})` : `Stav objednávek (${ids.length}) změněn v DB.`;
-          showNotify(msg);
+          showNotify(msg, 'success', !notify); // If notifying (email sent), don't auto close immediately so user sees email confirmed
           return true;
        }
        return false;
@@ -529,7 +535,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const res = await apiCall('/api/users', 'POST', newUser);
         if (res && res.success) {
             setAllUsers(prev => [...prev, newUser]);
-            showNotify(`Uživatel ${name} vytvořen v DB.`);
+            // Do not auto-close so admin sees that email was sent (implied by addUser logic in backend)
+            showNotify(`Uživatel ${name} vytvořen a email odeslán.`, 'success', false);
             return true;
         }
         return false;
@@ -861,7 +868,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
         const res = await apiCall('/api/auth/reset-password', 'POST', { email });
         if (res && res.success) {
-            showNotify(res.message || 'Email odeslán.');
+            // autoClose: false ensures the admin sees the confirmation that the email was sent
+            showNotify(res.message || 'Email odeslán.', 'success', false);
         } else {
             showNotify(res?.message || 'Chyba serveru', 'error');
         }

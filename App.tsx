@@ -46,7 +46,7 @@ const NotificationToast = () => {
   const { globalNotification, dismissNotification } = useStore();
 
   useEffect(() => {
-    if (globalNotification) {
+    if (globalNotification && globalNotification.autoClose) {
       // Longer timeout for errors
       const timer = setTimeout(dismissNotification, globalNotification.type === 'error' ? 8000 : 4000);
       return () => clearTimeout(timer);
