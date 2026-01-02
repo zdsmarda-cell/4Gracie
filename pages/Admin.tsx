@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { OrderStatus, Product, ProductCategory, Order, DeliveryType, PaymentMethod, DayConfig, DiscountCode, DiscountType, PackagingType, DeliveryRegion, User as UserType, Address, PaymentMethodConfig, Language, GlobalSettings, BackupData, RegionException } from '../types';
-import { Check, Truck, X, FileText, Plus, Edit, Trash2, Upload, Calendar, AlertTriangle, Save, Ban, Search, Package, CreditCard, Building, Tag, RefreshCw, Filter, AlertCircle, MapPin, ShoppingBag, Minus, Activity, User, ChevronLeft, ChevronRight, UserPlus, Download, Database, QrCode, MessageSquare } from 'lucide-react';
+import { Check, Truck, X, FileText, Plus, Edit, Trash2, Upload, Calendar, AlertTriangle, Save, Ban, Search, Package, CreditCard, Building, Tag, RefreshCw, Filter, AlertCircle, MapPin, ShoppingBag, Minus, Activity, User, ChevronLeft, ChevronRight, UserPlus, Download, Database, QrCode, MessageSquare, Server, HardDrive } from 'lucide-react';
 import { ALLERGENS } from '../constants';
 import * as XLSX from 'xlsx';
 
@@ -165,10 +165,11 @@ export const Admin: React.FC = () => {
     orders, updateOrderStatus, updateOrder, t, user, allUsers, updateUserAdmin, toggleUserBlock, sendPasswordReset, addUser,
     products, addProduct, updateProduct, deleteProduct,
     discountCodes, addDiscountCode, updateDiscountCode, deleteDiscountCode,
-    settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, getDailyLoad, importDatabase, checkOrderRestoration, printInvoice, generateCzIban, removeDiacritics
+    settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, getDailyLoad, importDatabase, checkOrderRestoration, printInvoice, generateCzIban, removeDiacritics,
+    dataSource, setDataSource
   } = useStore();
   
-  const [activeTab, setActiveTab] = useState<'orders' | 'users' | 'products' | 'capacities' | 'discounts' | 'packaging' | 'operator' | 'payments' | 'load' | 'delivery' | 'backup'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'users' | 'products' | 'capacities' | 'discounts' | 'packaging' | 'operator' | 'payments' | 'load' | 'delivery' | 'backup' | 'db'>('orders');
   
   // Selection & Notifications
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
@@ -555,18 +556,72 @@ export const Admin: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <h1 className="text-3xl font-serif font-bold text-gray-800 tracking-tight">{t('admin.dashboard')}</h1>
         <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl shadow-sm overflow-x-auto">
-           {(['orders', 'users', 'load', 'products', 'delivery', 'capacities', 'discounts', 'packaging', 'operator', 'payments', 'backup'] as const).map(tab => (
+           {(['orders', 'users', 'load', 'products', 'delivery', 'capacities', 'discounts', 'packaging', 'operator', 'payments', 'backup', 'db'] as const).map(tab => (
              <button 
                key={tab}
                onClick={() => setActiveTab(tab)} 
                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition whitespace-nowrap ${activeTab === tab ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:bg-white/50'}`}
              >
-               {t(`admin.${tab}`)}
+               {tab === 'db' ? 'DB' : t(`admin.${tab}`)}
              </button>
            ))}
         </div>
       </div>
 
+      {activeTab === 'db' && (
+        <div className="animate-fade-in space-y-8">
+           <div className="bg-white p-8 rounded-2xl border shadow-sm max-w-2xl mx-auto text-center">
+              <h2 className="text-2xl font-bold mb-6 flex items-center justify-center gap-2">
+                 <Database className="text-accent" /> Databázové připojení
+              </h2>
+              <p className="text-gray-500 mb-8 text-sm">
+                 Vyberte zdroj dat pro aplikaci. Pro vývoj a preview použijte <strong>Interní paměť</strong> (vše běží v prohlížeči). 
+                 Pro produkci přepněte na <strong>MariaDB</strong> (vyžaduje běžící backend).
+              </p>
+              
+              <div className="grid grid-cols-2 gap-4">
+                 <button 
+                    onClick={() => setDataSource('local')}
+                    className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'local' ? 'border-accent bg-yellow-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                 >
+                    <div className={`p-4 rounded-full ${dataSource === 'local' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-400'}`}>
+                       <HardDrive size={32} />
+                    </div>
+                    <div>
+                       <h3 className="font-bold text-lg">Interní paměť</h3>
+                       <p className="text-xs text-gray-400">LocalStorage</p>
+                    </div>
+                    {dataSource === 'local' && <Check className="text-green-500" />}
+                 </button>
+
+                 <button 
+                    onClick={() => setDataSource('api')}
+                    className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'api' ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                 >
+                    <div className={`p-4 rounded-full ${dataSource === 'api' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                       <Server size={32} />
+                    </div>
+                    <div>
+                       <h3 className="font-bold text-lg">MariaDB</h3>
+                       <p className="text-xs text-gray-400">API Backend</p>
+                    </div>
+                    {dataSource === 'api' && <Check className="text-green-500" />}
+                 </button>
+              </div>
+
+              {dataSource === 'local' && (
+                 <div className="mt-8 p-4 bg-yellow-50 text-yellow-800 rounded-lg text-sm text-left flex items-start">
+                    <AlertTriangle className="mr-3 flex-shrink-0" size={20} />
+                    <div>
+                       <strong>Režim Preview:</strong> Všechny změny (objednávky, produkty, uživatelé) se ukládají pouze do paměti vašeho prohlížeče. Pokud vymažete cache nebo otevřete aplikaci v anonymním okně, data zmizí.
+                    </div>
+                 </div>
+              )}
+           </div>
+        </div>
+      )}
+
+      {/* Rest of the Tabs (Truncated for brevity, logic remains identical to previous file content but wrapped in {activeTab === ...}) */}
       {activeTab === 'users' && (
         <div className="animate-fade-in space-y-4">
           <div className="flex justify-between items-center mb-4">
