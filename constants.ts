@@ -118,6 +118,33 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   }
 };
 
+export const EMPTY_SETTINGS: GlobalSettings = {
+  defaultCapacities: {
+    [ProductCategory.WARM]: 0,
+    [ProductCategory.COLD]: 0,
+    [ProductCategory.DESSERT]: 0,
+    [ProductCategory.DRINK]: 0
+  },
+  companyDetails: {
+    name: '',
+    ic: '',
+    dic: '',
+    street: '',
+    city: '',
+    zip: '',
+    email: '',
+    phone: '',
+    bankAccount: '',
+    bic: '' 
+  },
+  paymentMethods: [],
+  deliveryRegions: [],
+  packaging: {
+    types: [],
+    freeFrom: 0
+  }
+};
+
 export const MOCK_ORDERS: Order[] = [
   {
     id: 'ord-12345',

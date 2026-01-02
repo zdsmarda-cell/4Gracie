@@ -9,7 +9,7 @@ import { Cart } from './pages/Cart';
 import { Admin } from './pages/Admin';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
-import { X, Info, Truck } from 'lucide-react';
+import { X, Info, Truck, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 
 // Login Overlay Mock (for demo purposes) - Updated to use AuthModal trigger for consistency
 const LoginMock = () => {
@@ -27,27 +27,45 @@ const LoginMock = () => {
   );
 };
 
+const GlobalLoadingSpinner = () => {
+  const { isOperationPending } = useStore();
+  
+  if (!isOperationPending) return null;
+
+  return (
+    <div className="fixed inset-0 z-[9999] bg-black/30 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-300">
+      <div className="bg-white p-6 rounded-2xl shadow-2xl flex flex-col items-center animate-in zoom-in-95 duration-300">
+        <Loader2 size={48} className="text-accent animate-spin mb-4" />
+        <p className="text-sm font-bold text-gray-600">Čekám na odpověď serveru...</p>
+      </div>
+    </div>
+  );
+};
+
 const NotificationToast = () => {
   const { globalNotification, dismissNotification } = useStore();
 
   useEffect(() => {
     if (globalNotification) {
-      const timer = setTimeout(dismissNotification, 5000);
+      // Longer timeout for errors
+      const timer = setTimeout(dismissNotification, globalNotification.type === 'error' ? 8000 : 4000);
       return () => clearTimeout(timer);
     }
   }, [globalNotification, dismissNotification]);
 
   if (!globalNotification) return null;
 
+  const isError = globalNotification.type === 'error';
+
   return (
-    <div className="fixed top-24 right-4 max-w-sm w-full bg-white border border-l-4 border-l-accent shadow-xl rounded-lg pointer-events-auto z-[100] animate-in slide-in-from-right-10 duration-300">
+    <div className={`fixed top-24 right-4 max-w-sm w-full bg-white border border-l-4 shadow-xl rounded-lg pointer-events-auto z-[100] animate-in slide-in-from-right-10 duration-300 ${isError ? 'border-l-red-500' : 'border-l-green-500'}`}>
       <div className="p-4 flex items-start">
         <div className="flex-shrink-0">
-          <Info className="h-5 w-5 text-accent" />
+          {isError ? <AlertCircle className="h-5 w-5 text-red-500" /> : <CheckCircle className="h-5 w-5 text-green-500" />}
         </div>
         <div className="ml-3 w-0 flex-1 pt-0.5">
-          <p className="text-sm font-medium text-gray-900">Upozornění</p>
-          <p className="mt-1 text-xs text-gray-500">{globalNotification}</p>
+          <p className="text-sm font-medium text-gray-900">{isError ? 'Chyba' : 'Úspěch'}</p>
+          <p className="mt-1 text-xs text-gray-500">{globalNotification.message}</p>
         </div>
         <div className="ml-4 flex-shrink-0 flex">
           <button
@@ -143,6 +161,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     <div className="min-h-screen flex flex-col font-sans">
       <Navbar />
       <NotificationToast />
+      <GlobalLoadingSpinner />
       <AuthModal />
       <DeliveryRegionsModal isOpen={isRegionsModalOpen} onClose={() => setIsRegionsModalOpen(false)} />
       <main className="flex-grow">

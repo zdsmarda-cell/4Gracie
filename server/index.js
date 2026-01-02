@@ -14,17 +14,108 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 
 // --- MOCK DATA STORE (Fallback if DB is missing) ---
-const mockStore = {
-  users: [],
-  products: [],
-  orders: [],
-  settings: null,
-  discounts: [],
-  calendar: []
+// Note: Only used for reference or if we wanted to seed from file
+const DEFAULT_SETTINGS_SEED = {
+  defaultCapacities: {
+    'warm': 1000,
+    'cold': 2000,
+    'dessert': 500,
+    'drink': 5000
+  },
+  companyDetails: {
+    name: '4Gracie s.r.o. (DB)',
+    ic: '12345678',
+    dic: 'CZ12345678',
+    street: 'Václavské náměstí 1',
+    city: 'Praha 1',
+    zip: '110 00',
+    email: 'info@4gracie.cz',
+    phone: '+420 123 456 789',
+    bankAccount: '2701000000/2010',
+    bic: 'RZBCCZPP' 
+  },
+  paymentMethods: [
+    { id: 'gateway', label: 'Online karta / Apple Pay', description: 'Rychlá a bezpečná platba kartou přes platební bránu.', enabled: true },
+    { id: 'qr', label: 'QR Platba', description: 'Okamžitý převod z vaší bankovní aplikace pomocí QR kódu.', enabled: true },
+    { id: 'cash', label: 'Hotovost / Karta na místě', description: 'Platba při převzetí na prodejně.', enabled: true }
+  ],
+  deliveryRegions: [
+    { id: '1', name: 'Praha Centrum', zips: ['11000', '12000'], price: 150, freeFrom: 2000, enabled: true, deliveryTimeStart: '10:00', deliveryTimeEnd: '14:00' },
+  ],
+  packaging: {
+    types: [
+      { id: 'box-small', name: 'Malá krabice', volume: 500, price: 15 },
+      { id: 'box-medium', name: 'Střední krabice', volume: 1500, price: 35 },
+      { id: 'box-large', name: 'Velká krabice', volume: 3000, price: 60 }
+    ],
+    freeFrom: 5000
+  }
 };
 
 // Database Connection Helper
 let pool = null;
+
+// Initialize Tables Schema & Seed Defaults
+const initDb = async (db) => {
+  try {
+    const tableQueries = [
+      `CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(255) PRIMARY KEY,
+        email VARCHAR(255),
+        role VARCHAR(50),
+        data JSON
+      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      
+      `CREATE TABLE IF NOT EXISTS products (
+        id VARCHAR(255) PRIMARY KEY,
+        category VARCHAR(50),
+        is_deleted BOOLEAN DEFAULT FALSE,
+        data JSON
+      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      
+      `CREATE TABLE IF NOT EXISTS orders (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255),
+        delivery_date VARCHAR(20),
+        status VARCHAR(50),
+        total_price DECIMAL(10,2),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        data JSON
+      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      
+      `CREATE TABLE IF NOT EXISTS app_settings (
+        key_name VARCHAR(50) PRIMARY KEY,
+        data JSON
+      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      
+      `CREATE TABLE IF NOT EXISTS discounts (
+        id VARCHAR(255) PRIMARY KEY,
+        code VARCHAR(50),
+        data JSON
+      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      
+      `CREATE TABLE IF NOT EXISTS calendar_exceptions (
+        date VARCHAR(20) PRIMARY KEY,
+        data JSON
+      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    ];
+
+    for (const query of tableQueries) {
+      await db.query(query);
+    }
+
+    // Check if settings exist, if not, SEED defaults
+    const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
+    if (settingsRows.length === 0) {
+       console.log('🌱 Seeding default settings into DB...');
+       await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?)', [JSON.stringify(DEFAULT_SETTINGS_SEED)]);
+    }
+
+    console.log('✅ Database tables initialized successfully.');
+  } catch (err) {
+    console.error('❌ Failed to initialize database tables:', err.message);
+  }
+};
 
 const getDb = async () => {
   if (pool) return pool;
@@ -37,22 +128,29 @@ const getDb = async () => {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      connectTimeout: 2000 // Fast fail for dev
+      connectTimeout: 5000 
     });
     // Test connection
-    await pool.getConnection();
+    const connection = await pool.getConnection();
     console.log('✅ Connected to MariaDB');
+    
+    // Run Init
+    await initDb(connection);
+    
+    connection.release();
     return pool;
   } catch (err) {
-    console.warn('⚠️  Database connection failed. Switching to MEMORY MODE.');
-    console.warn(`   Error: ${err.message}`);
+    console.error('❌ Database connection failed:', err.message);
     pool = null; 
     return null;
   }
 };
 
 // Helper to parse JSON from DB
-const parseData = (rows) => rows.map(row => ({ ...row.data, id: row.id || row.key_name || row.date }));
+const parseData = (rows) => rows.map(row => {
+  const jsonData = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+  return { ...jsonData, id: row.id || row.key_name || row.date };
+});
 
 // --- API ENDPOINTS ---
 
@@ -73,7 +171,7 @@ app.get('/api/bootstrap', async (req, res) => {
         users: parseData(users),
         products: parseData(products),
         orders: parseData(orders),
-        settings: settings.length > 0 ? settings[0].data : null,
+        settings: settings.length > 0 ? (typeof settings[0].data === 'string' ? JSON.parse(settings[0].data) : settings[0].data) : null,
         discountCodes: parseData(discounts),
         dayConfigs: parseData(calendar)
       });
@@ -82,15 +180,7 @@ app.get('/api/bootstrap', async (req, res) => {
       res.status(500).json({ error: 'Database query failed' });
     }
   } else {
-    // Memory Mode Response
-    res.json({
-      users: mockStore.users,
-      products: mockStore.products,
-      orders: mockStore.orders,
-      settings: mockStore.settings,
-      discountCodes: mockStore.discounts,
-      dayConfigs: mockStore.calendar
-    });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -107,14 +197,11 @@ app.post('/api/orders', async (req, res) => {
       );
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    const idx = mockStore.orders.findIndex(o => o.id === order.id);
-    if (idx >= 0) mockStore.orders[idx] = order;
-    else mockStore.orders.unshift(order); // Newest first
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -124,15 +211,17 @@ app.put('/api/orders/status', async (req, res) => {
   
   if (db) {
     try {
-      await db.query('UPDATE orders SET status = ? WHERE id IN (?)', [status, ids]);
+      // Better approach for consistency: Iterate and update
+      for (const id of ids) {
+         await db.query(`UPDATE orders SET status = ?, data = JSON_SET(data, '$.status', ?) WHERE id = ?`, [status, status, id]);
+      }
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    mockStore.orders = mockStore.orders.map(o => ids.includes(o.id) ? { ...o, status } : o);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -149,14 +238,11 @@ app.post('/api/products', async (req, res) => {
       );
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    const idx = mockStore.products.findIndex(p => p.id === product.id);
-    if (idx >= 0) mockStore.products[idx] = product;
-    else mockStore.products.push(product);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -169,12 +255,11 @@ app.delete('/api/products/:id', async (req, res) => {
       await db.query('UPDATE products SET is_deleted = TRUE WHERE id = ?', [id]);
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    mockStore.products = mockStore.products.filter(p => p.id !== id);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -191,14 +276,11 @@ app.post('/api/users', async (req, res) => {
       );
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    const idx = mockStore.users.findIndex(u => u.id === user.id);
-    if (idx >= 0) mockStore.users[idx] = user;
-    else mockStore.users.push(user);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -215,12 +297,11 @@ app.post('/api/settings', async (req, res) => {
       );
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    mockStore.settings = settings;
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -237,14 +318,11 @@ app.post('/api/discounts', async (req, res) => {
       );
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    const idx = mockStore.discounts.findIndex(d => d.id === discount.id);
-    if (idx >= 0) mockStore.discounts[idx] = discount;
-    else mockStore.discounts.push(discount);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -257,12 +335,11 @@ app.delete('/api/discounts/:id', async (req, res) => {
       await db.query('DELETE FROM discounts WHERE id = ?', [id]);
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    mockStore.discounts = mockStore.discounts.filter(d => d.id !== id);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -279,14 +356,11 @@ app.post('/api/calendar', async (req, res) => {
       );
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    const idx = mockStore.calendar.findIndex(c => c.date === config.date);
-    if (idx >= 0) mockStore.calendar[idx] = config;
-    else mockStore.calendar.push(config);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
@@ -299,16 +373,14 @@ app.delete('/api/calendar/:date', async (req, res) => {
       await db.query('DELETE FROM calendar_exceptions WHERE date = ?', [date]);
       res.json({ success: true });
     } catch (err) {
+      console.error(err);
       res.status(500).json({ error: err.message });
     }
   } else {
-    // Memory Mode
-    mockStore.calendar = mockStore.calendar.filter(c => c.date !== date);
-    res.json({ success: true });
+    res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
-  console.log('Mode: ' + (pool ? 'MariaDB' : 'Memory Fallback'));
 });

@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData } from '../types';
-import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS } from '../constants';
+import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 
@@ -49,6 +49,7 @@ interface StoreContextType {
   dataSource: DataSourceMode;
   setDataSource: (mode: DataSourceMode) => void;
   isLoading: boolean;
+  isOperationPending: boolean; // NEW: Global pending state
   language: Language;
   setLanguage: (lang: Language) => void;
   cart: CartItem[];
@@ -61,39 +62,39 @@ interface StoreContextType {
   login: (email: string, password?: string) => { success: boolean; message?: string };
   register: (name: string, email: string, password?: string) => void;
   logout: () => void;
-  updateUser: (user: User) => void; 
-  updateUserAdmin: (user: User) => void; 
-  toggleUserBlock: (userId: string) => void;
+  updateUser: (user: User) => Promise<boolean>; 
+  updateUserAdmin: (user: User) => Promise<boolean>; 
+  toggleUserBlock: (userId: string) => Promise<boolean>;
   sendPasswordReset: (email: string) => void;
   resetPasswordByToken: (token: string, newPass: string) => PasswordChangeResult;
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
-  addUser: (name: string, email: string, role: 'customer' | 'admin' | 'driver') => void;
+  addUser: (name: string, email: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
   
   orders: Order[];
-  addOrder: (order: Order) => void;
-  updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => void;
-  updateOrder: (order: Order, sendNotify?: boolean) => void;
+  addOrder: (order: Order) => Promise<boolean>;
+  updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
+  updateOrder: (order: Order, sendNotify?: boolean) => Promise<boolean>;
   checkOrderRestoration: (order: Order) => RestorationCheckResult;
   
   products: Product[];
-  addProduct: (product: Product) => void;
-  updateProduct: (product: Product) => void;
-  deleteProduct: (id: string) => void;
+  addProduct: (product: Product) => Promise<boolean>;
+  updateProduct: (product: Product) => Promise<boolean>;
+  deleteProduct: (id: string) => Promise<boolean>;
   
   discountCodes: DiscountCode[];
   appliedDiscounts: AppliedDiscount[];
-  addDiscountCode: (code: DiscountCode) => void;
-  updateDiscountCode: (code: DiscountCode) => void;
-  deleteDiscountCode: (id: string) => void;
+  addDiscountCode: (code: DiscountCode) => Promise<boolean>;
+  updateDiscountCode: (code: DiscountCode) => Promise<boolean>;
+  deleteDiscountCode: (id: string) => Promise<boolean>;
   applyDiscount: (code: string) => { success: boolean; error?: string };
   removeAppliedDiscount: (code: string) => void;
   validateDiscount: (code: string, currentCart: CartItem[]) => ValidateDiscountResult;
   
   settings: GlobalSettings;
-  updateSettings: (settings: GlobalSettings) => void;
+  updateSettings: (settings: GlobalSettings) => Promise<boolean>;
   dayConfigs: DayConfig[];
-  updateDayConfig: (config: DayConfig) => void;
-  removeDayConfig: (date: string) => void;
+  updateDayConfig: (config: DayConfig) => Promise<boolean>;
+  removeDayConfig: (date: string) => Promise<boolean>;
   
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
@@ -110,7 +111,7 @@ interface StoreContextType {
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => ImportResult;
   
-  globalNotification: string | null;
+  globalNotification: { message: string, type: 'success' | 'error' } | null;
   dismissNotification: () => void;
 
   // Auth Modal State
@@ -146,27 +147,6 @@ const calculateCzIban = (accountString: string): string => {
   return `CZ${checkDigitsStr}${bban}`;
 };
 
-// API HELPER with Fallback check
-const apiCall = async (url: string, method: string, body?: any) => {
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined
-    });
-    // If response is not JSON (e.g. 404 HTML from proxy), throw
-    const contentType = res.headers.get("content-type");
-    if (!contentType || !contentType.includes("application/json")) {
-        throw new Error("Invalid response type");
-    }
-    if (!res.ok) throw new Error(`API Error ${res.status}`);
-    return await res.json();
-  } catch (e) {
-    console.warn(`[API] Call to ${url} failed or skipped:`, e);
-    return null;
-  }
-};
-
 // Fallback Helper
 const loadFromStorage = <T,>(key: string, fallback: T): T => {
   try {
@@ -188,15 +168,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const [isLoading, setIsLoading] = useState(true);
+  const [isOperationPending, setIsOperationPending] = useState(false); // Visual Loading State
   const [language, setLanguage] = useState<Language>(Language.CS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [globalNotification, setGlobalNotification] = useState<string | null>(null);
+  const [globalNotification, setGlobalNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
   // Data State
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
+  
+  // States initialized empty to allow dynamic loading
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [user, setUser] = useState<User | null>(() => loadFromStorage('session_user', null));
-  
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [discountCodes, setDiscountCodes] = useState<DiscountCode[]>([]);
@@ -210,38 +192,107 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setDataSourceState(mode);
   };
 
+  const showNotify = (message: string, type: 'success' | 'error' = 'success') => {
+    setGlobalNotification({ message, type });
+  };
+
+  // API Helper with ROBUST TIMEOUT (Promise.race)
+  const apiCall = async (url: string, method: string, body?: any) => {
+    const controller = new AbortController();
+    
+    // UI Loader Timer: Only show spinner if request takes > 500ms
+    const loadingTimer = setTimeout(() => {
+        setIsOperationPending(true);
+    }, 500);
+
+    // Hard Timeout Promise
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+            controller.abort();
+            reject(new Error('TIMEOUT_LIMIT_REACHED'));
+        }, 3000);
+    });
+
+    try {
+      // Race between the actual fetch and the 3s timeout
+      const res: any = await Promise.race([
+        fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: controller.signal
+        }),
+        timeoutPromise
+      ]);
+      
+      // Stop the loader timer immediately if successful (prevents spinner if < 500ms)
+      clearTimeout(loadingTimer);
+      
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("Server vrátil neplatná data (HTML místo JSON).");
+      }
+      
+      if (!res.ok) throw new Error(`API Chyba: ${res.status} ${res.statusText}`);
+      
+      return await res.json();
+    } catch (e: any) {
+      if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
+         showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
+      } else {
+         console.warn(`[API] Call to ${url} failed:`, e);
+         showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
+      }
+      return null;
+    } finally {
+        // ALWAYS clear timers and reset pending state
+        clearTimeout(loadingTimer);
+        setIsOperationPending(false); 
+    }
+  };
+
   // Initial Fetch logic
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
       
-      let loadedFromApi = false;
-      
-      // Only attempt API call if mode is 'api'
       if (dataSource === 'api') {
+        // STRICT MODE: Clear everything first to ensure no local bleed-through
+        setAllUsers([]);
+        setProducts([]);
+        setOrders([]);
+        setDiscountCodes([]);
+        setDayConfigs([]);
+        // Force EMPTY settings initially so we don't see mock data if DB fails
+        setSettings(EMPTY_SETTINGS);
+        
         const data = await apiCall('/api/bootstrap', 'GET');
+        
         if (data) {
+            // Success: Load data from API/DB
             setAllUsers(data.users || []);
             setProducts(data.products || []);
             setOrders(data.orders || []);
-            if (data.settings) setSettings(data.settings);
+            // Only set settings if valid, otherwise keep defaults (server should ideally seed defaults)
+            if (data.settings) setSettings(data.settings); 
             setDiscountCodes(data.discountCodes || []);
             setDayConfigs(data.dayConfigs || []);
-            loadedFromApi = true;
+            showNotify("Připojeno k databázi.", 'success');
         } else {
-            setGlobalNotification("Nepodařilo se připojit k databázi. Zobrazuji lokální data.");
+            // Failure: Already notified by apiCall. 
+            // We explicitly leave data empty so user sees "nothing" instead of old local data.
+            // No extra notification needed here, apiCall handles it.
         }
-      }
-
-      // Fallback or Local Mode
-      if (!loadedFromApi) {
-        if (dataSource === 'local') console.log('⚡ Running in LOCAL MEMORY mode');
+      } else {
+        // LOCAL MODE
+        console.log('⚡ Running in LOCAL MEMORY mode');
         setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
         setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
         setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
         setSettings(loadFromStorage('db_settings', DEFAULT_SETTINGS));
         setDiscountCodes(loadFromStorage('db_discounts', []));
         setDayConfigs(loadFromStorage('db_dayconfigs', []));
+        showNotify("Přepnuto na lokální paměť.", 'success');
       }
       
       setIsLoading(false);
@@ -249,15 +300,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     fetchData();
   }, [dataSource]);
 
-  // --- SYNC TO LOCALSTORAGE (Always sync to keep local copy fresh) ---
+  // --- SYNC TO LOCALSTORAGE (Always sync to keep local copy fresh, but only use if in local mode) ---
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
-  useEffect(() => localStorage.setItem('db_users', JSON.stringify(allUsers)), [allUsers]);
-  useEffect(() => localStorage.setItem('db_orders', JSON.stringify(orders)), [orders]);
-  useEffect(() => localStorage.setItem('db_products', JSON.stringify(products)), [products]);
-  useEffect(() => localStorage.setItem('db_discounts', JSON.stringify(discountCodes)), [discountCodes]);
-  useEffect(() => localStorage.setItem('db_settings', JSON.stringify(settings)), [settings]);
-  useEffect(() => localStorage.setItem('db_dayconfigs', JSON.stringify(dayConfigs)), [dayConfigs]);
+  
+  // Sync DB-like data to local storage ONLY if we are in local mode.
+  useEffect(() => {
+    if (dataSource === 'local') {
+      localStorage.setItem('db_users', JSON.stringify(allUsers));
+      localStorage.setItem('db_orders', JSON.stringify(orders));
+      localStorage.setItem('db_products', JSON.stringify(products));
+      localStorage.setItem('db_discounts', JSON.stringify(discountCodes));
+      localStorage.setItem('db_settings', JSON.stringify(settings));
+      localStorage.setItem('db_dayconfigs', JSON.stringify(dayConfigs));
+    }
+  }, [allUsers, orders, products, discountCodes, settings, dayConfigs, dataSource]);
 
   const openAuthModal = () => setIsAuthModalOpen(true);
   const closeAuthModal = () => setIsAuthModalOpen(false);
@@ -272,7 +329,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       return [...prev, { ...product, quantity }];
     });
-    setGlobalNotification(`Produkt "${product.name}" přidán do košíku`);
+    showNotify(`Produkt "${product.name}" přidán do košíku`);
   };
 
   const removeFromCart = (id: string) => {
@@ -305,7 +362,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const isDifferent = JSON.stringify(updatedDiscounts) !== JSON.stringify(appliedDiscounts);
     if (isDifferent) {
       setAppliedDiscounts(updatedDiscounts);
-      if (removedCodes.length > 0) setGlobalNotification(`Slevový kupon ${removedCodes.join(', ')} byl odebrán.`);
+      if (removedCodes.length > 0) showNotify(`Slevový kupon ${removedCodes.join(', ')} byl odebrán.`, 'error');
     }
   }, [cart]);
 
@@ -315,21 +372,32 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return text;
   };
 
-  // --- DATA MODIFIERS (Check dataSource before API call) ---
+  // --- DATA MODIFIERS (Returning Promise<boolean> for UI feedback) ---
 
-  const addOrder = (order: Order) => {
+  const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
       ...order,
       language: language,
       companyDetailsSnapshot: JSON.parse(JSON.stringify(settings.companyDetails)),
       statusHistory: [{ status: order.status, date: new Date().toISOString() }]
     };
-    setOrders(prev => [orderWithHistory, ...prev]);
-    if (dataSource === 'api') apiCall('/api/orders', 'POST', orderWithHistory);
-    setGlobalNotification(`Objednávka #${order.id} byla vytvořena.`);
+    
+    if (dataSource === 'api') {
+      const res = await apiCall('/api/orders', 'POST', orderWithHistory);
+      if (res && res.success) {
+        setOrders(prev => [orderWithHistory, ...prev]);
+        showNotify(`Objednávka #${order.id} byla uložena do DB.`);
+        return true;
+      }
+      return false;
+    } else {
+      setOrders(prev => [orderWithHistory, ...prev]);
+      showNotify(`Objednávka #${order.id} byla vytvořena (Lokálně).`);
+      return true;
+    }
   };
 
-  const updateOrder = (order: Order, sendNotify?: boolean) => {
+  const updateOrder = async (order: Order, sendNotify?: boolean): Promise<boolean> => {
     let updatedOrder = { ...order };
     if (updatedOrder.items.length === 0) {
       updatedOrder.status = OrderStatus.CANCELLED;
@@ -337,89 +405,248 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
          updatedOrder.statusHistory = [...(updatedOrder.statusHistory || []), { status: OrderStatus.CANCELLED, date: new Date().toISOString() }];
       }
     }
-    setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-    if (dataSource === 'api') apiCall('/api/orders', 'POST', updatedOrder);
-    if (updatedOrder.status === OrderStatus.CREATED) setGlobalNotification(`Objednávka #${updatedOrder.id} upravena.`);
-  };
-
-  const updateOrderStatus = (ids: string[], status: OrderStatus, notify?: boolean) => {
-    setOrders(prev => prev.map(o => {
-      if (ids.includes(o.id)) {
-        return {
-          ...o,
-          status,
-          statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }]
-        };
-      }
-      return o;
-    }));
     
-    if (dataSource === 'api') apiCall('/api/orders/status', 'PUT', { ids, status });
-    setGlobalNotification(`Stav objednávek (${ids.length}) změněn na: ${t(`status.${status}`)}`);
+    if (dataSource === 'api') {
+       const res = await apiCall('/api/orders', 'POST', updatedOrder);
+       if (res && res.success) {
+          setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+          if (updatedOrder.status === OrderStatus.CREATED) showNotify(`Objednávka #${updatedOrder.id} aktualizována v DB.`);
+          return true;
+       }
+       return false;
+    } else {
+       setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+       if (updatedOrder.status === OrderStatus.CREATED) showNotify(`Objednávka #${updatedOrder.id} upravena.`);
+       return true;
+    }
   };
 
-  const addProduct = (p: Product) => {
-    setProducts(prev => [...prev, p]);
-    if (dataSource === 'api') apiCall('/api/products', 'POST', p);
-  };
-  const updateProduct = (p: Product) => {
-    setProducts(prev => prev.map(x => x.id === p.id ? p : x));
-    if (dataSource === 'api') apiCall('/api/products', 'POST', p);
-  };
-  const deleteProduct = (id: string) => {
-    setProducts(prev => prev.filter(x => x.id !== id));
-    if (dataSource === 'api') apiCall(`/api/products/${id}`, 'DELETE');
+  const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean): Promise<boolean> => {
+    if (dataSource === 'api') {
+       const res = await apiCall('/api/orders/status', 'PUT', { ids, status });
+       if (res && res.success) {
+          setOrders(prev => prev.map(o => {
+            if (ids.includes(o.id)) {
+              return {
+                ...o,
+                status,
+                statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }]
+              };
+            }
+            return o;
+          }));
+          showNotify(`Stav objednávek (${ids.length}) změněn v DB.`);
+          return true;
+       }
+       return false;
+    } else {
+       setOrders(prev => prev.map(o => {
+          if (ids.includes(o.id)) {
+            return {
+              ...o,
+              status,
+              statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }]
+            };
+          }
+          return o;
+        }));
+        showNotify(`Stav objednávek (${ids.length}) změněn na: ${t(`status.${status}`)}`);
+        return true;
+    }
   };
 
-  const addUser = (name: string, email: string, role: 'customer' | 'admin' | 'driver') => {
-    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return; }
+  const addProduct = async (p: Product): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/products', 'POST', p);
+        if (res && res.success) {
+            setProducts(prev => [...prev, p]);
+            showNotify('Produkt uložen do DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setProducts(prev => [...prev, p]);
+        return true;
+    }
+  };
+
+  const updateProduct = async (p: Product): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/products', 'POST', p);
+        if (res && res.success) {
+            setProducts(prev => prev.map(x => x.id === p.id ? p : x));
+            showNotify('Produkt aktualizován v DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setProducts(prev => prev.map(x => x.id === p.id ? p : x));
+        return true;
+    }
+  };
+
+  const deleteProduct = async (id: string): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall(`/api/products/${id}`, 'DELETE');
+        if (res && res.success) {
+            setProducts(prev => prev.filter(x => x.id !== id));
+            showNotify('Produkt smazán z DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setProducts(prev => prev.filter(x => x.id !== id));
+        return true;
+    }
+  };
+
+  const addUser = async (name: string, email: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
+    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
     const newUser: User = { id: Date.now().toString(), name, email, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') };
-    setAllUsers(prev => [...prev, newUser]);
-    if (dataSource === 'api') apiCall('/api/users', 'POST', newUser);
-    alert(`Uživatel ${name} vytvořen.`);
+    
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', newUser);
+        if (res && res.success) {
+            setAllUsers(prev => [...prev, newUser]);
+            showNotify(`Uživatel ${name} vytvořen v DB.`);
+            return true;
+        }
+        return false;
+    } else {
+        setAllUsers(prev => [...prev, newUser]);
+        showNotify(`Uživatel ${name} vytvořen.`);
+        return true;
+    }
   };
 
-  const updateUser = (u: User) => {
-    setUser(u);
-    setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-    if (dataSource === 'api') apiCall('/api/users', 'POST', u);
+  const updateUser = async (u: User): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', u);
+        if (res && res.success) {
+            setUser(u);
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            showNotify('Uživatel aktualizován v DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setUser(u);
+        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+        return true;
+    }
   };
 
-  const updateUserAdmin = (u: User) => {
-    setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-    if (user && user.id === u.id) setUser(u);
-    if (dataSource === 'api') apiCall('/api/users', 'POST', u);
+  const updateUserAdmin = async (u: User): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', u);
+        if (res && res.success) {
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            if (user && user.id === u.id) setUser(u);
+            showNotify('Uživatel aktualizován v DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+        if (user && user.id === u.id) setUser(u);
+        return true;
+    }
   };
 
-  const updateSettings = (s: GlobalSettings) => {
-    setSettings(s);
-    if (dataSource === 'api') apiCall('/api/settings', 'POST', s);
+  const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/settings', 'POST', s);
+        if (res && res.success) {
+            setSettings(s);
+            showNotify('Nastavení uloženo do DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setSettings(s);
+        return true;
+    }
   };
 
-  const updateDayConfig = (c: DayConfig) => {
-    setDayConfigs(prev => {
-      const exists = prev.find(d => d.date === c.date);
-      return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c];
-    });
-    if (dataSource === 'api') apiCall('/api/calendar', 'POST', c);
+  const updateDayConfig = async (c: DayConfig): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/calendar', 'POST', c);
+        if (res && res.success) {
+            setDayConfigs(prev => {
+              const exists = prev.find(d => d.date === c.date);
+              return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c];
+            });
+            showNotify('Kalendář aktualizován v DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setDayConfigs(prev => {
+          const exists = prev.find(d => d.date === c.date);
+          return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c];
+        });
+        return true;
+    }
   };
 
-  const removeDayConfig = (date: string) => {
-    setDayConfigs(prev => prev.filter(d => d.date !== date));
-    if (dataSource === 'api') apiCall(`/api/calendar/${date}`, 'DELETE');
+  const removeDayConfig = async (date: string): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
+        if (res && res.success) {
+            setDayConfigs(prev => prev.filter(d => d.date !== date));
+            showNotify('Výjimka smazána z DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setDayConfigs(prev => prev.filter(d => d.date !== date));
+        return true;
+    }
   };
 
-  const addDiscountCode = (c: DiscountCode) => {
-    setDiscountCodes(prev => [...prev, c]);
-    if (dataSource === 'api') apiCall('/api/discounts', 'POST', c);
+  const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/discounts', 'POST', c);
+        if (res && res.success) {
+            setDiscountCodes(prev => [...prev, c]);
+            showNotify('Slevový kód uložen do DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setDiscountCodes(prev => [...prev, c]);
+        return true;
+    }
   };
-  const updateDiscountCode = (code: DiscountCode) => {
-    setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x));
-    if (dataSource === 'api') apiCall('/api/discounts', 'POST', code);
+
+  const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/discounts', 'POST', code);
+        if (res && res.success) {
+            setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x));
+            showNotify('Slevový kód aktualizován v DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x));
+        return true;
+    }
   };
-  const deleteDiscountCode = (id: string) => {
-    setDiscountCodes(prev => prev.filter(x => x.id !== id));
-    if (dataSource === 'api') apiCall(`/api/discounts/${id}`, 'DELETE');
+
+  const deleteDiscountCode = async (id: string): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
+        if (res && res.success) {
+            setDiscountCodes(prev => prev.filter(x => x.id !== id));
+            showNotify('Slevový kód smazán z DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setDiscountCodes(prev => prev.filter(x => x.id !== id));
+        return true;
+    }
   };
 
   // --- LOGIC ---
@@ -540,16 +767,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const register = (name: string, email: string, password?: string) => {
     if (allUsers.find(u => u.email === email)) { alert('Existuje.'); return; }
     const newUser: User = { id: Date.now().toString(), name, email, role: 'customer', billingAddresses: [], deliveryAddresses: [], passwordHash: hashPassword(password || '1234') };
-    setAllUsers(prev => [...prev, newUser]); setUser(newUser); 
-    if (dataSource === 'api') apiCall('/api/users', 'POST', newUser);
+    
+    if (dataSource === 'api') {
+        apiCall('/api/users', 'POST', newUser).then(res => {
+            if (res && res.success) {
+                setAllUsers(prev => [...prev, newUser]); 
+                setUser(newUser); 
+            }
+        });
+    } else {
+        setAllUsers(prev => [...prev, newUser]); 
+        setUser(newUser); 
+    }
   };
   const logout = () => setUser(null);
-  const toggleUserBlock = (id: string) => {
+  const toggleUserBlock = async (id: string): Promise<boolean> => {
      const u = allUsers.find(x => x.id === id);
      if (u) { 
         const updated = { ...u, isBlocked: !u.isBlocked };
-        updateUserAdmin(updated); 
+        return await updateUserAdmin(updated); 
      }
+     return false;
   };
   const sendPasswordReset = (email: string) => alert('Reset link odeslán (simulace).');
   const resetPasswordByToken = (t: string, p: string) => ({ success: true, message: 'Heslo změněno' });
@@ -576,7 +814,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <StoreContext.Provider value={{
       dataSource, setDataSource,
-      isLoading, language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
+      isLoading, isOperationPending, // EXPORTED
+      language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,

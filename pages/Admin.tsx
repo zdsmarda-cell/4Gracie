@@ -11,7 +11,7 @@ const RegionModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   region: Partial<DeliveryRegion>;
-  onSave: (region: Partial<DeliveryRegion>) => void;
+  onSave: (region: Partial<DeliveryRegion>) => Promise<void>; // Changed to Promise
   orders: Order[];
 }> = ({ isOpen, onClose, region: initialRegion, onSave, orders }) => {
   const [editingRegion, setEditingRegion] = useState<Partial<DeliveryRegion>>(initialRegion);
@@ -27,7 +27,7 @@ const RegionModal: React.FC<{
 
   if (!isOpen) return null;
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((editingRegion.price || 0) < 0) {
       alert('Cena dopravy nesmí být záporná.');
@@ -39,7 +39,8 @@ const RegionModal: React.FC<{
       alert(`Následující PSČ jsou neplatná (musí mít 5 číslic): ${invalidZips.join(', ')}`);
       return;
     }
-    onSave({ ...editingRegion, zips: rawZips });
+    // Await the save operation
+    await onSave({ ...editingRegion, zips: rawZips });
   };
 
   const addException = () => {
@@ -319,23 +320,26 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const executeDelete = () => {
+  const executeDelete = async () => {
     if (!confirmDelete) return;
+    let success = false;
     switch (confirmDelete.type) {
-      case 'product': deleteProduct(confirmDelete.id); break;
-      case 'discount': deleteDiscountCode(confirmDelete.id); break;
-      case 'region': updateSettings({...settings, deliveryRegions: settings.deliveryRegions.filter(r => r.id !== confirmDelete.id)}); break;
-      case 'packaging': updateSettings({...settings, packaging: {...settings.packaging, types: settings.packaging.types.filter(p => p.id !== confirmDelete.id)}}); break;
-      case 'exception': removeDayConfig(confirmDelete.id); break;
+      case 'product': success = await deleteProduct(confirmDelete.id); break;
+      case 'discount': success = await deleteDiscountCode(confirmDelete.id); break;
+      case 'region': success = await updateSettings({...settings, deliveryRegions: settings.deliveryRegions.filter(r => r.id !== confirmDelete.id)}); break;
+      case 'packaging': success = await updateSettings({...settings, packaging: {...settings.packaging, types: settings.packaging.types.filter(p => p.id !== confirmDelete.id)}}); break;
+      case 'exception': success = await removeDayConfig(confirmDelete.id); break;
     }
-    setConfirmDelete(null);
+    if (success) setConfirmDelete(null);
   };
 
-  const handleBulkStatusChange = (status: OrderStatus) => {
+  const handleBulkStatusChange = async (status: OrderStatus) => {
     if (selectedOrders.length === 0 || !status) return;
-    updateOrderStatus(selectedOrders, status, notifyCustomer);
-    setSelectedOrders([]);
-    setNotifyCustomer(false); 
+    const success = await updateOrderStatus(selectedOrders, status, notifyCustomer);
+    if (success) {
+      setSelectedOrders([]);
+      setNotifyCustomer(false); 
+    }
   };
 
   const handleOrderStatusChange = (newStatus: OrderStatus) => {
@@ -385,7 +389,7 @@ export const Admin: React.FC = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleUserAddressSave = () => {
+  const handleUserAddressSave = async () => {
     if(!editingUser || !editingAddress || !addressModalType) return;
     if (!editingAddress.street || !editingAddress.city || !editingAddress.zip) {
       alert("Vyplňte povinná pole (Ulice, Město, PSČ)");
@@ -398,17 +402,19 @@ export const Admin: React.FC = () => {
       : [...editingUser[key], newAddr];
     const updatedUser = { ...editingUser, [key]: updatedAddresses };
     setEditingUser(updatedUser);
-    updateUserAdmin(updatedUser);
-    setAddressModalType(null);
-    setEditingAddress(null);
+    const success = await updateUserAdmin(updatedUser);
+    if(success) {
+      setAddressModalType(null);
+      setEditingAddress(null);
+    }
   };
 
-  const deleteUserAddress = (type: 'billing'|'delivery', addrId: string) => {
+  const deleteUserAddress = async (type: 'billing'|'delivery', addrId: string) => {
     if(!editingUser) return;
     const key = type === 'billing' ? 'billingAddresses' : 'deliveryAddresses';
     const updatedUser = { ...editingUser, [key]: editingUser[key].filter(a => a.id !== addrId) };
     setEditingUser(updatedUser);
-    updateUserAdmin(updatedUser);
+    await updateUserAdmin(updatedUser);
   };
 
   const handleOrderAddProduct = (p: Product) => {
@@ -533,19 +539,23 @@ export const Admin: React.FC = () => {
   };
 
   // Region Save Logic
-  const saveRegion = (updatedRegion: Partial<DeliveryRegion>) => {
+  const saveRegion = async (updatedRegion: Partial<DeliveryRegion>) => {
+    let success = false;
     if (updatedRegion.id) {
-      updateSettings({
+      success = await updateSettings({
         ...settings,
         deliveryRegions: settings.deliveryRegions.map(r => r.id === updatedRegion.id ? updatedRegion as DeliveryRegion : r)
       });
     } else {
-      updateSettings({
+      success = await updateSettings({
         ...settings,
         deliveryRegions: [...settings.deliveryRegions, { ...updatedRegion, id: 'reg' + Date.now(), enabled: true } as DeliveryRegion]
       });
     }
-    setIsRegionModalOpen(false);
+    if (success) {
+      setIsRegionModalOpen(false);
+      setEditingRegion(null); // Reset form state
+    }
   };
 
   // --- RENDER ---
@@ -837,7 +847,10 @@ export const Admin: React.FC = () => {
                       type="number" 
                       className="w-20 border rounded p-1 text-right text-sm" 
                       value={val} 
-                      onChange={e => updateSettings({ ...settings, defaultCapacities: { ...settings.defaultCapacities, [cat]: Number(e.target.value) } })} 
+                      onChange={async e => {
+                         const val = Number(e.target.value);
+                         await updateSettings({ ...settings, defaultCapacities: { ...settings.defaultCapacities, [cat]: val } });
+                      }}
                     />
                   </div>
                 ))}
@@ -1235,7 +1248,7 @@ export const Admin: React.FC = () => {
                  </div>
                </div>
              </div>
-             <div className="p-6 bg-gray-50 border-t flex gap-4"><button onClick={() => setIsOrderModalOpen(false)} className="flex-1 py-3 bg-white border rounded-xl font-bold text-sm uppercase transition">{t('admin.cancel')}</button><button onClick={() => { updateOrder(editingOrder); setIsOrderModalOpen(false); }} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-sm uppercase shadow-lg transition">{t('admin.save_changes')}</button></div>
+             <div className="p-6 bg-gray-50 border-t flex gap-4"><button onClick={() => setIsOrderModalOpen(false)} className="flex-1 py-3 bg-white border rounded-xl font-bold text-sm uppercase transition">{t('admin.cancel')}</button><button onClick={async () => { const success = await updateOrder(editingOrder); if(success) setIsOrderModalOpen(false); }} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-sm uppercase shadow-lg transition">{t('admin.save_changes')}</button></div>
           </div>
          </div>
       )}
@@ -1296,13 +1309,22 @@ export const Admin: React.FC = () => {
       {/* PRODUCT MODAL */}
       {isProductModalOpen && editingProduct && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-           <form onSubmit={(e) => { 
+           <form onSubmit={async (e) => { 
              e.preventDefault(); 
              if ((editingProduct.price || 0) < 0 || (editingProduct.workload || 0) < 0 || (editingProduct.volume || 0) < 0) {
                alert('Cena, pracnost a objem nesmí být záporné.');
                return;
              }
-             if(editingProduct.id) updateProduct(editingProduct as Product); else addProduct({...editingProduct, id: 'p' + Date.now()} as Product); setIsProductModalOpen(false); 
+             let success = false;
+             if(editingProduct.id) {
+                success = await updateProduct(editingProduct as Product);
+             } else {
+                success = await addProduct({...editingProduct, id: 'p' + Date.now()} as Product);
+             }
+             if(success) {
+                setIsProductModalOpen(false); 
+                setEditingProduct(null); // Clear form
+             }
            }} className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl p-8 space-y-6 overflow-y-auto max-h-[90vh]">
              <h2 className="text-2xl font-serif font-bold text-primary">{editingProduct.id ? t('admin.edit_product') : t('admin.add_product')}</h2>
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1408,7 +1430,16 @@ export const Admin: React.FC = () => {
       {/* Day Config Modal */}
       {isDayConfigModalOpen && editingDayConfig && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-          <form onSubmit={(e) => { e.preventDefault(); if(editingDayConfig.date) updateDayConfig(editingDayConfig); setIsDayConfigModalOpen(false); }} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+          <form onSubmit={async (e) => { 
+            e.preventDefault(); 
+            if(editingDayConfig.date) {
+               const success = await updateDayConfig(editingDayConfig);
+               if(success) {
+                 setIsDayConfigModalOpen(false);
+                 setEditingDayConfig(null);
+               }
+            } 
+          }} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
             <h3 className="font-bold text-lg">{t('admin.exceptions')}</h3>
             <input type="date" required className="w-full border rounded p-2" value={editingDayConfig.date} onChange={e => setEditingDayConfig({...editingDayConfig, date: e.target.value})} disabled={!!dayConfigs.find(d => d.date === editingDayConfig.date && d !== editingDayConfig)} />
             <div className="flex items-center gap-2">
@@ -1434,7 +1465,7 @@ export const Admin: React.FC = () => {
       {/* Discount Modal */}
       {isDiscountModalOpen && editingDiscount && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-          <form onSubmit={(e) => { 
+          <form onSubmit={async (e) => { 
             e.preventDefault(); 
             if(editingDiscount.value && editingDiscount.value < 0) return alert('Hodnota slevy nesmí být záporná.');
             
@@ -1445,9 +1476,17 @@ export const Admin: React.FC = () => {
               return;
             }
 
-            if(editingDiscount.id) updateDiscountCode(editingDiscount as DiscountCode); 
-            else addDiscountCode({...editingDiscount, id: 'd'+Date.now(), usageCount: 0, totalSaved: 0, enabled: true} as DiscountCode); 
-            setIsDiscountModalOpen(false); 
+            let success = false;
+            if(editingDiscount.id) {
+               success = await updateDiscountCode(editingDiscount as DiscountCode); 
+            } else {
+               success = await addDiscountCode({...editingDiscount, id: 'd'+Date.now(), usageCount: 0, totalSaved: 0, enabled: true} as DiscountCode); 
+            }
+            
+            if(success) {
+               setIsDiscountModalOpen(false);
+               setEditingDiscount(null);
+            }
           }} className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <h3 className="font-bold text-lg">{editingDiscount.id ? t('admin.edit_discount') : t('admin.add_discount')}</h3>
             <div className="grid grid-cols-2 gap-4">
@@ -1513,13 +1552,16 @@ export const Admin: React.FC = () => {
       {/* Payment Method Edit Modal */}
       {isPaymentModalOpen && editingPayment && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-          <form onSubmit={(e) => { 
+          <form onSubmit={async (e) => { 
             e.preventDefault(); 
-            updateSettings({
+            const success = await updateSettings({
               ...settings, 
               paymentMethods: settings.paymentMethods.map(pm => pm.id === editingPayment.id ? editingPayment : pm)
             });
-            setIsPaymentModalOpen(false); 
+            if(success) {
+              setIsPaymentModalOpen(false);
+              setEditingPayment(null);
+            }
           }} className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
             <h3 className="font-bold text-lg">Upravit platební metodu</h3>
             <div>
@@ -1538,15 +1580,22 @@ export const Admin: React.FC = () => {
       {/* Packaging Modal */}
       {isPackagingModalOpen && editingPackaging && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-          <form onSubmit={(e) => { 
+          <form onSubmit={async (e) => { 
             e.preventDefault(); 
             if ((editingPackaging.volume || 0) < 0 || (editingPackaging.price || 0) < 0) {
               alert('Cena ani objem nesmí být záporné.');
               return;
             }
-            if(editingPackaging.id) updateSettings({...settings, packaging: {...settings.packaging, types: settings.packaging.types.map(t => t.id === editingPackaging.id ? editingPackaging as PackagingType : t)}}); 
-            else updateSettings({...settings, packaging: {...settings.packaging, types: [...settings.packaging.types, {...editingPackaging, id: 'pkg'+Date.now()} as PackagingType]}}); 
-            setIsPackagingModalOpen(false); 
+            let success = false;
+            if(editingPackaging.id) {
+               success = await updateSettings({...settings, packaging: {...settings.packaging, types: settings.packaging.types.map(t => t.id === editingPackaging.id ? editingPackaging as PackagingType : t)}}); 
+            } else {
+               success = await updateSettings({...settings, packaging: {...settings.packaging, types: [...settings.packaging.types, {...editingPackaging, id: 'pkg'+Date.now()} as PackagingType]}}); 
+            }
+            if(success) {
+               setIsPackagingModalOpen(false);
+               setEditingPackaging(null);
+            }
           }} className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
             <h3 className="font-bold text-lg">{t('admin.pkg_new')}</h3>
             <input type="text" placeholder="Název" required className="w-full border rounded p-2" value={editingPackaging.name || ''} onChange={e => setEditingPackaging({...editingPackaging, name: e.target.value})} />
@@ -1695,7 +1744,7 @@ export const Admin: React.FC = () => {
             </div>
             <div className="p-6 bg-gray-50 border-t flex gap-4">
                <button onClick={() => setIsUserModalOpen(false)} className="flex-1 py-3 bg-white border rounded-xl font-bold uppercase text-xs">{t('admin.cancel')}</button>
-               <button onClick={() => { updateUserAdmin(editingUser); setIsUserModalOpen(false); }} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold uppercase text-xs shadow-lg">{t('common.save')}</button>
+               <button onClick={async () => { const success = await updateUserAdmin(editingUser); if(success) setIsUserModalOpen(false); }} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold uppercase text-xs shadow-lg">{t('common.save')}</button>
             </div>
           </div>
         </div>
@@ -1712,7 +1761,13 @@ export const Admin: React.FC = () => {
             <div className="bg-blue-50 p-3 rounded text-xs text-blue-700">Uživateli bude odeslán email s odkazem pro nastavení hesla.</div>
             <div className="flex gap-2 mt-4">
               <button onClick={() => setIsAddUserModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded text-sm font-bold">{t('admin.cancel')}</button>
-              <button onClick={() => { addUser(newUserForm.name, newUserForm.email, newUserForm.role); setIsAddUserModalOpen(false); }} className="flex-1 py-2 bg-primary text-white rounded text-sm font-bold">{t('common.save')}</button>
+              <button onClick={async () => { 
+                const success = await addUser(newUserForm.name, newUserForm.email, newUserForm.role); 
+                if(success) {
+                  setIsAddUserModalOpen(false); 
+                  setNewUserForm({ name: '', email: '', role: 'customer' }); // Reset form
+                }
+              }} className="flex-1 py-2 bg-primary text-white rounded text-sm font-bold">{t('common.save')}</button>
             </div>
           </div>
         </div>
