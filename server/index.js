@@ -92,6 +92,70 @@ const sendEmail = async (to, subject, html) => {
     }
 };
 
+// --- EMAIL TEMPLATE GENERATOR ---
+const generateOrderEmailHtml = (order, title, subTitle) => {
+    const itemsHtml = order.items.map(item => `
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.quantity}x</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${item.name}</strong></td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${item.price * item.quantity} Kč</td>
+      </tr>
+    `).join('');
+
+    const discountSum = order.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
+    const deliveryFee = order.deliveryFee || 0;
+    const packagingFee = order.packagingFee || 0;
+    const itemTotal = order.items.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+    const finalTotal = Math.max(0, itemTotal - discountSum) + packagingFee + deliveryFee;
+
+    const discountsHtml = order.appliedDiscounts?.map(d => `
+      <tr>
+        <td colspan="2" style="padding: 8px; color: green;">Sleva (${d.code})</td>
+        <td style="padding: 8px; text-align: right; color: green;">-${d.amount} Kč</td>
+      </tr>
+    `).join('') || '';
+
+    return `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <h1 style="color: #1f2937;">${title}</h1>
+        <p>${subTitle}</p>
+        
+        <h3 style="margin-top: 30px;">Detail objednávky #${order.id}</h3>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+          <thead>
+            <tr style="background-color: #f3f4f6;">
+              <th style="padding: 8px; text-align: left;">Ks</th>
+              <th style="padding: 8px; text-align: left;">Položka</th>
+              <th style="padding: 8px; text-align: right;">Cena</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHtml}
+            ${discountsHtml}
+            <tr>
+              <td colspan="2" style="padding: 8px; color: #666;">Balné</td>
+              <td style="padding: 8px; text-align: right;">${packagingFee} Kč</td>
+            </tr>
+            ${deliveryFee > 0 ? `
+            <tr>
+              <td colspan="2" style="padding: 8px; color: #666;">Doprava</td>
+              <td style="padding: 8px; text-align: right;">${deliveryFee} Kč</td>
+            </tr>` : ''}
+            <tr style="font-size: 1.2em; font-weight: bold; background-color: #f9fafb;">
+              <td colspan="2" style="padding: 12px; border-top: 2px solid #ddd;">CELKEM</td>
+              <td style="padding: 12px; border-top: 2px solid #ddd; text-align: right; color: #9333ea;">${finalTotal} Kč</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>Datum doručení: <strong>${order.deliveryDate}</strong></p>
+        
+        <br/>
+        <p style="font-size: 0.9em; color: #666;">Děkujeme, že využíváte naše služby.<br/>Tým 4Gracie</p>
+      </div>
+    `;
+};
+
 // --- MOCK DATA STORE (Fallback) ---
 const DEFAULT_SETTINGS_SEED = {
   defaultCapacities: { 'warm': 1000, 'cold': 2000, 'dessert': 500, 'drink': 5000 },
@@ -347,12 +411,6 @@ app.post('/api/auth/reset-password-confirm', withDb(async (req, res, db) => {
         }
 
         // Update password hash inside the JSON data AND update the users record
-        // Note: In this architecture, passwordHash is inside the JSON blob 'data', 
-        // but we might want to store it separately or ensure JSON update is correct.
-        // The table has: id, email, role, data (JSON).
-        // We need to fetch the existing data, update the hash, and save back.
-        
-        // Use JSON_SET for efficient atomic update
         await db.query(`UPDATE users SET data=JSON_SET(data, '$.passwordHash', ?) WHERE email=?`, [newPasswordHash, email]);
         
         res.json({ success: true, message: 'Heslo bylo úspěšně změněno. Nyní se můžete přihlásit.' });
@@ -365,26 +423,19 @@ app.post('/api/auth/reset-password-confirm', withDb(async (req, res, db) => {
 
 app.post('/api/orders', withDb(async (req, res, db) => {
   const o = req.body;
-  const isNew = !o.statusHistory || o.statusHistory.length <= 1; // Simplistic check if it's a fresh creation or first insert
   
   await db.query('INSERT INTO orders (id, user_id, delivery_date, status, total_price, data) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=?, total_price=?, data=?', [o.id, o.userId, o.deliveryDate, o.status, o.totalPrice, JSON.stringify(o), o.status, o.totalPrice, JSON.stringify(o)]);
   
   // Send Email on New Order (if status is CREATED)
   if (o.status === 'created' && transporter) {
-      // Find user email from DB or order (Order has userName, but userId links to users table. Order object might not have email directly if not in snapshots, but let's try to get it from DB)
       const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [o.userId]);
       const userEmail = userRows.length > 0 ? userRows[0].email : null;
       
       if (userEmail) {
           const subject = `Potvrzení objednávky #${o.id}`;
-          const html = `
-            <h1>Děkujeme za vaši objednávku!</h1>
-            <p>Vaše objednávka <strong>#${o.id}</strong> byla přijata ke zpracování.</p>
-            <p>Datum doručení: ${o.deliveryDate}</p>
-            <p>Celková cena: <strong>${o.totalPrice + o.packagingFee + (o.deliveryFee||0)} Kč</strong></p>
-            <br/>
-            <p>Tým 4Gracie</p>
-          `;
+          const subTitle = `Vaše objednávka <strong>#${o.id}</strong> byla přijata ke zpracování.`;
+          const html = generateOrderEmailHtml(o, 'Děkujeme za vaši objednávku!', subTitle);
+          
           sendEmail(userEmail, subject, html);
       }
   }
@@ -404,69 +455,9 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
               const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [orderData.userId]);
               
               if (userRows.length > 0) {
-                  const itemsHtml = orderData.items.map(item => `
-                    <tr>
-                      <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.quantity}x</td>
-                      <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${item.name}</strong></td>
-                      <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${item.price * item.quantity} Kč</td>
-                    </tr>
-                  `).join('');
-
-                  const discountSum = orderData.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
-                  // Ensure we handle potential undefined deliveryFee gracefully
-                  const deliveryFee = orderData.deliveryFee || 0;
-                  const packagingFee = orderData.packagingFee || 0;
-                  const itemTotal = orderData.items.reduce((acc, i) => acc + (i.price * i.quantity), 0);
-                  const finalTotal = Math.max(0, itemTotal - discountSum) + packagingFee + deliveryFee;
-
-                  const discountsHtml = orderData.appliedDiscounts?.map(d => `
-                    <tr>
-                      <td colspan="2" style="padding: 8px; color: green;">Sleva (${d.code})</td>
-                      <td style="padding: 8px; text-align: right; color: green;">-${d.amount} Kč</td>
-                    </tr>
-                  `).join('') || '';
-
                   const subject = `Aktualizace objednávky #${id}`;
-                  const html = `
-                    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-                      <h1 style="color: #1f2937;">Změna stavu objednávky</h1>
-                      <p>Vaše objednávka <strong>#${id}</strong> má nyní stav:</p>
-                      <h2 style="color: #9333ea; border-bottom: 2px solid #9333ea; padding-bottom: 10px; display: inline-block;">${req.body.status.toUpperCase()}</h2>
-                      
-                      <h3 style="margin-top: 30px;">Rekapitulace objednávky</h3>
-                      <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-                        <thead>
-                          <tr style="background-color: #f3f4f6;">
-                            <th style="padding: 8px; text-align: left;">Ks</th>
-                            <th style="padding: 8px; text-align: left;">Položka</th>
-                            <th style="padding: 8px; text-align: right;">Cena</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          ${itemsHtml}
-                          ${discountsHtml}
-                          <tr>
-                            <td colspan="2" style="padding: 8px; color: #666;">Balné</td>
-                            <td style="padding: 8px; text-align: right;">${packagingFee} Kč</td>
-                          </tr>
-                          ${deliveryFee > 0 ? `
-                          <tr>
-                            <td colspan="2" style="padding: 8px; color: #666;">Doprava</td>
-                            <td style="padding: 8px; text-align: right;">${deliveryFee} Kč</td>
-                          </tr>` : ''}
-                          <tr style="font-size: 1.2em; font-weight: bold; background-color: #f9fafb;">
-                            <td colspan="2" style="padding: 12px; border-top: 2px solid #ddd;">CELKEM</td>
-                            <td style="padding: 12px; border-top: 2px solid #ddd; text-align: right; color: #9333ea;">${finalTotal} Kč</td>
-                          </tr>
-                        </tbody>
-                      </table>
-
-                      <p>Datum doručení: <strong>${orderData.deliveryDate}</strong></p>
-                      
-                      <br/>
-                      <p style="font-size: 0.9em; color: #666;">Děkujeme, že využíváte naše služby.<br/>Tým 4Gracie</p>
-                    </div>
-                  `;
+                  const subTitle = `Vaše objednávka <strong>#${id}</strong> má nyní stav: <strong style="color: #9333ea;">${req.body.status.toUpperCase()}</strong>`;
+                  const html = generateOrderEmailHtml(orderData, 'Změna stavu objednávky', subTitle);
                   
                   sendEmail(userRows[0].email, subject, html);
               }
