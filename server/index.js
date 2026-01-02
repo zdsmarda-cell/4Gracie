@@ -5,18 +5,41 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
 import https from 'https';
+import http from 'http';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+// Fix for __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// 1. Explicitly load .env from the current directory (server/)
+const envPath = path.resolve(__dirname, '.env');
+console.log(`📂 Loading configuration from: ${envPath}`);
+
+const result = dotenv.config({ path: envPath });
+if (result.error) {
+  console.warn("⚠️ Warning: .env file not found at specified path. Trying default lookup...");
+  dotenv.config(); // Fallback to default
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Log loaded configuration (masking sensitive data)
+console.log('🔧 Active Configuration:');
+console.log(`   - DB Host: ${process.env.DB_HOST || 'UNDEFINED (Using default: localhost)'}`);
+console.log(`   - DB User: ${process.env.DB_USER || 'UNDEFINED (Using default: root)'}`);
+console.log(`   - DB Name: ${process.env.DB_NAME || 'UNDEFINED (Using default: 4gracie_db)'}`);
+console.log(`   - DB Pass: ${process.env.DB_PASSWORD ? '******' : '(empty)'}`);
+console.log(`   - SSL Key: ${process.env.SSL_KEY_PATH || 'Not set'}`);
+console.log(`   - SSL Cert: ${process.env.SSL_CERT_PATH || 'Not set'}`);
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 
 // --- MOCK DATA STORE (Fallback if DB is missing) ---
-// Note: Only used for reference or if we wanted to seed from file
 const DEFAULT_SETTINGS_SEED = {
   defaultCapacities: {
     'warm': 1000,
@@ -57,7 +80,6 @@ const DEFAULT_SETTINGS_SEED = {
 // Database Connection Helper
 let pool = null;
 
-// Initialize Tables Schema & Seed Defaults
 const initDb = async (db) => {
   try {
     const tableQueries = [
@@ -106,7 +128,6 @@ const initDb = async (db) => {
       await db.query(query);
     }
 
-    // Check if settings exist, if not, SEED defaults
     const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
     if (settingsRows.length === 0) {
        console.log('🌱 Seeding default settings into DB...');
@@ -122,6 +143,7 @@ const initDb = async (db) => {
 const getDb = async () => {
   if (pool) return pool;
   try {
+    console.log('⏳ Attempting to connect to database...');
     pool = mysql.createPool({
       host: process.env.DB_HOST || 'localhost',
       user: process.env.DB_USER || 'root',
@@ -130,19 +152,27 @@ const getDb = async () => {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      connectTimeout: 5000 
+      connectTimeout: 10000, // Increased timeout
+      ssl: {
+        rejectUnauthorized: false // Often required for remote connections if certs aren't perfect
+      }
     });
+    
     // Test connection
     const connection = await pool.getConnection();
-    console.log('✅ Connected to MariaDB');
+    console.log(`✅ Connected to MariaDB at ${process.env.DB_HOST || 'localhost'}`);
     
-    // Run Init
     await initDb(connection);
     
     connection.release();
     return pool;
   } catch (err) {
-    console.error('❌ Database connection failed:', err.message);
+    console.error(`❌ Database connection failed [${process.env.DB_HOST}]:`, err.message);
+    if (err.code === 'ECONNREFUSED') {
+       console.error('   -> Connection refused. Check if IP/Port is correct and firewall allows access.');
+    } else if (err.code === 'ER_ACCESS_DENIED_ERROR') {
+       console.error('   -> Access denied. Check username/password.');
+    }
     pool = null; 
     return null;
   }
@@ -156,10 +186,8 @@ const parseData = (rows) => rows.map(row => {
 
 // --- API ENDPOINTS ---
 
-// 1. BOOTSTRAP (Load everything on startup)
 app.get('/api/bootstrap', async (req, res) => {
   const db = await getDb();
-  
   if (db) {
     try {
       const [users] = await db.query('SELECT * FROM users');
@@ -178,19 +206,17 @@ app.get('/api/bootstrap', async (req, res) => {
         dayConfigs: parseData(calendar)
       });
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Database query failed' });
+      console.error('Query Error:', err);
+      res.status(500).json({ error: 'Database query failed: ' + err.message });
     }
   } else {
     res.status(500).json({ error: 'Database connection failed' });
   }
 });
 
-// 2. ORDERS
 app.post('/api/orders', async (req, res) => {
   const order = req.body;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query(
@@ -210,10 +236,8 @@ app.post('/api/orders', async (req, res) => {
 app.put('/api/orders/status', async (req, res) => {
   const { ids, status } = req.body;
   const db = await getDb();
-  
   if (db) {
     try {
-      // Better approach for consistency: Iterate and update
       for (const id of ids) {
          await db.query(`UPDATE orders SET status = ?, data = JSON_SET(data, '$.status', ?) WHERE id = ?`, [status, status, id]);
       }
@@ -227,11 +251,9 @@ app.put('/api/orders/status', async (req, res) => {
   }
 });
 
-// 3. PRODUCTS
 app.post('/api/products', async (req, res) => {
   const product = req.body;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query(
@@ -251,7 +273,6 @@ app.post('/api/products', async (req, res) => {
 app.delete('/api/products/:id', async (req, res) => {
   const { id } = req.params;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query('UPDATE products SET is_deleted = TRUE WHERE id = ?', [id]);
@@ -265,11 +286,9 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// 4. USERS
 app.post('/api/users', async (req, res) => {
   const user = req.body;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query(
@@ -286,11 +305,9 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
-// 5. SETTINGS
 app.post('/api/settings', async (req, res) => {
   const settings = req.body;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query(
@@ -307,11 +324,9 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
-// 6. DISCOUNTS
 app.post('/api/discounts', async (req, res) => {
   const discount = req.body;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query(
@@ -331,7 +346,6 @@ app.post('/api/discounts', async (req, res) => {
 app.delete('/api/discounts/:id', async (req, res) => {
   const { id } = req.params;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query('DELETE FROM discounts WHERE id = ?', [id]);
@@ -345,11 +359,9 @@ app.delete('/api/discounts/:id', async (req, res) => {
   }
 });
 
-// 7. CALENDAR
 app.post('/api/calendar', async (req, res) => {
   const config = req.body;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query(
@@ -369,7 +381,6 @@ app.post('/api/calendar', async (req, res) => {
 app.delete('/api/calendar/:date', async (req, res) => {
   const { date } = req.params;
   const db = await getDb();
-  
   if (db) {
     try {
       await db.query('DELETE FROM calendar_exceptions WHERE date = ?', [date]);
@@ -386,12 +397,19 @@ app.delete('/api/calendar/:date', async (req, res) => {
 // --- SERVER STARTUP (HTTP/HTTPS) ---
 
 const startServer = () => {
-  // Check for SSL configuration in ENV
-  if (process.env.SSL_KEY_PATH && process.env.SSL_CERT_PATH) {
+  const keyPath = process.env.SSL_KEY_PATH;
+  const certPath = process.env.SSL_CERT_PATH;
+  
+  if (keyPath && certPath) {
+    // Try HTTPS
     try {
+      if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+        throw new Error(`SSL files not found. Key: ${keyPath}, Cert: ${certPath}`);
+      }
+      
       const httpsOptions = {
-        key: fs.readFileSync(process.env.SSL_KEY_PATH),
-        cert: fs.readFileSync(process.env.SSL_CERT_PATH)
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath)
       };
       
       https.createServer(httpsOptions, app).listen(PORT, () => {
@@ -399,12 +417,13 @@ const startServer = () => {
       });
       return;
     } catch (error) {
-      console.error('⚠️ Failed to start HTTPS server (check SSL paths), falling back to HTTP:', error.message);
+      console.error('⚠️ HTTPS Setup Failed:', error.message);
+      console.log('➡️ Falling back to HTTP...');
     }
   }
 
-  // Fallback or default HTTP
-  app.listen(PORT, () => {
+  // HTTP Fallback
+  http.createServer(app).listen(PORT, () => {
     console.log(`🔓 Backend running on http://localhost:${PORT}`);
   });
 };
