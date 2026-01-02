@@ -43,16 +43,31 @@ app.use(bodyParser.json({ limit: '10mb' }));
 // --- EMAIL SETUP ---
 let transporter = null;
 if (process.env.SMTP_HOST) {
-    transporter = nodemailer.createTransport({
+    const smtpConfig = {
         host: process.env.SMTP_HOST,
-        port: process.env.SMTP_PORT || 465,
+        port: Number(process.env.SMTP_PORT) || 465,
         secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
         auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS,
         },
+        // CRITICAL FIX for Postfix "SSL_accept error":
+        // Allow self-signed certificates or hostname mismatches within internal network
+        tls: {
+            rejectUnauthorized: false
+        }
+    };
+
+    transporter = nodemailer.createTransport(smtpConfig);
+    
+    // Verify connection configuration
+    transporter.verify(function (error, success) {
+        if (error) {
+            console.error('❌ SMTP Connection Error:', error);
+        } else {
+            console.log(`📧 SMTP Server is ready to take our messages (${process.env.SMTP_HOST})`);
+        }
     });
-    console.log(`📧 Email service configured for ${process.env.SMTP_HOST}`);
 } else {
     console.warn('⚠️ SMTP settings not found. Emails will NOT be sent.');
 }
@@ -308,8 +323,12 @@ app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
       </div>
     `;
     
-    await sendEmail(email, 'Obnova hesla - 4Gracie', html);
-    res.json({ success: true, message: 'Email s instrukcemi byl odeslán.' });
+    const sent = await sendEmail(email, 'Obnova hesla - 4Gracie', html);
+    if (sent) {
+        res.json({ success: true, message: 'Email s instrukcemi byl odeslán.' });
+    } else {
+        res.status(500).json({ success: false, message: 'Chyba při odesílání emailu.' });
+    }
   } else {
     res.json({ success: false, message: 'Chyba serveru: Emailová služba není nakonfigurována.' });
   }
