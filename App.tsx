@@ -1,0 +1,188 @@
+
+import React, { useEffect, useState } from 'react';
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { StoreProvider, useStore } from './context/StoreContext';
+import { Navbar } from './components/Navbar';
+import { AuthModal } from './components/AuthModal';
+import { Menu } from './pages/Menu';
+import { Cart } from './pages/Cart';
+import { Admin } from './pages/Admin';
+import { Profile } from './pages/Profile';
+import { ResetPassword } from './pages/ResetPassword';
+import { X, Info, Truck } from 'lucide-react';
+
+// Login Overlay Mock (for demo purposes) - Updated to use AuthModal trigger for consistency
+const LoginMock = () => {
+  const { user, login } = useStore();
+  if (user) return null;
+  
+  return (
+    <div className="fixed bottom-4 right-4 bg-white p-4 shadow-xl rounded-lg border border-gray-200 z-50">
+      <p className="text-xs text-gray-500 mb-2">Rychlé Demo Přihlášení:</p>
+      <div className="space-x-2">
+        <button onClick={() => login('jan.novak@example.com', '1234')} className="px-3 py-1 bg-gray-800 text-white text-xs rounded">User (Heslo: 1234)</button>
+        <button onClick={() => login('info@4gracie.cz', '1234')} className="px-3 py-1 bg-red-800 text-white text-xs rounded">Admin (Heslo: 1234)</button>
+      </div>
+    </div>
+  );
+};
+
+const NotificationToast = () => {
+  const { globalNotification, dismissNotification } = useStore();
+
+  useEffect(() => {
+    if (globalNotification) {
+      const timer = setTimeout(dismissNotification, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [globalNotification, dismissNotification]);
+
+  if (!globalNotification) return null;
+
+  return (
+    <div className="fixed top-24 right-4 max-w-sm w-full bg-white border border-l-4 border-l-accent shadow-xl rounded-lg pointer-events-auto z-[100] animate-in slide-in-from-right-10 duration-300">
+      <div className="p-4 flex items-start">
+        <div className="flex-shrink-0">
+          <Info className="h-5 w-5 text-accent" />
+        </div>
+        <div className="ml-3 w-0 flex-1 pt-0.5">
+          <p className="text-sm font-medium text-gray-900">Upozornění</p>
+          <p className="mt-1 text-xs text-gray-500">{globalNotification}</p>
+        </div>
+        <div className="ml-4 flex-shrink-0 flex">
+          <button
+            onClick={dismissNotification}
+            className="bg-white rounded-md inline-flex text-gray-400 hover:text-gray-500 focus:outline-none"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DeliveryRegionsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
+  const { settings } = useStore();
+  const regions = settings.deliveryRegions.filter(r => r.enabled);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+          <h2 className="text-xl font-serif font-bold text-primary flex items-center">
+            <Truck className="mr-2 text-accent" /> Rozvozové regiony
+          </h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={20}/></button>
+        </div>
+        <div className="p-6 overflow-y-auto space-y-6">
+          {regions.length === 0 ? (
+            <p className="text-center text-gray-500">Momentálně nejsou aktivní žádné rozvozové regiony.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-6">
+              {regions.map(region => (
+                <div key={region.id} className="border rounded-xl p-4 bg-gray-50">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <h3 className="font-bold text-lg">{region.name}</h3>
+                      <p className="text-xs text-gray-500">
+                        Standardní čas rozvozu: <strong>{region.deliveryTimeStart || '?'} - {region.deliveryTimeEnd || '?'}</strong>
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="block font-bold text-accent">{region.price} Kč</span>
+                      <span className="text-[10px] text-gray-400">Zdarma od {region.freeFrom} Kč</span>
+                    </div>
+                  </div>
+                  
+                  <div className="mb-4">
+                    <h4 className="text-xs font-bold uppercase text-gray-400 mb-1">Doručovací PSČ</h4>
+                    <p className="text-xs font-mono text-gray-600 leading-relaxed">{region.zips.join(', ')}</p>
+                  </div>
+
+                  {region.exceptions && region.exceptions.length > 0 && (
+                    <div className="bg-white border rounded-lg p-3">
+                      <h4 className="text-xs font-bold uppercase text-red-500 mb-2">Výjimky v kalendáři</h4>
+                      <div className="space-y-1">
+                        {region.exceptions.map((ex, idx) => (
+                          <div key={idx} className="flex justify-between text-xs">
+                            <span className="font-mono font-bold">{ex.date}</span>
+                            <span>
+                              {ex.isOpen ? (
+                                <span className="text-blue-600">Změna času: {ex.deliveryTimeStart} - {ex.deliveryTimeEnd}</span>
+                              ) : (
+                                <span className="text-red-600 font-bold">NEROZVÁŽÍ SE</span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="p-4 bg-gray-50 border-t text-center">
+          <button onClick={onClose} className="px-6 py-2 bg-primary text-white rounded-lg text-sm font-bold">Zavřít</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { settings } = useStore();
+  const [isRegionsModalOpen, setIsRegionsModalOpen] = useState(false);
+  const hasActiveDelivery = settings.deliveryRegions.some(r => r.enabled);
+
+  return (
+    <div className="min-h-screen flex flex-col font-sans">
+      <Navbar />
+      <NotificationToast />
+      <AuthModal />
+      <DeliveryRegionsModal isOpen={isRegionsModalOpen} onClose={() => setIsRegionsModalOpen(false)} />
+      <main className="flex-grow">
+        {children}
+      </main>
+      <footer className="bg-primary text-gray-400 py-8 text-center text-sm">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4">
+          <p>&copy; 2023 4Gracie Catering. All rights reserved.</p>
+          {hasActiveDelivery && (
+            <button 
+              onClick={() => setIsRegionsModalOpen(true)} 
+              className="text-accent hover:text-white transition underline text-xs font-bold flex items-center"
+            >
+              <Truck size={14} className="mr-1" /> Rozvozové regiony
+            </button>
+          )}
+        </div>
+      </footer>
+      <LoginMock />
+    </div>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <StoreProvider>
+      <Router>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<Menu />} />
+            <Route path="/cart" element={<Cart />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/admin" element={<Admin />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+        </Layout>
+      </Router>
+    </StoreProvider>
+  );
+};
+
+export default App;
