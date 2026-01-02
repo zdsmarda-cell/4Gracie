@@ -280,9 +280,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // Initial Fetch logic
-  useEffect(() => {
-    const fetchData = async () => {
+  const fetchData = async () => {
       setIsLoading(true);
       
       try {
@@ -331,7 +329,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         // ENSURE loading state is turned off regardless of errors
         setIsLoading(false);
       }
-    };
+  };
+
+  // Initial Fetch logic
+  useEffect(() => {
     fetchData();
   }, [dataSource]);
 
@@ -747,10 +748,28 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
     const load: Record<ProductCategory, number> = { [ProductCategory.WARM]: 0, [ProductCategory.COLD]: 0, [ProductCategory.DESSERT]: 0, [ProductCategory.DRINK]: 0 };
     const usedProductIds = new Set<string>();
+    
     relevantOrders.forEach(order => {
       order.items.forEach(item => {
-        if (load[item.category] !== undefined) load[item.category] += (item.workload || 0) * item.quantity;
-        if (!usedProductIds.has(item.id)) { if (load[item.category] !== undefined) load[item.category] += (item.workloadOverhead || 0); usedProductIds.add(item.id); }
+        // ROBUST WORKLOAD CALCULATION:
+        // Try to find the live product definition to get current workload points.
+        // Fallback to item snapshot if available, otherwise 0.
+        // This fixes the issue where old orders/imported orders might miss workload data.
+        const productDef = products.find(p => p.id === item.id);
+        const workload = productDef?.workload ?? item.workload ?? 0;
+        const overhead = productDef?.workloadOverhead ?? item.workloadOverhead ?? 0;
+
+        // Ensure category is valid before adding
+        const cat = item.category || productDef?.category;
+        
+        if (cat && load[cat] !== undefined) {
+             load[cat] += workload * item.quantity;
+             
+             if (!usedProductIds.has(item.id)) { 
+                load[cat] += overhead; 
+                usedProductIds.add(item.id); 
+             }
+        }
       });
     });
     return load;
@@ -768,10 +787,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
 
     const load = getDailyLoad(date, excludeOrderId);
+    
+    // Simulate adding current items to load
     const virtualUsedIds = new Set<string>();
     items.forEach(item => {
-       load[item.category] += (item.workload || 0) * item.quantity;
-       load[item.category] += (item.workloadOverhead || 0); 
+       const productDef = products.find(p => p.id === item.id);
+       const workload = productDef?.workload ?? item.workload ?? 0;
+       const overhead = productDef?.workloadOverhead ?? item.workloadOverhead ?? 0;
+       
+       if (load[item.category] !== undefined) {
+          load[item.category] += workload * item.quantity;
+          // Overhead logic for current cart check (simplified: assume cart items trigger overhead if not already in load? 
+          // Actually, getDailyLoad already calculates overhead for existing orders. 
+          // For the current cart check, we treat these items as "newly added", so we add overhead.)
+          load[item.category] += overhead;
+       }
     });
 
     let anyExceeds = false;
@@ -791,17 +821,26 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // Other simple functions
   const login = (email: string, password?: string) => {
+    // If in API mode, ensure we have the latest user list to check credentials
+    if (dataSource === 'api') {
+        fetchData(); // Trigger background refresh just in case
+    }
+    
     const foundUser = allUsers.find(u => u.email === email);
     if (foundUser) {
       if (foundUser.isBlocked) return { success: false, message: 'Blokován.' };
+      // Note: This is a client-side hash check (legacy architecture).
       if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
-      setUser(foundUser); return { success: true };
+      
+      setUser(foundUser); 
+      return { success: true };
     }
     return { success: false, message: 'Nenalezen.' };
   };
+
   const register = (name: string, email: string, password?: string) => {
     if (allUsers.find(u => u.email === email)) { alert('Existuje.'); return; }
-    const newUser: User = { id: Date.now().toString(), name, email, role: 'customer', billingAddresses: [], deliveryAddresses: [], passwordHash: hashPassword(password || '1234') };
+    const newUser: User = { id: Date.now().toString(), name, email, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(password || '1234') };
     
     if (dataSource === 'api') {
         apiCall('/api/users', 'POST', newUser).then(res => {
@@ -815,7 +854,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setUser(newUser); 
     }
   };
-  const logout = () => setUser(null);
+
+  const logout = () => {
+      setUser(null);
+      // Explicitly clear session storage to prevent stale logins
+      localStorage.removeItem('session_user');
+  };
+
   const toggleUserBlock = async (id: string): Promise<boolean> => {
      const u = allUsers.find(x => x.id === id);
      if (u) { 
@@ -826,13 +871,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
   const sendPasswordReset = (email: string) => alert('Reset link odeslán (simulace).');
   const resetPasswordByToken = (t: string, p: string) => ({ success: true, message: 'Heslo změněno' });
+  
   const changePassword = (o: string, n: string) => {
      if (!user) return { success: false, message: 'Login required' };
      if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' };
      const u = { ...user, passwordHash: hashPassword(n) };
-     updateUser(u);
+     updateUser(u); // This updates global user list and current session user
      return { success: true, message: 'Změněno' };
   };
+  
   const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
   const getRegionInfoForDate = (r: DeliveryRegion, d: string) => {
      const ex = r.exceptions?.find(e => e.date === d);
