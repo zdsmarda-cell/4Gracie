@@ -54,24 +54,34 @@ const DEFAULT_SETTINGS_SEED = {
 
 // Database Connection Helper
 let pool = null;
-let lastDbError = null; // Global variable to store last connection error for diagnostics
+let lastDbError = null; 
+
+// Definition of tables for easy maintenance
+const TABLE_DEFINITIONS = [
+  { name: 'users', query: `CREATE TABLE IF NOT EXISTS users (id VARCHAR(255) PRIMARY KEY, email VARCHAR(255), role VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci` },
+  { name: 'products', query: `CREATE TABLE IF NOT EXISTS products (id VARCHAR(255) PRIMARY KEY, category VARCHAR(50), is_deleted BOOLEAN DEFAULT FALSE, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci` },
+  { name: 'orders', query: `CREATE TABLE IF NOT EXISTS orders (id VARCHAR(255) PRIMARY KEY, user_id VARCHAR(255), delivery_date VARCHAR(20), status VARCHAR(50), total_price DECIMAL(10,2), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci` },
+  { name: 'app_settings', query: `CREATE TABLE IF NOT EXISTS app_settings (key_name VARCHAR(50) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci` },
+  { name: 'discounts', query: `CREATE TABLE IF NOT EXISTS discounts (id VARCHAR(255) PRIMARY KEY, code VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci` },
+  { name: 'calendar_exceptions', query: `CREATE TABLE IF NOT EXISTS calendar_exceptions (date VARCHAR(20) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci` }
+];
 
 const initDb = async (db) => {
   try {
-    const tableQueries = [
-      `CREATE TABLE IF NOT EXISTS users (id VARCHAR(255) PRIMARY KEY, email VARCHAR(255), role VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-      `CREATE TABLE IF NOT EXISTS products (id VARCHAR(255) PRIMARY KEY, category VARCHAR(50), is_deleted BOOLEAN DEFAULT FALSE, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-      `CREATE TABLE IF NOT EXISTS orders (id VARCHAR(255) PRIMARY KEY, user_id VARCHAR(255), delivery_date VARCHAR(20), status VARCHAR(50), total_price DECIMAL(10,2), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-      `CREATE TABLE IF NOT EXISTS app_settings (key_name VARCHAR(50) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-      `CREATE TABLE IF NOT EXISTS discounts (id VARCHAR(255) PRIMARY KEY, code VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-      `CREATE TABLE IF NOT EXISTS calendar_exceptions (date VARCHAR(20) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-    ];
-    for (const query of tableQueries) await db.query(query);
+    for (const def of TABLE_DEFINITIONS) {
+      await db.query(def.query);
+    }
+    
+    // Seed settings if empty
     const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
-    if (settingsRows.length === 0) await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?)', [JSON.stringify(DEFAULT_SETTINGS_SEED)]);
+    if (settingsRows.length === 0) {
+      await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?)', [JSON.stringify(DEFAULT_SETTINGS_SEED)]);
+    }
     console.log('✅ Database tables initialized successfully.');
+    return { success: true };
   } catch (err) {
     console.error('❌ Failed to initialize database tables:', err.message);
+    return { success: false, error: err.message };
   }
 };
 
@@ -89,18 +99,21 @@ const getDb = async () => {
       connectionLimit: 10,
       queueLimit: 0,
       connectTimeout: 10000,
-      // SSL removed as server does not support it (HANDSHAKE_NO_SSL_SUPPORT)
+      // SSL removed
     });
     
-    // Explicitly test connection to capture error immediately
     const connection = await newPool.getConnection();
     console.log(`✅ Connected to MariaDB at ${process.env.DB_HOST}`);
     
-    await initDb(connection);
+    // Attempt init, but don't fail getDb if it fails (so we can see error in /health or /setup)
+    const initResult = await initDb(connection);
+    if (!initResult.success) {
+      lastDbError = `Connection OK, but Table Init Failed: ${initResult.error}`;
+    }
+
     connection.release();
-    
     pool = newPool;
-    lastDbError = null; // Clear any previous error
+    if (!lastDbError) lastDbError = null;
     return pool;
   } catch (err) {
     lastDbError = `${err.code ? err.code + ': ' : ''}${err.message}`;
@@ -115,53 +128,67 @@ const parseData = (rows) => rows.map(row => {
   return { ...jsonData, id: row.id || row.key_name || row.date };
 });
 
-// --- HELPER: RESOLVE SSL PATHS ---
 const resolvePath = (p) => {
   if (!p) return null;
   if (path.isAbsolute(p)) return p;
-  // Try relative to CWD
   const cwdPath = path.resolve(process.cwd(), p);
   if (fs.existsSync(cwdPath)) return cwdPath;
-  // Try relative to this file
   const dirPath = path.resolve(__dirname, p);
   if (fs.existsSync(dirPath)) return dirPath;
-  return cwdPath; // Return the standard relative one as default for error reporting
+  return cwdPath;
 };
 
-// --- DIAGNOSTIC ENDPOINT ---
+// --- ENDPOINTS ---
+
 app.get('/api/health', async (req, res) => {
-  // Trigger DB connection attempt if not already connected
   if (!pool) await getDb();
-
-  const sslKeyRaw = process.env.SSL_KEY_PATH;
-  const sslCertRaw = process.env.SSL_CERT_PATH;
-  const sslKeyResolved = resolvePath(sslKeyRaw);
-  const sslCertResolved = resolvePath(sslCertRaw);
-
   res.json({
     server: 'Running',
-    protocol: req.protocol,
-    secure: req.secure,
-    envLoaded: envLoaded,
-    sslConfig: {
-      keyDefined: !!sslKeyRaw,
-      certDefined: !!sslCertRaw,
-      keyPathChecked: sslKeyResolved || 'N/A',
-      certPathChecked: sslCertResolved || 'N/A',
-      keyExists: sslKeyResolved ? fs.existsSync(sslKeyResolved) : false,
-      certExists: sslCertResolved ? fs.existsSync(sslCertResolved) : false
-    },
-    dbConfig: {
-      host: process.env.DB_HOST || 'UNDEFINED',
-      user: process.env.DB_USER || 'UNDEFINED',
-      db: process.env.DB_NAME || 'UNDEFINED'
-    },
     databaseStatus: pool ? 'Connected' : 'Disconnected',
-    lastDbError: lastDbError // This will now contain the real error message
+    lastDbError: lastDbError
   });
 });
 
-// --- API ENDPOINTS ---
+// --- MANUAL SETUP ENDPOINT ---
+app.get('/api/setup', async (req, res) => {
+  const db = await getDb();
+  if (!db) {
+    return res.status(500).json({ error: 'Cannot connect to DB', details: lastDbError });
+  }
+
+  const report = [];
+  try {
+    const connection = await db.getConnection();
+    
+    for (const def of TABLE_DEFINITIONS) {
+      try {
+        await connection.query(def.query);
+        report.push({ table: def.name, status: 'OK' });
+      } catch (e) {
+        report.push({ table: def.name, status: 'ERROR', details: e.message, code: e.code });
+      }
+    }
+
+    // Check seed
+    try {
+        const [rows] = await connection.query('SELECT * FROM app_settings WHERE key_name = "global"');
+        if (rows.length === 0) {
+            await connection.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?)', [JSON.stringify(DEFAULT_SETTINGS_SEED)]);
+            report.push({ seed: 'app_settings', status: 'INSERTED' });
+        } else {
+            report.push({ seed: 'app_settings', status: 'EXISTS' });
+        }
+    } catch(e) {
+        report.push({ seed: 'app_settings', status: 'ERROR', details: e.message });
+    }
+
+    connection.release();
+    res.json({ success: true, report });
+
+  } catch (e) {
+    res.status(500).json({ error: 'Setup fatal error', details: e.message });
+  }
+});
 
 app.get('/api/bootstrap', async (req, res) => {
   const db = await getDb();
@@ -184,15 +211,14 @@ app.get('/api/bootstrap', async (req, res) => {
       });
     } catch (err) {
       console.error('Query Error:', err);
-      res.status(500).json({ error: 'Database query failed: ' + err.message });
+      // If table doesn't exist, provide a hint to run /api/setup
+      res.status(500).json({ error: 'Database query failed: ' + err.message, hint: 'Try running /api/setup to create tables.' });
     }
   } else {
-    // Return the actual connection error if available
     res.status(500).json({ error: 'Database connection failed', details: lastDbError });
   }
 });
 
-// ... Standard CRUD endpoints wrapper ...
 const withDb = (handler) => async (req, res) => {
   const db = await getDb();
   if (db) {
@@ -262,38 +288,23 @@ app.delete('/api/calendar/:date', withDb(async (req, res, db) => {
   res.json({ success: true });
 }));
 
-// --- SERVER STARTUP (HTTP/HTTPS) ---
-
 const startServer = () => {
   const keyPathRaw = process.env.SSL_KEY_PATH;
   const certPathRaw = process.env.SSL_CERT_PATH;
-  
   const keyPath = resolvePath(keyPathRaw);
   const certPath = resolvePath(certPathRaw);
 
   if (keyPath && certPath && fs.existsSync(keyPath) && fs.existsSync(certPath)) {
     try {
-      const httpsOptions = {
-        key: fs.readFileSync(keyPath),
-        cert: fs.readFileSync(certPath)
-      };
-      https.createServer(httpsOptions, app).listen(PORT, () => {
+      https.createServer({ key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }, app).listen(PORT, () => {
         console.log(`🔒 SECURE Backend running on https://localhost:${PORT}`);
-        console.log(`   SSL Key: ${keyPath}`);
       });
       return;
     } catch (error) {
-      console.error('⚠️ HTTPS Setup Failed (falling back to HTTP):', error.message);
-    }
-  } else {
-    if (keyPathRaw || certPathRaw) {
-       console.log('⚠️ SSL configuration present but files not found:');
-       console.log(`   Key:  ${keyPathRaw} -> Resolved: ${keyPath} (${fs.existsSync(keyPath) ? 'Found' : 'Missing'})`);
-       console.log(`   Cert: ${certPathRaw} -> Resolved: ${certPath} (${fs.existsSync(certPath) ? 'Found' : 'Missing'})`);
+      console.error('⚠️ HTTPS Setup Failed:', error.message);
     }
   }
 
-  // HTTP Fallback
   http.createServer(app).listen(PORT, () => {
     console.log(`🔓 Backend running on http://localhost:${PORT}`);
   });
