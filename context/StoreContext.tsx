@@ -205,22 +205,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (env.DEV) return endpoint;
     
     // V produkci:
-    // 1. Pokud je nastavena VITE_API_URL, použijeme ji (může být absolutní nebo relativní pro proxy)
-    // 2. Pokud není, odhadneme URL na stejném hostu s portem 3000 (standardní Node setup)
-    //    Automaticky použijeme protokol okna (http/https), což funguje díky tomu,
-    //    že jsme na backendu přidali podporu HTTPS certifikátů.
     let baseUrl = env.VITE_API_URL;
     
     if (!baseUrl) {
        baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
     }
 
-    // Odstranit koncové lomítko z baseUrl, pokud existuje
     if (baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
     }
     
-    // Odstranit počáteční lomítko z endpointu, pokud existuje (abychom neměli //)
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
     return `${baseUrl}${cleanEndpoint}`;
@@ -231,7 +225,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const controller = new AbortController();
     
     // Show spinner IMMEDIATELY to avoid "missing" feedback feeling
-    // Removing debounce to fix user report of missing thermometer
     setIsOperationPending(true);
 
     // Hard Timeout Promise
@@ -239,13 +232,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setTimeout(() => {
             controller.abort();
             reject(new Error('TIMEOUT_LIMIT_REACHED'));
-        }, 8000); // Increased timeout for production connection negotiation
+        }, 8000); 
     });
 
     try {
-      // Move getFullApiUrl inside try to catch potential errors
       const url = getFullApiUrl(endpoint);
-      console.log('[API] Requesting:', url); // Debug log pro kontrolu
+      console.log('[API] Requesting:', url); 
 
       // Race between the actual fetch and the timeout
       const res: any = await Promise.race([
@@ -291,25 +283,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setOrders([]);
           setDiscountCodes([]);
           setDayConfigs([]);
-          // Force EMPTY settings initially so we don't see mock data if DB fails
           setSettings(EMPTY_SETTINGS);
           
           const data = await apiCall('/api/bootstrap', 'GET');
           
           if (data) {
-              // Success: Load data from API/DB
               setAllUsers(data.users || []);
               setProducts(data.products || []);
               setOrders(data.orders || []);
-              // Only set settings if valid, otherwise keep defaults (server should ideally seed defaults)
               if (data.settings) setSettings(data.settings); 
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
               showNotify("Připojeno k databázi.", 'success');
-          } else {
-              // Failure: Already notified by apiCall. 
-              // We explicitly leave data empty so user sees "nothing" instead of old local data.
-              // No extra notification needed here, apiCall handles it.
           }
         } else {
           // LOCAL MODE
@@ -326,7 +311,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         console.error('Fatal error during data fetch:', err);
         showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
       } finally {
-        // ENSURE loading state is turned off regardless of errors
         setIsLoading(false);
       }
   };
@@ -336,11 +320,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     fetchData();
   }, [dataSource]);
 
-  // --- SYNC TO LOCALSTORAGE (Always sync to keep local copy fresh, but only use if in local mode) ---
+  // --- SYNC TO LOCALSTORAGE ---
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
   
-  // Sync DB-like data to local storage ONLY if we are in local mode.
   useEffect(() => {
     if (dataSource === 'local') {
       localStorage.setItem('db_users', JSON.stringify(allUsers));
@@ -459,7 +442,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean): Promise<boolean> => {
     if (dataSource === 'api') {
-       const res = await apiCall('/api/orders/status', 'PUT', { ids, status });
+       // Pass notifyCustomer flag to backend
+       const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify });
        if (res && res.success) {
           setOrders(prev => prev.map(o => {
             if (ids.includes(o.id)) {
@@ -471,7 +455,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
             return o;
           }));
-          showNotify(`Stav objednávek (${ids.length}) změněn v DB.`);
+          const msg = notify ? `Stav změněn a emaily odeslány (${ids.length})` : `Stav objednávek (${ids.length}) změněn v DB.`;
+          showNotify(msg);
           return true;
        }
        return false;
@@ -750,24 +735,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const usedProductIds = new Set<string>();
     
     relevantOrders.forEach(order => {
+      if (!order.items) return; // Guard
       order.items.forEach(item => {
-        // ROBUST WORKLOAD CALCULATION:
-        // Try to find the live product definition to get current workload points.
-        // Fallback to item snapshot if available, otherwise 0.
-        // This fixes the issue where old orders/imported orders might miss workload data.
-        const productDef = products.find(p => p.id === item.id);
-        const workload = productDef?.workload ?? item.workload ?? 0;
-        const overhead = productDef?.workloadOverhead ?? item.workloadOverhead ?? 0;
+        // ROBUST WORKLOAD CALCULATION FIX
+        // 1. Try finding live product
+        // 2. Coerce IDs to string for comparison to avoid number vs string mismatch
+        const productDef = products.find(p => String(p.id) === String(item.id));
+        
+        // 3. Fallback logic: Live Product > Snapshot Item > 0
+        const itemWorkload = Number(productDef?.workload) || Number(item.workload) || 0;
+        const itemOverhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
 
-        // Ensure category is valid before adding
+        // 4. Ensure category exists
         const cat = item.category || productDef?.category;
         
         if (cat && load[cat] !== undefined) {
-             load[cat] += workload * item.quantity;
+             load[cat] += itemWorkload * item.quantity;
              
-             if (!usedProductIds.has(item.id)) { 
-                load[cat] += overhead; 
-                usedProductIds.add(item.id); 
+             // Add overhead only once per unique product in the order
+             if (!usedProductIds.has(String(item.id))) { 
+                load[cat] += itemOverhead; 
+                usedProductIds.add(String(item.id)); 
              }
         }
       });
@@ -789,17 +777,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const load = getDailyLoad(date, excludeOrderId);
     
     // Simulate adding current items to load
-    const virtualUsedIds = new Set<string>();
     items.forEach(item => {
-       const productDef = products.find(p => p.id === item.id);
-       const workload = productDef?.workload ?? item.workload ?? 0;
-       const overhead = productDef?.workloadOverhead ?? item.workloadOverhead ?? 0;
+       const productDef = products.find(p => String(p.id) === String(item.id));
+       const workload = Number(productDef?.workload) || Number(item.workload) || 0;
+       const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
        
        if (load[item.category] !== undefined) {
           load[item.category] += workload * item.quantity;
-          // Overhead logic for current cart check (simplified: assume cart items trigger overhead if not already in load? 
-          // Actually, getDailyLoad already calculates overhead for existing orders. 
-          // For the current cart check, we treat these items as "newly added", so we add overhead.)
+          // Note: In check mode, we add overhead for every item line because checking uniqueness against existing order items is complex here.
+          // Ideally, we would deduplicate against what's already in 'load' for this specific order, but getDailyLoad already handles 'excludeOrderId'.
           load[item.category] += overhead;
        }
     });

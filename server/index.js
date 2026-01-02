@@ -9,6 +9,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import nodemailer from 'nodemailer';
 
 // Fix for __dirname in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +39,40 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
+
+// --- EMAIL SETUP ---
+let transporter = null;
+if (process.env.SMTP_HOST) {
+    transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: process.env.SMTP_PORT || 465,
+        secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+        auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+        },
+    });
+    console.log(`📧 Email service configured for ${process.env.SMTP_HOST}`);
+} else {
+    console.warn('⚠️ SMTP settings not found. Emails will NOT be sent.');
+}
+
+const sendEmail = async (to, subject, html) => {
+    if (!transporter) return false;
+    try {
+        await transporter.sendMail({
+            from: process.env.EMAIL_FROM || '"4Gracie" <info@4gracie.cz>',
+            to,
+            subject,
+            html,
+        });
+        console.log(`📧 Email sent to ${to}`);
+        return true;
+    } catch (error) {
+        console.error('❌ Email sending failed:', error);
+        return false;
+    }
+};
 
 // --- MOCK DATA STORE (Fallback) ---
 const DEFAULT_SETTINGS_SEED = {
@@ -235,12 +270,57 @@ const withDb = (handler) => async (req, res) => {
 
 app.post('/api/orders', withDb(async (req, res, db) => {
   const o = req.body;
+  const isNew = !o.statusHistory || o.statusHistory.length <= 1; // Simplistic check if it's a fresh creation or first insert
+  
   await db.query('INSERT INTO orders (id, user_id, delivery_date, status, total_price, data) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=?, total_price=?, data=?', [o.id, o.userId, o.deliveryDate, o.status, o.totalPrice, JSON.stringify(o), o.status, o.totalPrice, JSON.stringify(o)]);
+  
+  // Send Email on New Order (if status is CREATED)
+  if (o.status === 'created' && transporter) {
+      // Find user email from DB or order (Order has userName, but userId links to users table. Order object might not have email directly if not in snapshots, but let's try to get it from DB)
+      const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [o.userId]);
+      const userEmail = userRows.length > 0 ? userRows[0].email : null;
+      
+      if (userEmail) {
+          const subject = `Potvrzení objednávky #${o.id}`;
+          const html = `
+            <h1>Děkujeme za vaši objednávku!</h1>
+            <p>Vaše objednávka <strong>#${o.id}</strong> byla přijata ke zpracování.</p>
+            <p>Datum doručení: ${o.deliveryDate}</p>
+            <p>Celková cena: <strong>${o.totalPrice + o.packagingFee + (o.deliveryFee||0)} Kč</strong></p>
+            <br/>
+            <p>Tým 4Gracie</p>
+          `;
+          sendEmail(userEmail, subject, html);
+      }
+  }
+
   res.json({ success: true });
 }));
 
 app.put('/api/orders/status', withDb(async (req, res, db) => {
-  for (const id of req.body.ids) await db.query(`UPDATE orders SET status=?, data=JSON_SET(data, '$.status', ?) WHERE id=?`, [req.body.status, req.body.status, id]);
+  for (const id of req.body.ids) {
+      await db.query(`UPDATE orders SET status=?, data=JSON_SET(data, '$.status', ?) WHERE id=?`, [req.body.status, req.body.status, id]);
+      
+      // Notify Customer if requested
+      if (req.body.notifyCustomer && transporter) {
+          const [rows] = await db.query('SELECT data FROM orders WHERE id = ?', [id]);
+          if (rows.length > 0) {
+              const orderData = typeof rows[0].data === 'string' ? JSON.parse(rows[0].data) : rows[0].data;
+              const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [orderData.userId]);
+              if (userRows.length > 0) {
+                  const subject = `Aktualizace objednávky #${id}`;
+                  const html = `
+                    <h1>Změna stavu objednávky</h1>
+                    <p>Vaše objednávka <strong>#${id}</strong> změnila stav na:</p>
+                    <h2 style="color: #9333ea;">${req.body.status.toUpperCase()}</h2>
+                    <br/>
+                    <p>Tým 4Gracie</p>
+                  `;
+                  sendEmail(userRows[0].email, subject, html);
+              }
+          }
+      }
+  }
   res.json({ success: true });
 }));
 
@@ -257,7 +337,22 @@ app.delete('/api/products/:id', withDb(async (req, res, db) => {
 
 app.post('/api/users', withDb(async (req, res, db) => {
   const u = req.body;
+  const isNew = await db.query('SELECT id FROM users WHERE id = ?', [u.id]).then(([rows]) => rows.length === 0);
+  
   await db.query('INSERT INTO users (id, email, role, data) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE email=?, role=?, data=?', [u.id, u.email, u.role, JSON.stringify(u), u.email, u.role, JSON.stringify(u)]);
+  
+  // Send Welcome/Password Reset Email for new users (Mocked link)
+  if (isNew && transporter) {
+      const subject = `Vítejte v 4Gracie Catering`;
+      const html = `
+        <h1>Vítejte, ${u.name}!</h1>
+        <p>Váš účet byl úspěšně vytvořen.</p>
+        <p>Vaše role: ${u.role}</p>
+        <p>Pro nastavení hesla kontaktujte administrátora nebo použijte funkci "Zapomenuté heslo".</p>
+      `;
+      sendEmail(u.email, subject, html);
+  }
+
   res.json({ success: true });
 }));
 
