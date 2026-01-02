@@ -16,9 +16,9 @@ const __dirname = path.dirname(__filename);
 
 // --- ROBUST .ENV LOADING ---
 const pathsToCheck = [
-  path.resolve(__dirname, '.env'),           // Same dir as index.js (server/)
-  path.resolve(process.cwd(), '.env'),       // Where node was run from
-  path.resolve(__dirname, '..', '.env')      // One level up
+  path.resolve(__dirname, '.env'),           // server/
+  path.resolve(process.cwd(), '.env'),       // root
+  path.resolve(__dirname, '..', '.env')      // one up
 ];
 
 let envLoaded = false;
@@ -33,26 +33,8 @@ for (const p of pathsToCheck) {
   }
 }
 
-if (!envLoaded) {
-  console.error("❌ ERROR: .env file NOT found in any of these paths:", pathsToCheck);
-  console.error("   Server will likely fail to connect to DB or start HTTPS.");
-}
-
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// --- CONFIGURATION DEBUG LOG ---
-console.log('------------------------------------------------');
-console.log('🔧 SERVER CONFIGURATION DEBUG');
-console.log('------------------------------------------------');
-console.log(`Date: ${new Date().toISOString()}`);
-console.log(`DB_HOST:       '${process.env.DB_HOST}'`);
-console.log(`DB_NAME:       '${process.env.DB_NAME}'`);
-console.log(`DB_USER:       '${process.env.DB_USER}'`);
-console.log(`DB_PASSWORD:   ${process.env.DB_PASSWORD ? '****** (Set)' : '❌ NOT SET'}`);
-console.log(`SSL_KEY_PATH:  '${process.env.SSL_KEY_PATH}'`);
-console.log(`SSL_CERT_PATH: '${process.env.SSL_CERT_PATH}'`);
-console.log('------------------------------------------------');
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
@@ -72,6 +54,7 @@ const DEFAULT_SETTINGS_SEED = {
 
 // Database Connection Helper
 let pool = null;
+let lastDbError = null; // Global variable to store last connection error for diagnostics
 
 const initDb = async (db) => {
   try {
@@ -95,10 +78,9 @@ const initDb = async (db) => {
 const getDb = async () => {
   if (pool) return pool;
   try {
-    // Check critical vars
-    if (!process.env.DB_HOST) throw new Error("DB_HOST is missing in env");
+    if (!process.env.DB_HOST) throw new Error("DB_HOST is not defined in .env");
 
-    pool = mysql.createPool({
+    const newPool = mysql.createPool({
       host: process.env.DB_HOST,
       user: process.env.DB_USER || 'root',
       password: process.env.DB_PASSWORD || '',
@@ -107,18 +89,22 @@ const getDb = async () => {
       connectionLimit: 10,
       queueLimit: 0,
       connectTimeout: 10000,
-      ssl: { rejectUnauthorized: false } // Required for some remote hosts
+      ssl: { rejectUnauthorized: false }
     });
     
-    const connection = await pool.getConnection();
+    // Explicitly test connection to capture error immediately
+    const connection = await newPool.getConnection();
     console.log(`✅ Connected to MariaDB at ${process.env.DB_HOST}`);
+    
     await initDb(connection);
     connection.release();
+    
+    pool = newPool;
+    lastDbError = null; // Clear any previous error
     return pool;
   } catch (err) {
-    console.error(`❌ Database connection failed [Host: ${process.env.DB_HOST}]:`);
-    console.error(`   Error Code: ${err.code}`);
-    console.error(`   Message: ${err.message}`);
+    lastDbError = `${err.code ? err.code + ': ' : ''}${err.message}`;
+    console.error(`❌ Database connection failed: ${lastDbError}`);
     pool = null; 
     return null;
   }
@@ -129,38 +115,49 @@ const parseData = (rows) => rows.map(row => {
   return { ...jsonData, id: row.id || row.key_name || row.date };
 });
 
-// --- DIAGNOSTIC ENDPOINT (Open in Browser) ---
+// --- HELPER: RESOLVE SSL PATHS ---
+const resolvePath = (p) => {
+  if (!p) return null;
+  if (path.isAbsolute(p)) return p;
+  // Try relative to CWD
+  const cwdPath = path.resolve(process.cwd(), p);
+  if (fs.existsSync(cwdPath)) return cwdPath;
+  // Try relative to this file
+  const dirPath = path.resolve(__dirname, p);
+  if (fs.existsSync(dirPath)) return dirPath;
+  return cwdPath; // Return the standard relative one as default for error reporting
+};
+
+// --- DIAGNOSTIC ENDPOINT ---
 app.get('/api/health', async (req, res) => {
-  let dbStatus = 'Unknown';
-  let dbError = null;
-  
-  try {
-    const db = await getDb();
-    if (db) {
-       await db.query('SELECT 1');
-       dbStatus = 'Connected';
-    } else {
-       dbStatus = 'Failed to Connect';
-    }
-  } catch (e) {
-    dbStatus = 'Error';
-    dbError = e.message;
-  }
+  // Trigger DB connection attempt if not already connected
+  if (!pool) await getDb();
+
+  const sslKeyRaw = process.env.SSL_KEY_PATH;
+  const sslCertRaw = process.env.SSL_CERT_PATH;
+  const sslKeyResolved = resolvePath(sslKeyRaw);
+  const sslCertResolved = resolvePath(sslCertRaw);
 
   res.json({
     server: 'Running',
     protocol: req.protocol,
     secure: req.secure,
     envLoaded: envLoaded,
-    config: {
-      dbHost: process.env.DB_HOST || 'UNDEFINED',
-      dbUser: process.env.DB_USER || 'UNDEFINED',
-      dbName: process.env.DB_NAME || 'UNDEFINED',
-      sslKeyFound: process.env.SSL_KEY_PATH ? fs.existsSync(process.env.SSL_KEY_PATH) : false,
-      sslCertFound: process.env.SSL_CERT_PATH ? fs.existsSync(process.env.SSL_CERT_PATH) : false,
+    sslConfig: {
+      keyDefined: !!sslKeyRaw,
+      certDefined: !!sslCertRaw,
+      keyPathChecked: sslKeyResolved || 'N/A',
+      certPathChecked: sslCertResolved || 'N/A',
+      keyExists: sslKeyResolved ? fs.existsSync(sslKeyResolved) : false,
+      certExists: sslCertResolved ? fs.existsSync(sslCertResolved) : false
     },
-    databaseConnection: dbStatus,
-    lastDbError: dbError
+    dbConfig: {
+      host: process.env.DB_HOST || 'UNDEFINED',
+      user: process.env.DB_USER || 'UNDEFINED',
+      db: process.env.DB_NAME || 'UNDEFINED'
+    },
+    databaseStatus: pool ? 'Connected' : 'Disconnected',
+    lastDbError: lastDbError // This will now contain the real error message
   });
 });
 
@@ -190,52 +187,115 @@ app.get('/api/bootstrap', async (req, res) => {
       res.status(500).json({ error: 'Database query failed: ' + err.message });
     }
   } else {
-    res.status(500).json({ error: 'Database connection failed' });
+    // Return the actual connection error if available
+    res.status(500).json({ error: 'Database connection failed', details: lastDbError });
   }
 });
 
-// ... (Rest of POST/PUT/DELETE endpoints remain same, just updating getDb usage which is handled above) ...
-app.post('/api/orders', async (req, res) => { const db = await getDb(); if(db) { try { const o=req.body; await db.query('INSERT INTO orders (id, user_id, delivery_date, status, total_price, data) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=?, total_price=?, data=?', [o.id, o.userId, o.deliveryDate, o.status, o.totalPrice, JSON.stringify(o), o.status, o.totalPrice, JSON.stringify(o)]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.put('/api/orders/status', async (req, res) => { const db = await getDb(); if(db) { try { for(const id of req.body.ids) await db.query(`UPDATE orders SET status=?, data=JSON_SET(data, '$.status', ?) WHERE id=?`, [req.body.status, req.body.status, id]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.post('/api/products', async (req, res) => { const db = await getDb(); if(db) { try { const p=req.body; await db.query('INSERT INTO products (id, category, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE category=?, data=?', [p.id, p.category, JSON.stringify(p), p.category, JSON.stringify(p)]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.delete('/api/products/:id', async (req, res) => { const db = await getDb(); if(db) { try { await db.query('UPDATE products SET is_deleted=TRUE WHERE id=?', [req.params.id]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.post('/api/users', async (req, res) => { const db = await getDb(); if(db) { try { const u=req.body; await db.query('INSERT INTO users (id, email, role, data) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE email=?, role=?, data=?', [u.id, u.email, u.role, JSON.stringify(u), u.email, u.role, JSON.stringify(u)]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.post('/api/settings', async (req, res) => { const db = await getDb(); if(db) { try { await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(req.body), JSON.stringify(req.body)]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.post('/api/discounts', async (req, res) => { const db = await getDb(); if(db) { try { const d=req.body; await db.query('INSERT INTO discounts (id, code, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data=?', [d.id, d.code, JSON.stringify(d), JSON.stringify(d)]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.delete('/api/discounts/:id', async (req, res) => { const db = await getDb(); if(db) { try { await db.query('DELETE FROM discounts WHERE id=?', [req.params.id]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.post('/api/calendar', async (req, res) => { const db = await getDb(); if(db) { try { const c=req.body; await db.query('INSERT INTO calendar_exceptions (date, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data=?', [c.date, JSON.stringify(c), JSON.stringify(c)]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
-app.delete('/api/calendar/:date', async (req, res) => { const db = await getDb(); if(db) { try { await db.query('DELETE FROM calendar_exceptions WHERE date=?', [req.params.date]); res.json({success:true}); } catch(e){ res.status(500).json({error:e.message}); } } else res.status(500).json({error:'DB Failed'}) });
+// ... Standard CRUD endpoints wrapper ...
+const withDb = (handler) => async (req, res) => {
+  const db = await getDb();
+  if (db) {
+    try {
+      await handler(req, res, db);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
+    }
+  } else {
+    res.status(500).json({ error: 'Database connection failed', details: lastDbError });
+  }
+};
+
+app.post('/api/orders', withDb(async (req, res, db) => {
+  const o = req.body;
+  await db.query('INSERT INTO orders (id, user_id, delivery_date, status, total_price, data) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE status=?, total_price=?, data=?', [o.id, o.userId, o.deliveryDate, o.status, o.totalPrice, JSON.stringify(o), o.status, o.totalPrice, JSON.stringify(o)]);
+  res.json({ success: true });
+}));
+
+app.put('/api/orders/status', withDb(async (req, res, db) => {
+  for (const id of req.body.ids) await db.query(`UPDATE orders SET status=?, data=JSON_SET(data, '$.status', ?) WHERE id=?`, [req.body.status, req.body.status, id]);
+  res.json({ success: true });
+}));
+
+app.post('/api/products', withDb(async (req, res, db) => {
+  const p = req.body;
+  await db.query('INSERT INTO products (id, category, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE category=?, data=?', [p.id, p.category, JSON.stringify(p), p.category, JSON.stringify(p)]);
+  res.json({ success: true });
+}));
+
+app.delete('/api/products/:id', withDb(async (req, res, db) => {
+  await db.query('UPDATE products SET is_deleted=TRUE WHERE id=?', [req.params.id]);
+  res.json({ success: true });
+}));
+
+app.post('/api/users', withDb(async (req, res, db) => {
+  const u = req.body;
+  await db.query('INSERT INTO users (id, email, role, data) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE email=?, role=?, data=?', [u.id, u.email, u.role, JSON.stringify(u), u.email, u.role, JSON.stringify(u)]);
+  res.json({ success: true });
+}));
+
+app.post('/api/settings', withDb(async (req, res, db) => {
+  await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(req.body), JSON.stringify(req.body)]);
+  res.json({ success: true });
+}));
+
+app.post('/api/discounts', withDb(async (req, res, db) => {
+  const d = req.body;
+  await db.query('INSERT INTO discounts (id, code, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data=?', [d.id, d.code, JSON.stringify(d), JSON.stringify(d)]);
+  res.json({ success: true });
+}));
+
+app.delete('/api/discounts/:id', withDb(async (req, res, db) => {
+  await db.query('DELETE FROM discounts WHERE id=?', [req.params.id]);
+  res.json({ success: true });
+}));
+
+app.post('/api/calendar', withDb(async (req, res, db) => {
+  const c = req.body;
+  await db.query('INSERT INTO calendar_exceptions (date, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data=?', [c.date, JSON.stringify(c), JSON.stringify(c)]);
+  res.json({ success: true });
+}));
+
+app.delete('/api/calendar/:date', withDb(async (req, res, db) => {
+  await db.query('DELETE FROM calendar_exceptions WHERE date=?', [req.params.date]);
+  res.json({ success: true });
+}));
 
 // --- SERVER STARTUP (HTTP/HTTPS) ---
 
 const startServer = () => {
-  const keyPath = process.env.SSL_KEY_PATH;
-  const certPath = process.env.SSL_CERT_PATH;
+  const keyPathRaw = process.env.SSL_KEY_PATH;
+  const certPathRaw = process.env.SSL_CERT_PATH;
   
-  if (keyPath && certPath) {
+  const keyPath = resolvePath(keyPathRaw);
+  const certPath = resolvePath(certPathRaw);
+
+  if (keyPath && certPath && fs.existsSync(keyPath) && fs.existsSync(certPath)) {
     try {
-      if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
-        const httpsOptions = {
-          key: fs.readFileSync(keyPath),
-          cert: fs.readFileSync(certPath)
-        };
-        https.createServer(httpsOptions, app).listen(PORT, () => {
-          console.log(`🔒 SECURE Backend running on https://localhost:${PORT}`);
-          console.log(`   (Accessible via https://eshop.4gracie.cz:${PORT})`);
-        });
-        return;
-      } else {
-        console.error('⚠️  SSL Files defined in .env but NOT found on disk.');
-      }
+      const httpsOptions = {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath)
+      };
+      https.createServer(httpsOptions, app).listen(PORT, () => {
+        console.log(`🔒 SECURE Backend running on https://localhost:${PORT}`);
+        console.log(`   SSL Key: ${keyPath}`);
+      });
+      return;
     } catch (error) {
-      console.error('⚠️ HTTPS Setup Failed:', error.message);
+      console.error('⚠️ HTTPS Setup Failed (falling back to HTTP):', error.message);
+    }
+  } else {
+    if (keyPathRaw || certPathRaw) {
+       console.log('⚠️ SSL configuration present but files not found:');
+       console.log(`   Key:  ${keyPathRaw} -> Resolved: ${keyPath} (${fs.existsSync(keyPath) ? 'Found' : 'Missing'})`);
+       console.log(`   Cert: ${certPathRaw} -> Resolved: ${certPath} (${fs.existsSync(certPath) ? 'Found' : 'Missing'})`);
     }
   }
 
   // HTTP Fallback
   http.createServer(app).listen(PORT, () => {
     console.log(`🔓 Backend running on http://localhost:${PORT}`);
-    console.log(`   (SSL keys missing or invalid, verify paths in .env)`);
   });
 };
 
