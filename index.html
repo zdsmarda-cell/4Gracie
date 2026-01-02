@@ -16,7 +16,7 @@
               secondary: '#f3f4f6',
             },
             fontFamily: {
-              serif: ['"Times New Roman"', 'Times', 'serif'], // Updated to match the logo style better
+              serif: ['"Times New Roman"', 'Times', 'serif'],
               sans: ['Inter', 'sans-serif'],
             }
           }
@@ -26,25 +26,26 @@
   <script type="importmap">
 {
   "imports": {
-    "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
-    "react-router-dom": "https://esm.sh/react-router-dom@^7.11.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.1/package/xlsx.mjs",
-    "jspdf": "https://esm.sh/jspdf@2.5.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "vite": "https://esm.sh/vite@^7.3.0",
+    "react/": "https://esm.sh/react@^19.2.3/",
     "express": "https://esm.sh/express@^5.2.1",
-    "cors": "https://esm.sh/cors@^2.8.5",
     "mysql2/": "https://esm.sh/mysql2@^3.16.0/",
+    "cors": "https://esm.sh/cors@^2.8.5",
     "dotenv": "https://esm.sh/dotenv@^17.2.3",
-    "body-parser": "https://esm.sh/body-parser@^2.2.1"
+    "body-parser": "https://esm.sh/body-parser@^2.2.1",
+    "vite": "https://esm.sh/vite@^7.3.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.11.0",
+    "jspdf": "https://esm.sh/jspdf@^3.0.4",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "xlsx": "https://esm.sh/xlsx@^0.18.5"
   }
 }
 </script>
 </head>
   <body class="bg-gray-50 text-gray-900 font-sans antialiased">
     <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
   </body>
 </html>
