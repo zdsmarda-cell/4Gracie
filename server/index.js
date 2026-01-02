@@ -92,15 +92,101 @@ const sendEmail = async (to, subject, html) => {
     }
 };
 
+// --- EMAIL TRANSLATIONS ---
+const EMAIL_TRANSLATIONS = {
+  cs: {
+    statuses: {
+      created: 'Vytvořena',
+      confirmed: 'Potvrzená',
+      preparing: 'Připravuje se',
+      ready: 'Připravena',
+      on_way: 'Na cestě',
+      delivered: 'Doručena',
+      not_picked_up: 'Nevyzvednuta',
+      cancelled: 'Stornována'
+    },
+    headers: {
+      image: 'Foto',
+      qty: 'Ks',
+      item: 'Položka',
+      price: 'Cena',
+      packaging: 'Balné',
+      delivery: 'Doprava',
+      total: 'CELKEM',
+      discount: 'Sleva',
+      date: 'Datum doručení'
+    },
+    footer: 'Děkujeme, že využíváte naše služby.<br/>Tým 4Gracie'
+  },
+  en: {
+    statuses: {
+      created: 'Created',
+      confirmed: 'Confirmed',
+      preparing: 'Preparing',
+      ready: 'Ready',
+      on_way: 'On the way',
+      delivered: 'Delivered',
+      not_picked_up: 'Not picked up',
+      cancelled: 'Cancelled'
+    },
+    headers: {
+      image: 'Photo',
+      qty: 'Qty',
+      item: 'Item',
+      price: 'Price',
+      packaging: 'Packaging',
+      delivery: 'Delivery',
+      total: 'TOTAL',
+      discount: 'Discount',
+      date: 'Delivery Date'
+    },
+    footer: 'Thank you for choosing our services.<br/>Team 4Gracie'
+  },
+  de: {
+    statuses: {
+      created: 'Erstellt',
+      confirmed: 'Bestätigt',
+      preparing: 'In Vorbereitung',
+      ready: 'Bereit',
+      on_way: 'Unterwegs',
+      delivered: 'Geliefert',
+      not_picked_up: 'Nicht abgeholt',
+      cancelled: 'Storniert'
+    },
+    headers: {
+      image: 'Foto',
+      qty: 'Menge',
+      item: 'Artikel',
+      price: 'Preis',
+      packaging: 'Verpackung',
+      delivery: 'Lieferung',
+      total: 'GESAMT',
+      discount: 'Rabatt',
+      date: 'Lieferdatum'
+    },
+    footer: 'Vielen Dank, dass Sie unsere Dienste nutzen.<br/>Team 4Gracie'
+  }
+};
+
 // --- EMAIL TEMPLATE GENERATOR ---
 const generateOrderEmailHtml = (order, title, subTitle) => {
-    const itemsHtml = order.items.map(item => `
+    const lang = order.language || 'cs';
+    const t = EMAIL_TRANSLATIONS[lang] || EMAIL_TRANSLATIONS.cs;
+
+    const itemsHtml = order.items.map(item => {
+      // Image Handling: Check if images exist and use the first one
+      const imgHtml = (item.images && item.images.length > 0) 
+        ? `<img src="${item.images[0]}" alt="${item.name}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px; display: block;">` 
+        : '<div style="width: 50px; height: 50px; background-color: #eee; border-radius: 4px;"></div>';
+
+      return `
       <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.quantity}x</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee; width: 60px; text-align: center;">${imgHtml}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee; width: 40px; text-align: center;">${item.quantity}x</td>
         <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${item.name}</strong></td>
         <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${item.price * item.quantity} Kč</td>
       </tr>
-    `).join('');
+    `}).join('');
 
     const discountSum = order.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
     const deliveryFee = order.deliveryFee || 0;
@@ -110,7 +196,7 @@ const generateOrderEmailHtml = (order, title, subTitle) => {
 
     const discountsHtml = order.appliedDiscounts?.map(d => `
       <tr>
-        <td colspan="2" style="padding: 8px; color: green;">Sleva (${d.code})</td>
+        <td colspan="3" style="padding: 8px; color: green;">${t.headers.discount} (${d.code})</td>
         <td style="padding: 8px; text-align: right; color: green;">-${d.amount} Kč</td>
       </tr>
     `).join('') || '';
@@ -124,34 +210,35 @@ const generateOrderEmailHtml = (order, title, subTitle) => {
         <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
           <thead>
             <tr style="background-color: #f3f4f6;">
-              <th style="padding: 8px; text-align: left;">Ks</th>
-              <th style="padding: 8px; text-align: left;">Položka</th>
-              <th style="padding: 8px; text-align: right;">Cena</th>
+              <th style="padding: 8px; text-align: center;">${t.headers.image}</th>
+              <th style="padding: 8px; text-align: center;">${t.headers.qty}</th>
+              <th style="padding: 8px; text-align: left;">${t.headers.item}</th>
+              <th style="padding: 8px; text-align: right;">${t.headers.price}</th>
             </tr>
           </thead>
           <tbody>
             ${itemsHtml}
             ${discountsHtml}
             <tr>
-              <td colspan="2" style="padding: 8px; color: #666;">Balné</td>
+              <td colspan="3" style="padding: 8px; color: #666;">${t.headers.packaging}</td>
               <td style="padding: 8px; text-align: right;">${packagingFee} Kč</td>
             </tr>
             ${deliveryFee > 0 ? `
             <tr>
-              <td colspan="2" style="padding: 8px; color: #666;">Doprava</td>
+              <td colspan="3" style="padding: 8px; color: #666;">${t.headers.delivery}</td>
               <td style="padding: 8px; text-align: right;">${deliveryFee} Kč</td>
             </tr>` : ''}
             <tr style="font-size: 1.2em; font-weight: bold; background-color: #f9fafb;">
-              <td colspan="2" style="padding: 12px; border-top: 2px solid #ddd;">CELKEM</td>
+              <td colspan="3" style="padding: 12px; border-top: 2px solid #ddd;">${t.headers.total}</td>
               <td style="padding: 12px; border-top: 2px solid #ddd; text-align: right; color: #9333ea;">${finalTotal} Kč</td>
             </tr>
           </tbody>
         </table>
 
-        <p>Datum doručení: <strong>${order.deliveryDate}</strong></p>
+        <p>${t.headers.date}: <strong>${order.deliveryDate}</strong></p>
         
         <br/>
-        <p style="font-size: 0.9em; color: #666;">Děkujeme, že využíváte naše služby.<br/>Tým 4Gracie</p>
+        <p style="font-size: 0.9em; color: #666;">${t.footer}</p>
       </div>
     `;
 };
@@ -432,7 +519,9 @@ app.post('/api/orders', withDb(async (req, res, db) => {
       const userEmail = userRows.length > 0 ? userRows[0].email : null;
       
       if (userEmail) {
-          const subject = `Potvrzení objednávky #${o.id}`;
+          const lang = o.language || 'cs';
+          const t = EMAIL_TRANSLATIONS[lang] || EMAIL_TRANSLATIONS.cs;
+          const subject = `${t.statuses.created}: #${o.id}`; // Simple subject
           const subTitle = `Vaše objednávka <strong>#${o.id}</strong> byla přijata ke zpracování.`;
           const html = generateOrderEmailHtml(o, 'Děkujeme za vaši objednávku!', subTitle);
           
@@ -455,8 +544,13 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
               const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [orderData.userId]);
               
               if (userRows.length > 0) {
+                  const lang = orderData.language || 'cs';
+                  const t = EMAIL_TRANSLATIONS[lang] || EMAIL_TRANSLATIONS.cs;
+                  // Localize the status
+                  const localizedStatus = t.statuses[req.body.status] || req.body.status;
+                  
                   const subject = `Aktualizace objednávky #${id}`;
-                  const subTitle = `Vaše objednávka <strong>#${id}</strong> má nyní stav: <strong style="color: #9333ea;">${req.body.status.toUpperCase()}</strong>`;
+                  const subTitle = `Vaše objednávka <strong>#${id}</strong> má nyní stav: <strong style="color: #9333ea;">${localizedStatus.toUpperCase()}</strong>`;
                   const html = generateOrderEmailHtml(orderData, 'Změna stavu objednávky', subTitle);
                   
                   sendEmail(userRows[0].email, subject, html);
