@@ -109,6 +109,13 @@ const PaymentMethodModal: React.FC<{
     );
 };
 
+interface ProductLoadInfo {
+    name: string;
+    quantity: number;
+    workload: number;
+    overhead: number;
+}
+
 // --- NEW COMPONENT: Load Detail Modal ---
 const LoadDetailModal: React.FC<{
     date: string | null;
@@ -121,7 +128,7 @@ const LoadDetailModal: React.FC<{
 
         const activeOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED);
         const groupedByCategory: Record<string, {
-            products: Record<string, { name: string, quantity: number, workload: number, overhead: number }>;
+            products: Record<string, ProductLoadInfo>;
             totalWorkload: number;
         }> = {};
 
@@ -159,10 +166,11 @@ const LoadDetailModal: React.FC<{
         // Calculate Totals per Category
         Object.keys(groupedByCategory).forEach(catId => {
             let catTotal = 0;
-            Object.values(groupedByCategory[catId].products).forEach(p => {
+            Object.values(groupedByCategory[catId].products).forEach((p) => {
+                const info = p as ProductLoadInfo;
                 // Formula: (Qty * Workload) + Overhead (Once per day per product type)
                 // Note: Overhead logic matches getDailyLoad in StoreContext
-                const productTotal = (p.quantity * p.workload) + p.overhead;
+                const productTotal = (info.quantity * info.workload) + info.overhead;
                 catTotal += productTotal;
             });
             groupedByCategory[catId].totalWorkload = catTotal;
@@ -188,7 +196,7 @@ const LoadDetailModal: React.FC<{
 
         Object.keys(detailData).forEach(catId => {
             const catName = settings.categories.find(c => c.id === catId)?.name || catId;
-            const products = Object.values(detailData[catId].products);
+            const products = Object.values(detailData[catId].products) as ProductLoadInfo[];
             
             products.forEach(p => {
                 if (p.quantity > 0) {
@@ -237,7 +245,7 @@ const LoadDetailModal: React.FC<{
                         const data = detailData[cat.id];
                         // Skip categories with no load if you prefer, or show them as empty
                         // Showing all allows admins to see limits even if empty
-                        const productList = Object.values(data?.products || {});
+                        const productList = Object.values(data?.products || {}) as ProductLoadInfo[];
                         const limit = getCapacityLimit(date, cat.id);
                         const usagePercent = limit > 0 ? Math.round((data.totalWorkload / limit) * 100) : 0;
                         const isOverLimit = data.totalWorkload > limit;

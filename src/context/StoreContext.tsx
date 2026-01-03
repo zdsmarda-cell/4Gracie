@@ -895,7 +895,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       y += 5;
       
       if (isVatPayer) {
-          doc.text(`Datum zdan. plnění: ${formatDate(o.deliveryDate)}`, 10, y);
+          doc.text(`Datum zdan. plnění: ${formatDate(o.createdAt)}`, 10, y);
           y += 5;
       }
       
@@ -949,12 +949,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       doc.setFont("Roboto", "normal"); // Ensure font is set
       
       if (isVatPayer) {
-          // Columns: Položka | Ks | Cena/j bez DPH | DPH% | DPH | Celkem s DPH
+          // Columns: Položka | Ks | Cena/j bez DPH | Sazba | DPH (částka) | Celkem s DPH
           doc.text('Položka', 10, y);
-          doc.text('Ks', 90, y);
-          doc.text('Cena/j bez DPH', 105, y);
-          doc.text('DPH', 140, y);
-          doc.text('Celkem', 170, y);
+          doc.text('Ks', 85, y);
+          doc.text('Základ', 95, y);
+          doc.text('Sazba', 125, y);
+          doc.text('DPH', 145, y); // New column for VAT Amount
+          doc.text('Celkem', 175, y);
       } else {
           // Columns: Položka | Ks | Cena/j | Celkem
           doc.text('Položka', 10, y);
@@ -1000,14 +1001,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               
               if (rate > maxVatRate) maxVatRate = rate;
 
-              const pricePerUnitWithVat = item.price;
-              const pricePerUnitBase = pricePerUnitWithVat / (1 + rate / 100);
+              const totalItemBase = itemTotal / (1 + rate / 100);
+              const totalItemVat = itemTotal - totalItemBase;
               
               doc.text(name, 10, y);
-              doc.text(item.quantity.toString(), 90, y);
-              doc.text(pricePerUnitBase.toFixed(2), 105, y);
-              doc.text(`${rate}%`, 140, y);
-              doc.text(itemTotal.toFixed(2), 170, y);
+              doc.text(item.quantity.toString(), 85, y);
+              doc.text(totalItemBase.toFixed(2), 95, y);
+              doc.text(`${rate}%`, 125, y);
+              doc.text(totalItemVat.toFixed(2), 145, y);
+              doc.text(itemTotal.toFixed(2), 175, y);
               
               addToVat(rate, itemTotal);
           } else {
@@ -1027,13 +1029,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       if (o.packagingFee > 0) {
           doc.text('Balné', 10, y);
-          doc.text('1', isVatPayer ? 90 : 120, y);
+          doc.text('1', isVatPayer ? 85 : 120, y);
           
           if (isVatPayer) {
               const base = o.packagingFee / (1 + feesVatRate/100);
-              doc.text(base.toFixed(2), 105, y);
-              doc.text(`${feesVatRate}%`, 140, y);
-              doc.text(o.packagingFee.toString(), 170, y);
+              const tax = o.packagingFee - base;
+              
+              doc.text(base.toFixed(2), 95, y);
+              doc.text(`${feesVatRate}%`, 125, y);
+              doc.text(tax.toFixed(2), 145, y);
+              doc.text(o.packagingFee.toString(), 175, y);
               addToVat(feesVatRate, o.packagingFee);
           } else {
               doc.text(o.packagingFee.toString(), 140, y);
@@ -1044,13 +1049,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       if (o.deliveryFee > 0) {
           doc.text('Doprava', 10, y);
-          doc.text('1', isVatPayer ? 90 : 120, y);
+          doc.text('1', isVatPayer ? 85 : 120, y);
           
           if (isVatPayer) {
               const base = o.deliveryFee / (1 + feesVatRate/100);
-              doc.text(base.toFixed(2), 105, y);
-              doc.text(`${feesVatRate}%`, 140, y);
-              doc.text(o.deliveryFee.toString(), 170, y);
+              const tax = o.deliveryFee - base;
+              
+              doc.text(base.toFixed(2), 95, y);
+              doc.text(`${feesVatRate}%`, 125, y);
+              doc.text(tax.toFixed(2), 145, y);
+              doc.text(o.deliveryFee.toString(), 175, y);
               addToVat(feesVatRate, o.deliveryFee);
           } else {
               doc.text(o.deliveryFee.toString(), 140, y);
@@ -1067,12 +1075,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               
               const negativeAmount = -d.amount;
               if (isVatPayer) {
-                  // Discount usually reduces the base proportionally, simplifying here to specific rate or proportional
-                  // For invoice simplicity, we apply discount as a negative item with 0% or blended.
-                  // BETTER: Just show negative total.
-                  doc.text(negativeAmount.toString(), 170, y);
-                  // Note: Correct VAT handling of discounts is complex (pro-rate). 
-                  // Here we subtract from TOTAL mainly.
+                  // Discount subtracted from highest VAT bucket simplistically for display
+                  const base = negativeAmount / (1 + feesVatRate/100);
+                  const tax = negativeAmount - base;
+                  
+                  doc.text(base.toFixed(2), 95, y);
+                  doc.text(`${feesVatRate}%`, 125, y);
+                  doc.text(tax.toFixed(2), 145, y);
+                  doc.text(negativeAmount.toString(), 175, y);
+                  
+                  addToVat(feesVatRate, negativeAmount);
               } else {
                   doc.text(negativeAmount.toString(), 170, y);
               }
@@ -1086,8 +1098,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       // --- RECAPITULATION (VAT Payer Only) ---
       if (isVatPayer) {
-          const discountSum = o.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0;
-          
           doc.setFontSize(9);
           doc.text('Rekapitulace DPH (v Kč):', 10, y);
           y += 5;
