@@ -635,7 +635,7 @@ export const Profile: React.FC = () => {
                        <div>
                          <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('admin.comm_lang')}</label>
                          <select className="w-full border rounded p-2 text-sm" value={editingOrder.language || Language.CS} onChange={e => setEditingOrder({...editingOrder, language: e.target.value as Language})}>
-                           {Object.values(Language).map(lang => <option key={lang} value={lang}>{(lang as string).toUpperCase()}</option>)}
+                           {Object.values(Language).map(lang => <option key={lang as string} value={lang}>{(lang as string).toUpperCase()}</option>)}
                          </select>
                        </div>
                     </div>
