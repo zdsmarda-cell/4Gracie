@@ -14,14 +14,16 @@ import { Terms } from './pages/Terms';
 import { Contacts } from './pages/Contacts';
 import { X, Info, Truck, AlertCircle, CheckCircle, Loader2, Store } from 'lucide-react';
 
-// Login Overlay Mock (for demo purposes) - Updated to use AuthModal trigger for consistency
+// Login Overlay Mock (for demo purposes) - Visible only in Local Mode
 const LoginMock = () => {
-  const { user, login } = useStore();
-  if (user) return null;
+  const { user, login, dataSource } = useStore();
+  
+  // Hide if user is logged in OR if we are connected to API (Production mode)
+  if (user || dataSource === 'api') return null;
   
   return (
     <div className="fixed bottom-4 right-4 bg-white p-4 shadow-xl rounded-lg border border-gray-200 z-50">
-      <p className="text-xs text-gray-500 mb-2">Rychlé Demo Přihlášení:</p>
+      <p className="text-xs text-gray-500 mb-2">Rychlé Demo Přihlášení (Lokální):</p>
       <div className="space-x-2">
         <button onClick={() => login('jan.novak@example.com', '1234')} className="px-3 py-1 bg-gray-800 text-white text-xs rounded">User (Heslo: 1234)</button>
         <button onClick={() => login('info@4gracie.cz', '1234')} className="px-3 py-1 bg-red-800 text-white text-xs rounded">Admin (Heslo: 1234)</button>
