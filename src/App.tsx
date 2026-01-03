@@ -8,6 +8,8 @@ import { AuthModal } from './components/AuthModal';
 import { Menu } from './pages/Menu';
 import { Cart } from './pages/Cart';
 import { Admin } from './pages/Admin';
+// Driver import removed temporarily
+// import { Driver } from './pages/Driver';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Terms } from './pages/Terms';
@@ -300,6 +302,8 @@ const App: React.FC = () => {
             <Route path="/cart" element={<Cart />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/admin" element={<Admin />} />
+            {/* Driver Route Deactivated */}
+            {/* <Route path="/driver" element={<Driver />} /> */}
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/terms" element={<Terms />} />
             <Route path="/contacts" element={<Contacts />} />

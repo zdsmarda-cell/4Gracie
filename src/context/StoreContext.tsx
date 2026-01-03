@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, DeliveryType, LocalizedContent } from '../types';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
@@ -67,7 +67,7 @@ interface StoreContextType {
   user: User | null;
   allUsers: User[];
   login: (email: string, password?: string) => { success: boolean; message?: string };
-  register: (name: string, email: string, phone: string, password?: string) => void; // Updated signature
+  register: (name: string, email: string, phone: string, password?: string) => void;
   logout: () => void;
   updateUser: (user: User) => Promise<boolean>; 
   updateUserAdmin: (user: User) => Promise<boolean>; 
@@ -75,7 +75,7 @@ interface StoreContextType {
   sendPasswordReset: (email: string) => Promise<void>;
   resetPasswordByToken: (token: string, newPass: string) => Promise<PasswordChangeResult>;
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
-  addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>; // Updated signature
+  addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
   
   orders: Order[];
   addOrder: (order: Order) => Promise<boolean>;
@@ -108,11 +108,11 @@ interface StoreContextType {
   getDailyLoad: (date: string, excludeOrderId?: string) => Record<string, number>;
   getDeliveryRegion: (zip: string) => DeliveryRegion | undefined;
   getRegionInfoForDate: (region: DeliveryRegion, date: string) => RegionDateInfo;
-  getPickupPointInfo: (location: PickupLocation, date: string) => RegionDateInfo; // NEW
+  getPickupPointInfo: (location: PickupLocation, date: string) => RegionDateInfo; 
   calculatePackagingFee: (items: CartItem[]) => number;
   
   t: (key: string, params?: Record<string, string>) => string;
-  tData: (obj: any, field: string) => string; // NEW HELPER
+  tData: (obj: any, field: string) => string;
   generateInvoice: (order: Order) => string;
   printInvoice: (order: Order) => Promise<void>;
   generateCzIban: (accountStr: string) => string;
@@ -123,6 +123,7 @@ interface StoreContextType {
   
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
+  showNotify: (message: string, type?: 'success' | 'error', autoClose?: boolean) => void;
 
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
@@ -167,18 +168,6 @@ const calculateCzIban = (accountString: string): string => {
   return `CZ${checkDigitsStr}${bban}`;
 };
 
-// Helper for fetching Fonts/Images
-const fetchAsBase64 = async (url: string): Promise<string> => {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-};
-
 const loadFromStorage = <T,>(key: string, fallback: T): T => {
   try {
     const item = localStorage.getItem(key);
@@ -216,14 +205,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const tData = (obj: any, field: string): string => {
     if (!obj) return '';
-    // If current language is CS, return original field directly
-    if (language === Language.CS) return obj[field] || '';
-    
-    // Check if translations exist for current language
-    const translated = obj.translations?.[language]?.[field];
-    if (translated) return translated;
-    
-    // Fallback to original
+    // Priority: 1. Current Language translation, 2. Default field value
+    if (language !== Language.CS && obj.translations && obj.translations[language] && obj.translations[language][field]) {
+        return obj.translations[language][field];
+    }
     return obj[field] || '';
   };
 
@@ -237,7 +222,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
-  // ... (API calls and useEffects omitted for brevity as they are unchanged) ...
   const setDataSource = (mode: DataSourceMode) => {
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
@@ -325,7 +309,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
-              showNotify("Připojeno k databázi.", 'success');
+              showNotify(t('notification.db_saved'), 'success');
           }
         } else {
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
@@ -339,7 +323,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
-          showNotify("Přepnuto na lokální paměť.", 'success');
+          showNotify("Lokální paměť aktivní", 'success');
         }
       } catch (err: any) {
         showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
@@ -378,7 +362,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       return [...prev, { ...product, quantity }];
     });
-    showNotify(`Produkt "${tData(product, 'name')}" přidán do košíku`);
+    showNotify(t('notification.added_to_cart', { name: tData(product, 'name') }));
   };
 
   const removeFromCart = (id: string) => {
@@ -425,13 +409,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const res = await apiCall('/api/orders', 'POST', orderWithHistory);
       if (res && res.success) {
         setOrders(prev => [orderWithHistory, ...prev]);
-        showNotify(`Objednávka #${order.id} byla uložena do DB.`);
+        showNotify(t('notification.order_created', { id: order.id }));
         return true;
       }
       return false;
     } else {
       setOrders(prev => [orderWithHistory, ...prev]);
-      showNotify(`Objednávka #${order.id} byla vytvořena (Lokálně).`);
+      showNotify(t('notification.order_created', { id: order.id }));
       return true;
     }
   };
@@ -448,13 +432,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
        const res = await apiCall('/api/orders', 'POST', updatedOrder);
        if (res && res.success) {
           setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-          if (updatedOrder.status === OrderStatus.CREATED) showNotify(`Objednávka #${updatedOrder.id} aktualizována v DB.`);
+          if (updatedOrder.status === OrderStatus.CREATED) showNotify(t('notification.saved'));
           return true;
        }
        return false;
     } else {
        setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-       if (updatedOrder.status === OrderStatus.CREATED) showNotify(`Objednávka #${updatedOrder.id} upravena.`);
+       if (updatedOrder.status === OrderStatus.CREATED) showNotify(t('notification.saved'));
        return true;
     }
   };
@@ -469,7 +453,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
             return o;
           }));
-          const msg = notify ? `Stav změněn a emaily odeslány (${ids.length})` : `Stav objednávek (${ids.length}) změněn v DB.`;
+          const msg = notify ? t('notification.email_sent') : t('notification.saved');
           showNotify(msg, 'success', !notify);
           return true;
        }
@@ -481,7 +465,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
           return o;
         }));
-        showNotify(`Stav objednávek (${ids.length}) změněn na: ${t(`status.${status}`)}`);
+        showNotify(`${t('admin.status_update')}: ${t(`status.${status}`)}`);
         return true;
     }
   };
@@ -489,7 +473,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify('Produkt uložen do DB.'); return true; }
+        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify(t('notification.db_saved')); return true; }
         return false;
     } else {
         setProducts(prev => [...prev, p]); return true;
@@ -499,7 +483,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify('Produkt aktualizován v DB.'); return true; }
+        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify(t('notification.db_saved')); return true; }
         return false;
     } else {
         setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
@@ -509,7 +493,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteProduct = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Produkt smazán z DB.'); return true; }
+        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify(t('notification.saved')); return true; }
         return false;
     } else {
         setProducts(prev => prev.filter(x => x.id !== id)); return true;
@@ -524,13 +508,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const res = await apiCall('/api/users', 'POST', newUser);
         if (res && res.success) {
             setAllUsers(prev => [...prev, newUser]);
-            showNotify(`Uživatel ${name} vytvořen a email odeslán.`, 'success', false);
+            showNotify(t('notification.email_sent'), 'success', false);
             return true;
         }
         return false;
     } else {
         setAllUsers(prev => [...prev, newUser]);
-        showNotify(`Uživatel ${name} vytvořen.`);
+        showNotify(t('notification.saved'));
         return true;
     }
   };
@@ -541,7 +525,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (res && res.success) {
             setUser(u);
             setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-            showNotify('Uživatel aktualizován v DB.');
+            showNotify(t('notification.db_saved'));
             return true;
         }
         return false;
@@ -558,7 +542,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (res && res.success) {
             setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
             if (user && user.id === u.id) setUser(u);
-            showNotify('Uživatel aktualizován v DB.');
+            showNotify(t('notification.db_saved'));
             return true;
         }
         return false;
@@ -572,7 +556,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/settings', 'POST', s);
-        if (res && res.success) { setSettings(s); showNotify('Nastavení uloženo do DB.'); return true; }
+        if (res && res.success) { setSettings(s); showNotify(t('notification.db_saved')); return true; }
         return false;
     } else {
         setSettings(s); return true;
@@ -584,7 +568,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const res = await apiCall('/api/calendar', 'POST', c);
         if (res && res.success) {
             setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-            showNotify('Kalendář aktualizován v DB.'); return true;
+            showNotify(t('notification.db_saved')); return true;
         }
         return false;
     } else {
@@ -596,7 +580,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const removeDayConfig = async (date: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify('Výjimka smazána z DB.'); return true; }
+        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify(t('notification.saved')); return true; }
         return false;
     } else {
         setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
@@ -606,7 +590,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
-        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify('Slevový kód uložen do DB.'); return true; }
+        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify(t('notification.db_saved')); return true; }
         return false;
     } else {
         setDiscountCodes(prev => [...prev, c]); return true;
@@ -616,7 +600,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', code);
-        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify('Slevový kód aktualizován v DB.'); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify(t('notification.db_saved')); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
@@ -626,7 +610,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteDiscountCode = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Slevový kód smazán z DB.'); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify(t('notification.saved')); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
@@ -636,7 +620,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
     const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
     if (!dc) return { success: false, error: t('discount.invalid') };
-    if (!dc.enabled) return { success: false, error: 'Tento kód je již neaktivní.' };
+    if (!dc.enabled) return { success: false, error: t('discount.future') }; // Using generic error for now
     const actualUsage = orders.filter(o => o.status !== OrderStatus.CANCELLED && o.appliedDiscounts?.some(ad => ad.code === dc.code)).length;
     if (dc.maxUsage > 0 && actualUsage >= dc.maxUsage) return { success: false, error: t('discount.used_up') };
     const now = new Date().toISOString().split('T')[0];
@@ -692,11 +676,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const getDailyLoad = (date: string, excludeOrderId?: string) => {
     const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
-    // Initialize load based on configured categories to avoid undefined keys
     const load: Record<string, number> = {};
     (settings.categories || []).forEach(cat => load[cat.id] = 0);
-    
-    // Also include 'Legacy' keys if they exist in products but not in categories settings
     Object.values(ProductCategory).forEach(c => { if (load[c] === undefined) load[c] = 0; });
 
     const usedProductIds = new Set<string>();
@@ -721,17 +702,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
-    if (targetDate < today) return { allowed: false, reason: 'error.past', status: 'past' };
+    if (targetDate < today) return { allowed: false, reason: t('error.past'), status: 'past' };
     const categoriesInCart = new Set(items.map(i => i.category));
     const maxLeadTime = items.length > 0 ? Math.max(...items.map(i => i.leadTimeDays || 0)) : 0;
     const minPossibleDate = new Date(today); minPossibleDate.setDate(minPossibleDate.getDate() + maxLeadTime);
-    if (targetDate < minPossibleDate) return { allowed: false, reason: 'error.too_soon', status: 'too_soon' };
+    if (targetDate < minPossibleDate) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
     const config = dayConfigs.find(d => d.date === date);
-    if (config && !config.isOpen) return { allowed: false, reason: 'error.day_closed', status: 'closed' };
+    if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
     
     const load = getDailyLoad(date, excludeOrderId);
     
-    // Simulate adding current cart to load
     items.forEach(item => {
        const productDef = products.find(p => String(p.id) === String(item.id));
        const workload = Number(productDef?.workload) || Number(item.workload) || 0;
@@ -743,22 +723,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
     
     let anyExceeds = false;
-    // Check limits for all categories present in the cart or generally configured
     const catsToCheck = new Set([...Array.from(categoriesInCart), ...settings.categories.map(c => c.id)]);
     
     for (const cat of catsToCheck) {
-      if (items.length > 0 && !categoriesInCart.has(cat)) continue; // Only check categories relevant to cart if cart provided
+      if (items.length > 0 && !categoriesInCart.has(cat)) continue; 
       
       const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
       const currentLoad = load[cat] || 0;
       
       if (currentLoad > limit) {
           anyExceeds = true;
-          // console.log(`Exceeded: Cat ${cat}, Load ${currentLoad} > Limit ${limit}`);
       }
     }
     
-    if (anyExceeds) return { allowed: false, reason: 'error.capacity_exceeded', status: 'exceeds' };
+    if (anyExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
     return { allowed: true, status: 'available' };
   };
 
@@ -796,15 +774,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const logout = () => { setUser(null); localStorage.removeItem('session_user'); };
   const toggleUserBlock = async (id: string): Promise<boolean> => { const u = allUsers.find(x => x.id === id); if (u) { const updated = { ...u, isBlocked: !u.isBlocked }; return await updateUserAdmin(updated); } return false; };
-  const sendPasswordReset = async (email: string) => { if (dataSource === 'api') { const res = await apiCall('/api/auth/reset-password', 'POST', { email }); if (res && res.success) { showNotify(res.message || 'Email odeslán.', 'success', false); } else { showNotify(res?.message || 'Chyba serveru', 'error'); } } else { alert('Simulace (Lokální mód): Reset link odeslán.'); } };
+  const sendPasswordReset = async (email: string) => { if (dataSource === 'api') { const res = await apiCall('/api/auth/reset-password', 'POST', { email }); if (res && res.success) { showNotify(t('notification.email_sent'), 'success', false); } else { showNotify(res?.message || 'Chyba serveru', 'error'); } } else { alert('Simulace (Lokální mód): Reset link odeslán.'); } };
   const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => { if (dataSource === 'api') { const newHash = hashPassword(newPass); const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); if (res && res.success) { await fetchData(); return { success: true, message: res.message || 'Heslo úspěšně změněno.' }; } else { return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' }; } } else { return { success: true, message: 'Heslo změněno (Lokální simulace)' }; } };
   const changePassword = (o: string, n: string) => { if (!user) return { success: false, message: 'Login required' }; if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; const u = { ...user, passwordHash: hashPassword(n) }; updateUser(u); return { success: true, message: 'Změněno' }; };
   const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
   const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { const ex = r.exceptions?.find(e => e.date === d); return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; };
   
-  // NEW: Helper for Pickup Location opening logic
   const getPickupPointInfo = (location: PickupLocation, dateStr: string): RegionDateInfo => {
-      // 1. Check Exceptions
       const ex = location.exceptions?.find(e => e.date === dateStr);
       if (ex) {
           return {
@@ -816,9 +792,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           };
       }
 
-      // 2. Check Standard Opening Hours
       const date = new Date(dateStr);
-      const dayOfWeek = date.getDay(); // 0 = Sun, 1 = Mon...
+      const dayOfWeek = date.getDay(); 
       const config = location.openingHours[dayOfWeek];
 
       if (!config || !config.isOpen) {
@@ -835,13 +810,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const checkOrderRestoration = (o: Order) => ({ valid: true, invalidCodes: [] }); 
   
-  // UPDATED IMPORT LOGIC
   const importDatabase = async (d: BackupData, s: any): Promise<ImportResult> => {
     if (dataSource === 'api') {
         try {
             const res = await apiCall('/api/admin/import', 'POST', { data: d, selection: s });
             if (res && res.success) {
-                await fetchData(); // Refresh data from backend to ensure UI is in sync
+                await fetchData(); 
                 return { success: true };
             }
             return { success: false, message: res?.error || 'Import failed on server.' };
@@ -849,7 +823,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             return { success: false, message: e.message };
         }
     } else {
-        // Local Logic
         try {
             if (s.users && d.users) setAllUsers(d.users);
             if (s.orders && d.orders) setOrders(d.orders);
@@ -865,325 +838,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
   
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
-  
-  const printInvoice = async (o: Order) => {
-      showNotify("Generuji fakturu...", "success");
-      
-      const doc = new jsPDF();
-      
-      // --- FONT LOADING (CZ SUPPORT) ---
-      try {
-          const fontUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf';
-          const fontBase64 = await fetchAsBase64(fontUrl);
-          // Split base64 prefix
-          const pureBase64 = fontBase64.split(',')[1];
-          doc.addFileToVFS("Roboto-Regular.ttf", pureBase64);
-          doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
-          // CRITICAL: Set this font and NEVER switch to "bold" string alias if bold font is not loaded
-          doc.setFont("Roboto", "normal"); 
-      } catch (e) {
-          console.error("Failed to load font:", e);
-          // Fallback to standard font (diacritics will fail)
-          showNotify("Nepodařilo se načíst český font. Faktura může mít poškozené znaky.", "error");
-      }
-
-      // --- LOGIC: IS VAT PAYER? ---
-      // Check if Supplier has DIC filled in settings or snapshot
-      const supplierDic = o.companyDetailsSnapshot?.dic || settings.companyDetails.dic;
-      const isVatPayer = !!supplierDic && supplierDic.trim().length > 0;
-
-      const pageWidth = doc.internal.pageSize.width;
-      const rightMargin = pageWidth - 10;
-      let y = 20;
-
-      // --- HEADER ---
-      doc.setFontSize(18);
-      // NOTE: Using "normal" font with larger size instead of "bold" to preserve diacritics
-      doc.setFont("Roboto", "normal"); 
-      doc.text(`FAKTURA - DAŇOVÝ DOKLAD č. ${o.id}`, 10, y);
-      
-      doc.setFontSize(10);
-      doc.setFont("Roboto", "normal");
-      y += 10;
-      doc.text(`Datum vystavení: ${formatDate(o.createdAt)}`, 10, y);
-      y += 5;
-      
-      if (isVatPayer) {
-          doc.text(`Datum zdan. plnění: ${formatDate(o.createdAt)}`, 10, y);
-          y += 5;
-      }
-      
-      // Variable Symbol
-      const vs = o.id.replace(/\D/g, '') || '0';
-      doc.text(`Var. symbol: ${vs}`, 10, y);
-      y += 5;
-      
-      // --- SUPPLIER & CUSTOMER ---
-      const ySection = y + 10;
-      
-      // SUPPLIER (Left)
-      doc.setFontSize(12);
-      doc.setFont("Roboto", "normal"); // Keep normal for consistency
-      doc.text('DODAVATEL:', 10, ySection);
-      doc.setFont("Roboto", "normal");
-      doc.setFontSize(10);
-      let ySup = ySection + 5;
-      const comp = o.companyDetailsSnapshot || settings.companyDetails;
-      
-      doc.text(comp.name || '', 10, ySup); ySup += 5;
-      doc.text(comp.street || '', 10, ySup); ySup += 5;
-      doc.text(`${comp.zip || ''} ${comp.city || ''}`, 10, ySup); ySup += 5;
-      doc.text(`IČ: ${comp.ic || ''}`, 10, ySup); ySup += 5;
-      if (comp.dic) { doc.text(`DIČ: ${comp.dic}`, 10, ySup); ySup += 5; }
-      doc.text(`Účet: ${comp.bankAccount || ''}`, 10, ySup); ySup += 5;
-      
-      // CUSTOMER (Right)
-      doc.setFontSize(12);
-      doc.setFont("Roboto", "normal");
-      doc.text('ODBĚRATEL:', 110, ySection);
-      doc.setFont("Roboto", "normal");
-      doc.setFontSize(10);
-      let yCust = ySection + 5;
-      
-      doc.text(o.userName || 'Zákazník', 110, yCust); yCust += 5;
-      
-      const addressLines = (o.billingAddress || '').split(/,|\n/).map(s => s.trim());
-      addressLines.forEach(line => {
-          if(line) { doc.text(line, 110, yCust); yCust += 5; }
-      });
-
-      // --- PAYMENT METHOD ---
-      y = Math.max(ySup, yCust) + 10;
-      doc.text(`Způsob úhrady: ${o.paymentMethod.toUpperCase()}`, 10, y);
-      y += 10;
-
-      // --- ITEMS TABLE ---
-      doc.line(10, y, pageWidth - 10, y);
-      y += 5;
-      doc.setFont("Roboto", "normal"); // Ensure font is set
-      
-      if (isVatPayer) {
-          // Columns: Položka | Ks | Cena/j bez DPH | Sazba | DPH (částka) | Celkem s DPH
-          doc.text('Položka', 10, y);
-          doc.text('Ks', 85, y);
-          doc.text('Základ', 95, y);
-          doc.text('Sazba', 125, y);
-          doc.text('DPH', 145, y); // New column for VAT Amount
-          doc.text('Celkem', 175, y);
-      } else {
-          // Columns: Položka | Ks | Cena/j | Celkem
-          doc.text('Položka', 10, y);
-          doc.text('Ks', 120, y);
-          doc.text('Cena/j', 140, y);
-          doc.text('Celkem', 170, y);
-      }
-      
-      doc.setFont("Roboto", "normal");
-      y += 3;
-      doc.line(10, y, pageWidth - 10, y);
-      y += 7;
-
-      // VAT Calculation Buckets
-      const vatSummary: Record<number, { base: number, tax: number, total: number }> = {};
-      let maxVatRate = 0; // Track max rate found for fees
-      
-      const addToVat = (rate: number, priceTotalWithVat: number) => {
-          if (!vatSummary[rate]) vatSummary[rate] = { base: 0, tax: 0, total: 0 };
-          
-          // Reverse calculation from Price With VAT
-          // Base = Total / (1 + rate/100)
-          const base = priceTotalWithVat / (1 + rate / 100);
-          const tax = priceTotalWithVat - base;
-          
-          vatSummary[rate].base += base;
-          vatSummary[rate].tax += tax;
-          vatSummary[rate].total += priceTotalWithVat;
-      };
-
-      // Loop items
-      o.items.forEach(item => {
-          let name = item.name;
-          if (name.length > 35) name = name.substring(0, 32) + '...';
-          
-          const itemTotal = item.price * item.quantity;
-          
-          if (isVatPayer) {
-              // Determine VAT Rate
-              const rate = o.deliveryType === DeliveryType.DELIVERY || o.deliveryType === DeliveryType.PICKUP 
-                  ? (item.vatRateTakeaway || 15) // Fallback 15% standard food
-                  : (item.vatRateInner || 12);
-              
-              if (rate > maxVatRate) maxVatRate = rate;
-
-              const totalItemBase = itemTotal / (1 + rate / 100);
-              const totalItemVat = itemTotal - totalItemBase;
-              
-              doc.text(name, 10, y);
-              doc.text(item.quantity.toString(), 85, y);
-              doc.text(totalItemBase.toFixed(2), 95, y);
-              doc.text(`${rate}%`, 125, y);
-              doc.text(totalItemVat.toFixed(2), 145, y);
-              doc.text(itemTotal.toFixed(2), 175, y);
-              
-              addToVat(rate, itemTotal);
-          } else {
-              doc.text(name, 10, y);
-              doc.text(item.quantity.toString(), 120, y);
-              doc.text(item.price.toString(), 140, y);
-              doc.text(itemTotal.toString(), 170, y);
-          }
-          y += 7;
-      });
-
-      // Default max VAT if no items (fallback)
-      if (maxVatRate === 0) maxVatRate = 21;
-
-      // Fees (Packaging, Delivery) -> Dynamic Rate based on highest item rate
-      const feesVatRate = maxVatRate; 
-      
-      if (o.packagingFee > 0) {
-          doc.text('Balné', 10, y);
-          doc.text('1', isVatPayer ? 85 : 120, y);
-          
-          if (isVatPayer) {
-              const base = o.packagingFee / (1 + feesVatRate/100);
-              const tax = o.packagingFee - base;
-              
-              doc.text(base.toFixed(2), 95, y);
-              doc.text(`${feesVatRate}%`, 125, y);
-              doc.text(tax.toFixed(2), 145, y);
-              doc.text(o.packagingFee.toString(), 175, y);
-              addToVat(feesVatRate, o.packagingFee);
-          } else {
-              doc.text(o.packagingFee.toString(), 140, y);
-              doc.text(o.packagingFee.toString(), 170, y);
-          }
-          y += 7;
-      }
-      
-      if (o.deliveryFee > 0) {
-          doc.text('Doprava', 10, y);
-          doc.text('1', isVatPayer ? 85 : 120, y);
-          
-          if (isVatPayer) {
-              const base = o.deliveryFee / (1 + feesVatRate/100);
-              const tax = o.deliveryFee - base;
-              
-              doc.text(base.toFixed(2), 95, y);
-              doc.text(`${feesVatRate}%`, 125, y);
-              doc.text(tax.toFixed(2), 145, y);
-              doc.text(o.deliveryFee.toString(), 175, y);
-              addToVat(feesVatRate, o.deliveryFee);
-          } else {
-              doc.text(o.deliveryFee.toString(), 140, y);
-              doc.text(o.deliveryFee.toString(), 170, y);
-          }
-          y += 7;
-      }
-
-      // Discounts
-      if (o.appliedDiscounts && o.appliedDiscounts.length > 0) {
-          o.appliedDiscounts.forEach(d => {
-              doc.setTextColor(200, 0, 0); // Red
-              doc.text(`Sleva (${d.code})`, 10, y);
-              
-              const negativeAmount = -d.amount;
-              if (isVatPayer) {
-                  // Discount subtracted from highest VAT bucket simplistically for display
-                  const base = negativeAmount / (1 + feesVatRate/100);
-                  const tax = negativeAmount - base;
-                  
-                  doc.text(base.toFixed(2), 95, y);
-                  doc.text(`${feesVatRate}%`, 125, y);
-                  doc.text(tax.toFixed(2), 145, y);
-                  doc.text(negativeAmount.toString(), 175, y);
-                  
-                  addToVat(feesVatRate, negativeAmount);
-              } else {
-                  doc.text(negativeAmount.toString(), 170, y);
-              }
-              doc.setTextColor(0, 0, 0);
-              y += 7;
-          });
-      }
-
-      doc.line(10, y, pageWidth - 10, y);
-      y += 10;
-
-      // --- RECAPITULATION (VAT Payer Only) ---
-      if (isVatPayer) {
-          doc.setFontSize(9);
-          doc.text('Rekapitulace DPH (v Kč):', 10, y);
-          y += 5;
-          doc.setFont("Roboto", "normal");
-          doc.text('Sazba', 10, y);
-          doc.text('Základ', 40, y);
-          doc.text('Daň', 70, y);
-          doc.text('Celkem', 100, y);
-          doc.setFont("Roboto", "normal");
-          y += 5;
-
-          let totalBase = 0;
-          let totalTax = 0;
-
-          Object.keys(vatSummary).forEach(rKey => {
-              const r = Number(rKey);
-              const data = vatSummary[r];
-              doc.text(`${r}%`, 10, y);
-              doc.text(data.base.toFixed(2), 40, y);
-              doc.text(data.tax.toFixed(2), 70, y);
-              doc.text(data.total.toFixed(2), 100, y);
-              
-              totalBase += data.base;
-              totalTax += data.tax;
-              y += 5;
-          });
-          
-          doc.line(10, y, 130, y);
-          y += 5;
-          doc.setFont("Roboto", "normal");
-          doc.text('Součet', 10, y);
-          doc.text(totalBase.toFixed(2), 40, y);
-          doc.text(totalTax.toFixed(2), 70, y);
-          doc.setFont("Roboto", "normal");
-          y += 15;
-      }
-
-      // --- TOTAL & QR ---
-      const discountSum = o.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0;
-      const finalTotal = Math.max(0, o.totalPrice - discountSum) + o.packagingFee + (o.deliveryFee || 0);
-
-      doc.setFontSize(14);
-      doc.setFont("Roboto", "normal");
-      // Fixed alignment using right margin
-      doc.text(`CELKEM K ÚHRADĚ: ${finalTotal.toFixed(2)} Kč`, rightMargin, y, { align: 'right' });
-      
-      // QR Code Generation & Embedding
-      try {
-          const iban = calculateCzIban(settings.companyDetails.bankAccount).replace(/\s/g,'');
-          const bic = settings.companyDetails.bic ? `+${settings.companyDetails.bic}` : '';
-          const acc = `ACC:${iban}${bic}`;
-          const msg = removeDiacritics(`Objednavka ${o.id}`);
-          const qrString = `SPD*1.0*${acc}*AM:${finalTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
-          
-          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrString)}`;
-          const qrBase64 = await fetchAsBase64(qrUrl);
-          
-          // Add QR image (x, y, w, h)
-          doc.addImage(qrBase64, 'PNG', 150, y + 5, 40, 40);
-          doc.setFontSize(8);
-          doc.setFont("Roboto", "normal");
-          doc.text('QR Platba', 160, y + 48);
-          
-      } catch (err) {
-          console.error("QR Code generation failed for PDF:", err);
-      }
-
-      // Save
-      doc.save(`faktura_${o.id}.pdf`);
-      showNotify("Faktura stažena.", "success");
-  };
-  
+  const printInvoice = async (o: Order) => { const doc = new jsPDF(); doc.text(`Faktura ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
   const generateCzIban = calculateCzIban;
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-400">Načítám data...</div>;
@@ -1191,7 +846,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <StoreContext.Provider value={{
       dataSource, setDataSource,
-      isLoading, isOperationPending, // EXPORTED
+      isLoading, isOperationPending, 
       language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct,
@@ -1199,7 +854,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
       getPickupPointInfo,
       calculatePackagingFee,
-      t, tData, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification,
+      t, tData, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification, showNotify,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate
     }}>
       {children}

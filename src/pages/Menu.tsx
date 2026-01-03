@@ -136,7 +136,6 @@ export const Menu: React.FC = () => {
       }
     });
     
-    // Sort based on the order defined in settings
     return settings.categories
       .filter(cat => cat.enabled && productsInCats.has(cat.id))
       .sort((a, b) => a.order - b.order);
@@ -144,7 +143,6 @@ export const Menu: React.FC = () => {
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
-      // Safety check: p.visibility might be undefined if data is corrupted (e.g. bad import)
       if (!p.visibility?.online) return false;
       if (selectedCategory !== 'all' && p.category !== selectedCategory) return false;
       if (excludeAllergens.length > 0) {
@@ -165,12 +163,11 @@ export const Menu: React.FC = () => {
     <div className="bg-gray-50 min-h-screen pb-12">
       {/* Hero Section */}
       <div className="bg-primary text-white py-12 px-4 text-center border-b-4 border-accent">
-        {/* LOGO ONLY */}
         <div className="flex justify-center">
            <img 
              src="/logo.png" 
              alt="4Gracie Catering" 
-             className="h-40 md:h-56 object-contain drop-shadow-2xl border-4 border-accent rounded-3xl p-4 bg-white"
+             className="h-40 md:h-56 object-contain drop-shadow-2xl"
            />
         </div>
       </div>
@@ -309,7 +306,7 @@ export const Menu: React.FC = () => {
             
             <div className="mb-6">
                 <h4 className="font-serif font-bold text-xl text-primary mb-1">{tData(selectedAllergenProduct, 'name')}</h4>
-                <p className="text-xs text-gray-500">Obsahuje následující alergeny:</p>
+                <p className="text-xs text-gray-500">{t('product.contains_allergens')}</p>
             </div>
             
             <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1 custom-scrollbar">
@@ -325,7 +322,7 @@ export const Menu: React.FC = () => {
             </div>
             
             <div className="mt-8 pt-4 border-t border-gray-100 flex justify-end">
-              <button onClick={() => setSelectedAllergenProduct(null)} className="bg-gray-900 text-white px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-black transition shadow-lg">Rozumím</button>
+              <button onClick={() => setSelectedAllergenProduct(null)} className="bg-gray-900 text-white px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-black transition shadow-lg">{t('common.close')}</button>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { DeliveryRegion, PickupLocation, CartItem } from '../types';
+import { useStore } from '../context/StoreContext';
 
 interface CustomCalendarProps {
   onSelect: (date: string) => void;
@@ -12,7 +13,7 @@ interface CustomCalendarProps {
   getRegionInfo: (region: DeliveryRegion, date: string) => any;
   pickupLocation?: PickupLocation;
   getPickupInfo: (location: PickupLocation, date: string) => any;
-  excludeOrderId?: string; // ID objednávky pro vyloučení z kapacity (při editaci)
+  excludeOrderId?: string;
 }
 
 export const CustomCalendar: React.FC<CustomCalendarProps> = ({ 
@@ -26,11 +27,11 @@ export const CustomCalendar: React.FC<CustomCalendarProps> = ({
   getPickupInfo,
   excludeOrderId
 }) => {
-  // Inicializace na aktuální datum nebo datum vybrané (pokud existuje)
+  const { t } = useStore();
   const [viewDate, setViewDate] = useState(() => selectedDate ? new Date(selectedDate) : new Date());
   
-  const monthNames = ["Leden", "Únor", "Březen", "Duben", "Květen", "Červen", "Červenec", "Srpen", "Září", "Říjen", "Listopad", "Prosinec"];
-  const dayNames = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
+  const monthNames = t('calendar.months').split(',');
+  const dayNames = t('calendar.days').split(',');
 
   const daysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
   const startDayOfMonth = (month: number, year: number) => new Date(year, month, 1).getDay() || 7; // Monday = 1
@@ -63,19 +64,15 @@ export const CustomCalendar: React.FC<CustomCalendarProps> = ({
         {days.map((day, idx) => {
           if (!day) return <div key={`empty-${idx}`} className="h-10" />;
           
-          // Fix Timezone issues by constructing date string manually
           const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
           
-          // Pass excludeOrderId to verify availability correctly during editing
           const availability = checkAvailability(dateStr, cart, excludeOrderId);
           
-          // Region Check
           let regionInfo = { isOpen: true, isException: false };
           if (region) {
             regionInfo = getRegionInfo(region, dateStr);
           }
 
-          // Pickup Check
           let pickupInfo = { isOpen: true, isException: false };
           if (pickupLocation) {
             pickupInfo = getPickupInfo(pickupLocation, dateStr);
@@ -90,17 +87,17 @@ export const CustomCalendar: React.FC<CustomCalendarProps> = ({
           if (availability.status === 'closed' || availability.status === 'full' || (region && !regionInfo.isOpen) || (pickupLocation && !pickupInfo.isOpen)) {
             bgColor = "bg-red-100 text-red-600";
             isBlocked = true;
-            if (region && !regionInfo.isOpen) title = 'V tento den se do tohoto regionu nerozváží.';
-            else if (pickupLocation && !pickupInfo.isOpen) title = 'V tento den má výdejní místo zavřeno.';
-            else title = availability.reason || 'Obsazeno/Zavřeno';
+            if (region && !regionInfo.isOpen) title = t('cart.date_closed_region');
+            else if (pickupLocation && !pickupInfo.isOpen) title = t('cart.date_closed_pickup');
+            else title = availability.reason || t('error.day_closed');
           } else if (availability.status === 'exceeds') {
             bgColor = "bg-orange-100 text-orange-600";
             isBlocked = true;
-            title = availability.reason || 'Kapacita překročena';
+            title = availability.reason || t('cart.capacity_exceeded');
           } else if (availability.status === 'past' || availability.status === 'too_soon') {
             bgColor = "bg-gray-50 text-gray-300";
             isBlocked = true;
-            title = availability.reason || 'Mimo povolený termín';
+            title = availability.reason || t('error.too_soon');
           }
           
           if (selectedDate === dateStr) bgColor = "bg-accent text-white";

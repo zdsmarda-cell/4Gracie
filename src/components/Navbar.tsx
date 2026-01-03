@@ -25,6 +25,10 @@ export const Navbar: React.FC = () => {
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center space-x-8">
             <Link to="/" className="text-gray-700 hover:text-accent font-medium transition">{t('nav.menu')}</Link>
+            {/* Driver tab deactivated as requested */}
+            {/* {(user?.role === 'driver' || user?.role === 'admin') && (
+              <Link to="/driver" className="text-gray-700 hover:text-accent font-medium transition">{t('nav.driver')}</Link>
+            )} */}
             {user?.role === 'admin' && (
               <Link to="/admin" className="text-red-600 font-bold hover:text-red-800 transition">{t('nav.admin')}</Link>
             )}
@@ -83,6 +87,10 @@ export const Navbar: React.FC = () => {
           <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
              <Link to="/" className="block px-3 py-2 text-base font-medium text-gray-700 hover:text-accent" onClick={() => setIsMobileMenuOpen(false)}>{t('nav.menu')}</Link>
              <Link to="/cart" className="block px-3 py-2 text-base font-medium text-gray-700 hover:text-accent" onClick={() => setIsMobileMenuOpen(false)}>{t('nav.cart')}</Link>
+             {/* Driver tab deactivated
+             {(user?.role === 'driver' || user?.role === 'admin') && (
+                <Link to="/driver" className="block px-3 py-2 text-base font-medium text-gray-700 hover:text-accent" onClick={() => setIsMobileMenuOpen(false)}>{t('nav.driver')}</Link>
+             )} */}
              {user?.role === 'admin' && (
                 <Link to="/admin" className="block px-3 py-2 text-base font-medium text-red-600" onClick={() => setIsMobileMenuOpen(false)}>{t('nav.admin')}</Link>
              )}

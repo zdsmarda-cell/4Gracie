@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DiscountCode, DiscountType, OrderStatus } from '../../types';
@@ -10,6 +9,7 @@ const DeleteConfirmModal: React.FC<{
     onConfirm: () => void;
     onClose: () => void;
 }> = ({ isOpen, title, onConfirm, onClose }) => {
+    const { t } = useStore();
     if (!isOpen) return null;
     return (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200">
@@ -19,10 +19,10 @@ const DeleteConfirmModal: React.FC<{
                         <Trash2 size={24} />
                     </div>
                     <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
-                    <p className="text-sm text-gray-500 mb-6">Tato akce je nevratná.</p>
+                    <p className="text-sm text-gray-500 mb-6">{t('confirm.delete_message')}</p>
                     <div className="flex gap-3 w-full">
-                        <button onClick={onClose} className="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-sm hover:bg-gray-200 transition">Zrušit</button>
-                        <button onClick={onConfirm} className="flex-1 py-2 bg-red-600 text-white rounded-lg font-bold text-sm hover:bg-red-700 transition">Smazat</button>
+                        <button onClick={onClose} className="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-sm hover:bg-gray-200 transition">{t('common.cancel')}</button>
+                        <button onClick={onConfirm} className="flex-1 py-2 bg-red-600 text-white rounded-lg font-bold text-sm hover:bg-red-700 transition">{t('common.delete')}</button>
                     </div>
                 </div>
             </div>
@@ -62,7 +62,7 @@ export const DiscountsTab: React.FC = () => {
 
         const codeToSave = (editingDiscount.code || '').trim().toUpperCase();
         if (!codeToSave) {
-            setModalError('Vyplňte kód slevy.');
+            setModalError(t('admin.fill_code'));
             return;
         }
 
@@ -72,7 +72,7 @@ export const DiscountsTab: React.FC = () => {
         );
 
         if (duplicate) {
-            setModalError(`Slevový kód "${codeToSave}" již existuje. Zvolte prosím jiný kód.`);
+            setModalError(t('admin.code_exists'));
             return;
         }
 
@@ -83,8 +83,6 @@ export const DiscountsTab: React.FC = () => {
     };
 
     const handleDeleteRequest = (id: string, code: string) => {
-        // Validation: Cannot delete if used in any order (even cancelled, strictly speaking, to keep history valid, but here we check general usage)
-        // If strict requirement: "If used in ANY order"
         const isUsed = orders.some(o => o.appliedDiscounts?.some(ad => ad.code === code));
         
         if (isUsed) {
@@ -118,13 +116,13 @@ export const DiscountsTab: React.FC = () => {
                 <table className="min-w-full divide-y">
                 <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
                     <tr>
-                    <th className="px-6 py-4 text-left">Kód</th>
-                    <th className="px-6 py-4 text-left">Hodnota</th>
-                    <th className="px-6 py-4 text-left">Platnost</th>
-                    <th className="px-6 py-4 text-center">Využití</th>
-                    <th className="px-6 py-4 text-right">Celková sleva</th>
-                    <th className="px-6 py-4 text-center">Stav</th>
-                    <th className="px-6 py-4 text-right">Akce</th>
+                    <th className="px-6 py-4 text-left">{t('discount.code')}</th>
+                    <th className="px-6 py-4 text-left">{t('admin.value')}</th>
+                    <th className="px-6 py-4 text-left">{t('admin.validity')}</th>
+                    <th className="px-6 py-4 text-center">{t('admin.usage')}</th>
+                    <th className="px-6 py-4 text-right">{t('admin.total_saved')}</th>
+                    <th className="px-6 py-4 text-center">{t('common.status')}</th>
+                    <th className="px-6 py-4 text-right">{t('common.actions')}</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y text-xs">
@@ -142,7 +140,7 @@ export const DiscountsTab: React.FC = () => {
                                 <td className="px-6 py-4 text-right font-bold text-green-600">
                                     {stats.totalSaved > 0 ? `-${stats.totalSaved} Kč` : '-'}
                                 </td>
-                                <td className="px-6 py-4 text-center">{d.enabled ? <span className="text-green-500 font-bold">Aktivní</span> : <span className="text-red-500">Neaktivní</span>}</td>
+                                <td className="px-6 py-4 text-center">{d.enabled ? <span className="text-green-500 font-bold">{t('common.active')}</span> : <span className="text-red-500">{t('common.inactive')}</span>}</td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
                                 <button onClick={() => openModal(d)} className="p-1 hover:text-primary"><Edit size={16}/></button>
                                 <button onClick={() => handleDeleteRequest(d.id, d.code)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
@@ -156,7 +154,7 @@ export const DiscountsTab: React.FC = () => {
 
             <DeleteConfirmModal 
                 isOpen={!!confirmDelete} 
-                title={`Smazat kód ${confirmDelete?.code}?`} 
+                title={`${t('common.delete')} ${confirmDelete?.code}?`} 
                 onConfirm={performDelete} 
                 onClose={() => setConfirmDelete(null)} 
             />
@@ -164,7 +162,7 @@ export const DiscountsTab: React.FC = () => {
             {isDiscountModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
                     <form onSubmit={saveDiscount} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl overflow-y-auto max-h-[90vh]">
-                        <h3 className="font-bold text-lg">{editingDiscount?.id ? 'Upravit slevu' : 'Nová sleva'}</h3>
+                        <h3 className="font-bold text-lg">{editingDiscount?.id ? t('admin.edit_discount') : t('admin.add_discount')}</h3>
                         
                         {modalError && (
                             <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold flex items-center">
@@ -173,45 +171,45 @@ export const DiscountsTab: React.FC = () => {
                         )}
 
                         <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">Kód</label>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">{t('discount.code')}</label>
                             <input required className="w-full border rounded p-2 uppercase" value={editingDiscount?.code || ''} onChange={e => setEditingDiscount({...editingDiscount, code: e.target.value.toUpperCase()})} />
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Typ</label>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.type')}</label>
                                 <select className="w-full border rounded p-2" value={editingDiscount?.type} onChange={e => setEditingDiscount({...editingDiscount, type: e.target.value as DiscountType})}>
                                     <option value={DiscountType.PERCENTAGE}>Procenta (%)</option>
                                     <option value={DiscountType.FIXED}>Částka (Kč)</option>
                                 </select>
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Hodnota</label>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.value')}</label>
                                 <input type="number" required className="w-full border rounded p-2" value={editingDiscount?.value || ''} onChange={e => setEditingDiscount({...editingDiscount, value: Number(e.target.value)})} />
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Min. hodnota obj. (Kč)</label>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.min_order_val')} (Kč)</label>
                                 <input type="number" className="w-full border rounded p-2" value={editingDiscount?.minOrderValue || ''} onChange={e => setEditingDiscount({...editingDiscount, minOrderValue: Number(e.target.value)})} />
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Limit použití (ks)</label>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.limit_usage')} (ks)</label>
                                 <input type="number" className="w-full border rounded p-2" value={editingDiscount?.maxUsage || ''} onChange={e => setEditingDiscount({...editingDiscount, maxUsage: Number(e.target.value)})} placeholder="0 = neomezeně" />
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Platnost Od</label>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.valid_from')}</label>
                                 <input type="date" className="w-full border rounded p-2" value={editingDiscount?.validFrom || ''} onChange={e => setEditingDiscount({...editingDiscount, validFrom: e.target.value})} />
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Platnost Do</label>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.valid_to')}</label>
                                 <input type="date" className="w-full border rounded p-2" value={editingDiscount?.validTo || ''} onChange={e => setEditingDiscount({...editingDiscount, validTo: e.target.value})} />
                             </div>
                         </div>
                         
                         <div className="border p-3 rounded-lg">
-                            <label className="text-xs font-bold text-gray-400 block mb-2">Platí pro kategorie (nevybráno = vše)</label>
+                            <label className="text-xs font-bold text-gray-400 block mb-2">{t('admin.applicable_cats')}</label>
                             <div className="space-y-1 max-h-32 overflow-y-auto">
                                 {sortedCategories.map(cat => (
                                     <label key={cat.id} className="flex items-center space-x-2 text-xs cursor-pointer">
@@ -235,15 +233,15 @@ export const DiscountsTab: React.FC = () => {
 
                         <div className="bg-gray-50 p-3 rounded space-y-2">
                             <label className="flex items-center gap-2 text-sm">
-                                <input type="checkbox" checked={editingDiscount?.enabled ?? true} onChange={e => setEditingDiscount({...editingDiscount, enabled: e.target.checked})} /> Aktivní
+                                <input type="checkbox" checked={editingDiscount?.enabled ?? true} onChange={e => setEditingDiscount({...editingDiscount, enabled: e.target.checked})} /> {t('common.active')}
                             </label>
                             <label className="flex items-center gap-2 text-sm">
-                                <input type="checkbox" checked={editingDiscount?.isStackable ?? false} onChange={e => setEditingDiscount({...editingDiscount, isStackable: e.target.checked})} /> Kombinovatelné
+                                <input type="checkbox" checked={editingDiscount?.isStackable ?? false} onChange={e => setEditingDiscount({...editingDiscount, isStackable: e.target.checked})} /> {t('admin.stackable')}
                             </label>
                         </div>
                         <div className="flex gap-2 pt-4">
-                            <button type="button" onClick={() => setIsDiscountModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>
-                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">Uložit</button>
+                            <button type="button" onClick={() => setIsDiscountModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('common.cancel')}</button>
+                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('common.save')}</button>
                         </div>
                     </form>
                 </div>

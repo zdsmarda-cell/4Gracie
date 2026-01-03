@@ -24,7 +24,7 @@ export const Cart: React.FC = () => {
   });
   const [orderNote, setOrderNote] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(true);
-  const [termsConsent, setTermsConsent] = useState(false); // NEW STATE for Terms
+  const [termsConsent, setTermsConsent] = useState(false); 
 
   const [discountInput, setDiscountInput] = useState('');
   const [discountError, setDiscountError] = useState('');
