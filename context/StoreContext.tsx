@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData } from '../types';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
@@ -41,6 +41,7 @@ interface RegionDateInfo {
   timeStart?: string;
   timeEnd?: string;
   isException: boolean;
+  reason?: string;
 }
 
 export type DataSourceMode = 'local' | 'api';
@@ -55,7 +56,7 @@ interface StoreContextType {
   dataSource: DataSourceMode;
   setDataSource: (mode: DataSourceMode) => void;
   isLoading: boolean;
-  isOperationPending: boolean; // NEW: Global pending state
+  isOperationPending: boolean;
   language: Language;
   setLanguage: (lang: Language) => void;
   cart: CartItem[];
@@ -66,7 +67,7 @@ interface StoreContextType {
   user: User | null;
   allUsers: User[];
   login: (email: string, password?: string) => { success: boolean; message?: string };
-  register: (name: string, email: string, password?: string) => void;
+  register: (name: string, email: string, phone: string, password?: string) => void; // Updated signature
   logout: () => void;
   updateUser: (user: User) => Promise<boolean>; 
   updateUserAdmin: (user: User) => Promise<boolean>; 
@@ -74,7 +75,7 @@ interface StoreContextType {
   sendPasswordReset: (email: string) => Promise<void>;
   resetPasswordByToken: (token: string, newPass: string) => Promise<PasswordChangeResult>;
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
-  addUser: (name: string, email: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
+  addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>; // Updated signature
   
   orders: Order[];
   addOrder: (order: Order) => Promise<boolean>;
@@ -104,9 +105,10 @@ interface StoreContextType {
   
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
-  getDailyLoad: (date: string, excludeOrderId?: string) => Record<ProductCategory, number>;
+  getDailyLoad: (date: string, excludeOrderId?: string) => Record<string, number>;
   getDeliveryRegion: (zip: string) => DeliveryRegion | undefined;
   getRegionInfoForDate: (region: DeliveryRegion, date: string) => RegionDateInfo;
+  getPickupPointInfo: (location: PickupLocation, date: string) => RegionDateInfo; // NEW
   calculatePackagingFee: (items: CartItem[]) => number;
   
   t: (key: string, params?: Record<string, string>) => string;
@@ -114,13 +116,13 @@ interface StoreContextType {
   printInvoice: (order: Order) => Promise<void>;
   generateCzIban: (accountStr: string) => string;
   removeDiacritics: (str: string) => string;
+  formatDate: (dateStr: string) => string;
   
-  importDatabase: (data: BackupData, selection: Record<string, boolean>) => ImportResult;
+  importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
   
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
 
-  // Auth Modal State
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
@@ -133,6 +135,17 @@ const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
 const removeDiacritics = (str: string): string => {
   if (!str) return "";
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+};
+
+const formatDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return dateStr;
+  return date.toLocaleDateString('cs-CZ', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
 };
 
 const calculateCzIban = (accountString: string): string => {
@@ -153,7 +166,6 @@ const calculateCzIban = (accountString: string): string => {
   return `CZ${checkDigitsStr}${bban}`;
 };
 
-// Fallback Helper
 const loadFromStorage = <T,>(key: string, fallback: T): T => {
   try {
     const item = localStorage.getItem(key);
@@ -164,8 +176,8 @@ const loadFromStorage = <T,>(key: string, fallback: T): T => {
 };
 
 const INITIAL_USERS: User[] = [
-  { id: 'admin1', name: 'Admin User', email: 'info@4gracie.cz', role: 'admin', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') },
-  { id: 'user1', name: 'Jan Novák', email: 'jan.novak@example.com', role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') }
+  { id: 'admin1', name: 'Admin User', email: 'info@4gracie.cz', phone: '+420123456789', role: 'admin', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') },
+  { id: 'user1', name: 'Jan Novák', email: 'jan.novak@example.com', phone: '+420987654321', role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: true }
 ];
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -174,15 +186,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const [isLoading, setIsLoading] = useState(true);
-  const [isOperationPending, setIsOperationPending] = useState(false); // Visual Loading State
+  const [isOperationPending, setIsOperationPending] = useState(false);
   const [language, setLanguage] = useState<Language>(Language.CS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
 
-  // Data State
+  const t = (key: string, params?: Record<string, string>) => {
+    let text = TRANSLATIONS[language]?.[key] || key;
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        text = text.replace(`{${k}}`, v);
+      });
+    }
+    return text;
+  };
+
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
-  
-  // States initialized empty to allow dynamic loading
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [user, setUser] = useState<User | null>(() => loadFromStorage('session_user', null));
   const [orders, setOrders] = useState<Order[]>([]);
@@ -192,7 +211,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
-  // Toggle Data Source
   const setDataSource = (mode: DataSourceMode) => {
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
@@ -202,38 +220,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type, autoClose });
   };
 
-  // Helper pro sestavení URL v produkci
   const getFullApiUrl = (endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env;
-
-    // V dev módu (Vite) necháme relativní cestu, proxy to vyřeší
     if (env.DEV) return endpoint;
-    
-    // V produkci:
     let baseUrl = env.VITE_API_URL;
-    
     if (!baseUrl) {
        baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
     }
-
     if (baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
     }
-    
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-
     return `${baseUrl}${cleanEndpoint}`;
   };
 
-  // API Helper with ROBUST TIMEOUT (Promise.race)
   const apiCall = async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
-    
-    // Show spinner IMMEDIATELY to avoid "missing" feedback feeling
     setIsOperationPending(true);
-
-    // Hard Timeout Promise
     const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
             controller.abort();
@@ -243,9 +247,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     try {
       const url = getFullApiUrl(endpoint);
-      console.log('[API] Requesting:', url); 
-
-      // Race between the actual fetch and the timeout
       const res: any = await Promise.race([
         fetch(url, {
           method,
@@ -255,14 +256,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }),
         timeoutPromise
       ]);
-      
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
           throw new Error("Server vrátil neplatná data (HTML místo JSON).");
       }
-      
       if (!res.ok) throw new Error(`API Chyba: ${res.status} ${res.statusText}`);
-      
       return await res.json();
     } catch (e: any) {
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
@@ -273,60 +271,62 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       return null;
     } finally {
-        // ALWAYS reset pending state
         setIsOperationPending(false); 
     }
   };
 
   const fetchData = async () => {
       setIsLoading(true);
-      
       try {
         if (dataSource === 'api') {
-          // STRICT MODE: Clear everything first to ensure no local bleed-through
           setAllUsers([]);
           setProducts([]);
           setOrders([]);
           setDiscountCodes([]);
           setDayConfigs([]);
           setSettings(EMPTY_SETTINGS);
-          
           const data = await apiCall('/api/bootstrap', 'GET');
-          
           if (data) {
               setAllUsers(data.users || []);
               setProducts(data.products || []);
               setOrders(data.orders || []);
-              if (data.settings) setSettings(data.settings); 
+              if (data.settings) {
+                 // Ensure new properties exist if loaded from older DB version
+                 const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
+                 if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
+                 if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
+                 setSettings(mergedSettings); 
+              }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
               showNotify("Připojeno k databázi.", 'success');
           }
         } else {
-          // LOCAL MODE
-          console.log('⚡ Running in LOCAL MEMORY mode');
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
           setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
-          setSettings(loadFromStorage('db_settings', DEFAULT_SETTINGS));
+          
+          const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
+          // Patch loaded settings with defaults if categories missing (local storage migration)
+          if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
+          if (!loadedSettings.pickupLocations) loadedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
+          
+          setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
           showNotify("Přepnuto na lokální paměť.", 'success');
         }
       } catch (err: any) {
-        console.error('Fatal error during data fetch:', err);
         showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
       } finally {
         setIsLoading(false);
       }
   };
 
-  // Initial Fetch logic
   useEffect(() => {
     fetchData();
   }, [dataSource]);
 
-  // --- SYNC TO LOCALSTORAGE ---
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
   
@@ -345,7 +345,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const closeAuthModal = () => setIsAuthModalOpen(false);
   const dismissNotification = () => setGlobalNotification(null);
 
-  // --- CART FUNCTIONS ---
   const addToCart = (product: Product, quantity = 1) => {
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
@@ -371,7 +370,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const clearCart = () => setCart([]);
 
-  // --- RE-CALCULATE DISCOUNTS ON CART CHANGE ---
   useEffect(() => {
     if (appliedDiscounts.length === 0) return;
     let updatedDiscounts: AppliedDiscount[] = [];
@@ -391,14 +389,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart]);
 
-  const t = (key: string, params?: Record<string, string>) => {
-    let text = TRANSLATIONS[language][key] || key;
-    if (params) Object.entries(params).forEach(([k, v]) => { text = text.replace(`{${k}}`, v); });
-    return text;
-  };
-
-  // --- DATA MODIFIERS (Returning Promise<boolean> for UI feedback) ---
-
   const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
       ...order,
@@ -406,7 +396,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       companyDetailsSnapshot: JSON.parse(JSON.stringify(settings.companyDetails)),
       statusHistory: [{ status: order.status, date: new Date().toISOString() }]
     };
-    
     if (dataSource === 'api') {
       const res = await apiCall('/api/orders', 'POST', orderWithHistory);
       if (res && res.success) {
@@ -430,7 +419,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
          updatedOrder.statusHistory = [...(updatedOrder.statusHistory || []), { status: OrderStatus.CANCELLED, date: new Date().toISOString() }];
       }
     }
-    
     if (dataSource === 'api') {
        const res = await apiCall('/api/orders', 'POST', updatedOrder);
        if (res && res.success) {
@@ -448,32 +436,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean): Promise<boolean> => {
     if (dataSource === 'api') {
-       // Pass notifyCustomer flag to backend
        const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify });
        if (res && res.success) {
           setOrders(prev => prev.map(o => {
             if (ids.includes(o.id)) {
-              return {
-                ...o,
-                status,
-                statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }]
-              };
+              return { ...o, status, statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }] };
             }
             return o;
           }));
           const msg = notify ? `Stav změněn a emaily odeslány (${ids.length})` : `Stav objednávek (${ids.length}) změněn v DB.`;
-          showNotify(msg, 'success', !notify); // If notifying (email sent), don't auto close immediately so user sees email confirmed
+          showNotify(msg, 'success', !notify);
           return true;
        }
        return false;
     } else {
        setOrders(prev => prev.map(o => {
           if (ids.includes(o.id)) {
-            return {
-              ...o,
-              status,
-              statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }]
-            };
+            return { ...o, status, statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }] };
           }
           return o;
         }));
@@ -485,57 +464,41 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) {
-            setProducts(prev => [...prev, p]);
-            showNotify('Produkt uložen do DB.');
-            return true;
-        }
+        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify('Produkt uložen do DB.'); return true; }
         return false;
     } else {
-        setProducts(prev => [...prev, p]);
-        return true;
+        setProducts(prev => [...prev, p]); return true;
     }
   };
 
   const updateProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) {
-            setProducts(prev => prev.map(x => x.id === p.id ? p : x));
-            showNotify('Produkt aktualizován v DB.');
-            return true;
-        }
+        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify('Produkt aktualizován v DB.'); return true; }
         return false;
     } else {
-        setProducts(prev => prev.map(x => x.id === p.id ? p : x));
-        return true;
+        setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
     }
   };
 
   const deleteProduct = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) {
-            setProducts(prev => prev.filter(x => x.id !== id));
-            showNotify('Produkt smazán z DB.');
-            return true;
-        }
+        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Produkt smazán z DB.'); return true; }
         return false;
     } else {
-        setProducts(prev => prev.filter(x => x.id !== id));
-        return true;
+        setProducts(prev => prev.filter(x => x.id !== id)); return true;
     }
   };
 
-  const addUser = async (name: string, email: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
+  const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
     if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
-    const newUser: User = { id: Date.now().toString(), name, email, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') };
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
     
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', newUser);
         if (res && res.success) {
             setAllUsers(prev => [...prev, newUser]);
-            // Do not auto-close so admin sees that email was sent (implied by addUser logic in backend)
             showNotify(`Uživatel ${name} vytvořen a email odeslán.`, 'success', false);
             return true;
         }
@@ -584,15 +547,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/settings', 'POST', s);
-        if (res && res.success) {
-            setSettings(s);
-            showNotify('Nastavení uloženo do DB.');
-            return true;
-        }
+        if (res && res.success) { setSettings(s); showNotify('Nastavení uloženo do DB.'); return true; }
         return false;
     } else {
-        setSettings(s);
-        return true;
+        setSettings(s); return true;
     }
   };
 
@@ -600,19 +558,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
         const res = await apiCall('/api/calendar', 'POST', c);
         if (res && res.success) {
-            setDayConfigs(prev => {
-              const exists = prev.find(d => d.date === c.date);
-              return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c];
-            });
-            showNotify('Kalendář aktualizován v DB.');
-            return true;
+            setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
+            showNotify('Kalendář aktualizován v DB.'); return true;
         }
         return false;
     } else {
-        setDayConfigs(prev => {
-          const exists = prev.find(d => d.date === c.date);
-          return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c];
-        });
+        setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
         return true;
     }
   };
@@ -620,64 +571,42 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const removeDayConfig = async (date: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-        if (res && res.success) {
-            setDayConfigs(prev => prev.filter(d => d.date !== date));
-            showNotify('Výjimka smazána z DB.');
-            return true;
-        }
+        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify('Výjimka smazána z DB.'); return true; }
         return false;
     } else {
-        setDayConfigs(prev => prev.filter(d => d.date !== date));
-        return true;
+        setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
     }
   };
 
   const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
-        if (res && res.success) {
-            setDiscountCodes(prev => [...prev, c]);
-            showNotify('Slevový kód uložen do DB.');
-            return true;
-        }
+        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify('Slevový kód uložen do DB.'); return true; }
         return false;
     } else {
-        setDiscountCodes(prev => [...prev, c]);
-        return true;
+        setDiscountCodes(prev => [...prev, c]); return true;
     }
   };
 
   const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', code);
-        if (res && res.success) {
-            setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x));
-            showNotify('Slevový kód aktualizován v DB.');
-            return true;
-        }
+        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify('Slevový kód aktualizován v DB.'); return true; }
         return false;
     } else {
-        setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x));
-        return true;
+        setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
     }
   };
 
   const deleteDiscountCode = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-        if (res && res.success) {
-            setDiscountCodes(prev => prev.filter(x => x.id !== id));
-            showNotify('Slevový kód smazán z DB.');
-            return true;
-        }
+        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Slevový kód smazán z DB.'); return true; }
         return false;
     } else {
-        setDiscountCodes(prev => prev.filter(x => x.id !== id));
-        return true;
+        setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
     }
   };
-
-  // --- LOGIC ---
 
   const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
     const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
@@ -738,32 +667,26 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const getDailyLoad = (date: string, excludeOrderId?: string) => {
     const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
-    const load: Record<ProductCategory, number> = { [ProductCategory.WARM]: 0, [ProductCategory.COLD]: 0, [ProductCategory.DESSERT]: 0, [ProductCategory.DRINK]: 0 };
-    const usedProductIds = new Set<string>();
+    // Initialize load based on configured categories to avoid undefined keys
+    const load: Record<string, number> = {};
+    (settings.categories || []).forEach(cat => load[cat.id] = 0);
     
+    // Also include 'Legacy' keys if they exist in products but not in categories settings
+    Object.values(ProductCategory).forEach(c => { if (load[c] === undefined) load[c] = 0; });
+
+    const usedProductIds = new Set<string>();
     relevantOrders.forEach(order => {
-      if (!order.items) return; // Guard
+      if (!order.items) return;
       order.items.forEach(item => {
-        // ROBUST WORKLOAD CALCULATION FIX
-        // 1. Try finding live product
-        // 2. Coerce IDs to string for comparison to avoid number vs string mismatch
         const productDef = products.find(p => String(p.id) === String(item.id));
-        
-        // 3. Fallback logic: Live Product > Snapshot Item > 0
         const itemWorkload = Number(productDef?.workload) || Number(item.workload) || 0;
         const itemOverhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
-
-        // 4. Ensure category exists
         const cat = item.category || productDef?.category;
         
-        if (cat && load[cat] !== undefined) {
+        if (cat) {
+             if (load[cat] === undefined) load[cat] = 0;
              load[cat] += itemWorkload * item.quantity;
-             
-             // Add overhead only once per unique product in the order
-             if (!usedProductIds.has(String(item.id))) { 
-                load[cat] += itemOverhead; 
-                usedProductIds.add(String(item.id)); 
-             }
+             if (!usedProductIds.has(String(item.id))) { load[cat] += itemOverhead; usedProductIds.add(String(item.id)); }
         }
       });
     });
@@ -780,29 +703,36 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (targetDate < minPossibleDate) return { allowed: false, reason: 'Příliš brzy.', status: 'too_soon' };
     const config = dayConfigs.find(d => d.date === date);
     if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
-
+    
     const load = getDailyLoad(date, excludeOrderId);
     
-    // Simulate adding current items to load
+    // Simulate adding current cart to load
     items.forEach(item => {
        const productDef = products.find(p => String(p.id) === String(item.id));
        const workload = Number(productDef?.workload) || Number(item.workload) || 0;
        const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
-       
        if (load[item.category] !== undefined) {
           load[item.category] += workload * item.quantity;
-          // Note: In check mode, we add overhead for every item line because checking uniqueness against existing order items is complex here.
-          // Ideally, we would deduplicate against what's already in 'load' for this specific order, but getDailyLoad already handles 'excludeOrderId'.
           load[item.category] += overhead;
        }
     });
-
+    
     let anyExceeds = false;
-    for (const cat of Object.values(ProductCategory)) {
-      if (items.length > 0 && !categoriesInCart.has(cat)) continue;
-      const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat];
-      if (load[cat] > limit) anyExceeds = true;
+    // Check limits for all categories present in the cart or generally configured
+    const catsToCheck = new Set([...Array.from(categoriesInCart), ...settings.categories.map(c => c.id)]);
+    
+    for (const cat of catsToCheck) {
+      if (items.length > 0 && !categoriesInCart.has(cat)) continue; // Only check categories relevant to cart if cart provided
+      
+      const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
+      const currentLoad = load[cat] || 0;
+      
+      if (currentLoad > limit) {
+          anyExceeds = true;
+          // console.log(`Exceeded: Cat ${cat}, Load ${currentLoad} > Limit ${limit}`);
+      }
     }
+    
     if (anyExceeds) return { allowed: false, reason: 'Kapacita vyčerpána.', status: 'exceeds' };
     return { allowed: true, status: 'available' };
   };
@@ -812,103 +742,103 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
      return check.status;
   };
 
-  // Other simple functions
   const login = (email: string, password?: string) => {
-    // REMOVED fetchData() call here to prevent UI flash/race condition.
-    // The user list should already be loaded via useEffect or previous actions.
-    
     const foundUser = allUsers.find(u => u.email === email);
     if (foundUser) {
       if (foundUser.isBlocked) return { success: false, message: 'Blokován.' };
-      // Note: This is a client-side hash check (legacy architecture).
       if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
-      
       setUser(foundUser); 
       return { success: true };
     }
     return { success: false, message: 'Nenalezen.' };
   };
 
-  const register = (name: string, email: string, password?: string) => {
+  const register = (name: string, email: string, phone: string, password?: string) => {
     if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) { 
         showNotify('Tento email je již registrován.', 'error');
         return; 
     }
-    const newUser: User = { id: Date.now().toString(), name, email, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(password || '1234') };
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(password || '1234'), marketingConsent: false };
     
     if (dataSource === 'api') {
         apiCall('/api/users', 'POST', newUser).then(res => {
-            if (res && res.success) {
-                setAllUsers(prev => [...prev, newUser]); 
-                setUser(newUser); 
-            }
+            if (res && res.success) { setAllUsers(prev => [...prev, newUser]); setUser(newUser); }
         });
     } else {
-        setAllUsers(prev => [...prev, newUser]); 
-        setUser(newUser); 
+        setAllUsers(prev => [...prev, newUser]); setUser(newUser); 
     }
   };
 
-  const logout = () => {
-      setUser(null);
-      // Explicitly clear session storage to prevent stale logins
-      localStorage.removeItem('session_user');
+  const logout = () => { setUser(null); localStorage.removeItem('session_user'); };
+  const toggleUserBlock = async (id: string): Promise<boolean> => { const u = allUsers.find(x => x.id === id); if (u) { const updated = { ...u, isBlocked: !u.isBlocked }; return await updateUserAdmin(updated); } return false; };
+  const sendPasswordReset = async (email: string) => { if (dataSource === 'api') { const res = await apiCall('/api/auth/reset-password', 'POST', { email }); if (res && res.success) { showNotify(res.message || 'Email odeslán.', 'success', false); } else { showNotify(res?.message || 'Chyba serveru', 'error'); } } else { alert('Simulace (Lokální mód): Reset link odeslán.'); } };
+  const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => { if (dataSource === 'api') { const newHash = hashPassword(newPass); const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); if (res && res.success) { await fetchData(); return { success: true, message: res.message || 'Heslo úspěšně změněno.' }; } else { return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' }; } } else { return { success: true, message: 'Heslo změněno (Lokální simulace)' }; } };
+  const changePassword = (o: string, n: string) => { if (!user) return { success: false, message: 'Login required' }; if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; const u = { ...user, passwordHash: hashPassword(n) }; updateUser(u); return { success: true, message: 'Změněno' }; };
+  const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
+  const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { const ex = r.exceptions?.find(e => e.date === d); return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; };
+  
+  // NEW: Helper for Pickup Location opening logic
+  const getPickupPointInfo = (location: PickupLocation, dateStr: string): RegionDateInfo => {
+      // 1. Check Exceptions
+      const ex = location.exceptions?.find(e => e.date === dateStr);
+      if (ex) {
+          return {
+              isOpen: ex.isOpen,
+              timeStart: ex.deliveryTimeStart,
+              timeEnd: ex.deliveryTimeEnd,
+              isException: true,
+              reason: ex.isOpen ? 'Výjimka: Otevřeno' : 'Výjimka: Zavřeno'
+          };
+      }
+
+      // 2. Check Standard Opening Hours
+      const date = new Date(dateStr);
+      const dayOfWeek = date.getDay(); // 0 = Sun, 1 = Mon...
+      const config = location.openingHours[dayOfWeek];
+
+      if (!config || !config.isOpen) {
+          return { isOpen: false, isException: false, reason: 'Zavřeno' };
+      }
+
+      return {
+          isOpen: true,
+          timeStart: config.start,
+          timeEnd: config.end,
+          isException: false
+      };
   };
 
-  const toggleUserBlock = async (id: string): Promise<boolean> => {
-     const u = allUsers.find(x => x.id === id);
-     if (u) { 
-        const updated = { ...u, isBlocked: !u.isBlocked };
-        return await updateUserAdmin(updated); 
-     }
-     return false;
-  };
+  const checkOrderRestoration = (o: Order) => ({ valid: true, invalidCodes: [] }); 
   
-  const sendPasswordReset = async (email: string) => {
+  // UPDATED IMPORT LOGIC
+  const importDatabase = async (d: BackupData, s: any): Promise<ImportResult> => {
     if (dataSource === 'api') {
-        const res = await apiCall('/api/auth/reset-password', 'POST', { email });
-        if (res && res.success) {
-            // autoClose: false ensures the admin sees the confirmation that the email was sent
-            showNotify(res.message || 'Email odeslán.', 'success', false);
-        } else {
-            showNotify(res?.message || 'Chyba serveru', 'error');
+        try {
+            const res = await apiCall('/api/admin/import', 'POST', { data: d, selection: s });
+            if (res && res.success) {
+                await fetchData(); // Refresh data from backend to ensure UI is in sync
+                return { success: true };
+            }
+            return { success: false, message: res?.error || 'Import failed on server.' };
+        } catch (e: any) {
+            return { success: false, message: e.message };
         }
     } else {
-        alert('Simulace (Lokální mód): Reset link odeslán.');
+        // Local Logic
+        try {
+            if (s.users && d.users) setAllUsers(d.users);
+            if (s.orders && d.orders) setOrders(d.orders);
+            if (s.products && d.products) setProducts(d.products);
+            if (s.discountCodes && d.discountCodes) setDiscountCodes(d.discountCodes);
+            if (s.dayConfigs && d.dayConfigs) setDayConfigs(d.dayConfigs);
+            if (s.settings && d.settings) setSettings(d.settings);
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, message: e.message };
+        }
     }
   };
-
-  const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => {
-      if (dataSource === 'api') {
-          const newHash = hashPassword(newPass);
-          const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash });
-          if (res && res.success) {
-              // REFRESH DATA IMMEDIATELY so the user can login with new password
-              await fetchData();
-              return { success: true, message: res.message || 'Heslo úspěšně změněno.' };
-          } else {
-              return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' };
-          }
-      } else {
-          return { success: true, message: 'Heslo změněno (Lokální simulace)' };
-      }
-  };
   
-  const changePassword = (o: string, n: string) => {
-     if (!user) return { success: false, message: 'Login required' };
-     if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' };
-     const u = { ...user, passwordHash: hashPassword(n) };
-     updateUser(u); // This updates global user list and current session user
-     return { success: true, message: 'Změněno' };
-  };
-  
-  const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
-  const getRegionInfoForDate = (r: DeliveryRegion, d: string) => {
-     const ex = r.exceptions?.find(e => e.date === d);
-     return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false };
-  };
-  const checkOrderRestoration = (o: Order) => ({ valid: true, invalidCodes: [] }); // Simplified for now
-  const importDatabase = (d: BackupData, s: any) => ({ success: true }); // Disabled in API mode or implement later
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   const printInvoice = async (o: Order) => { const doc = new jsPDF(); doc.text(`Faktura ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
   const generateCzIban = calculateCzIban;
@@ -924,9 +854,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
+      getPickupPointInfo,
       calculatePackagingFee,
       t, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification,
-      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics
+      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate
     }}>
       {children}
     </StoreContext.Provider>

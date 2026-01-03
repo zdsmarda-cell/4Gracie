@@ -38,7 +38,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json({ limit: '50mb' })); // Increased limit for backups
 
 // --- EMAIL SETUP ---
 let transporter = null;
@@ -624,6 +624,69 @@ app.post('/api/calendar', withDb(async (req, res, db) => {
 app.delete('/api/calendar/:date', withDb(async (req, res, db) => {
   await db.query('DELETE FROM calendar_exceptions WHERE date=?', [req.params.date]);
   res.json({ success: true });
+}));
+
+// --- BULK IMPORT ENDPOINT ---
+app.post('/api/admin/import', withDb(async (req, res, db) => {
+    const { data, selection } = req.body;
+    
+    try {
+        await db.beginTransaction();
+
+        // Users
+        if (selection.users && data.users && Array.isArray(data.users)) {
+            await db.query('TRUNCATE TABLE users');
+            for (const u of data.users) {
+                await db.query('INSERT INTO users (id, email, role, data) VALUES (?, ?, ?, ?)', [u.id, u.email, u.role, JSON.stringify(u)]);
+            }
+        }
+
+        // Products
+        if (selection.products && data.products && Array.isArray(data.products)) {
+            await db.query('TRUNCATE TABLE products');
+            for (const p of data.products) {
+                await db.query('INSERT INTO products (id, category, is_deleted, data) VALUES (?, ?, ?, ?)', [p.id, p.category, false, JSON.stringify(p)]);
+            }
+        }
+
+        // Orders
+        if (selection.orders && data.orders && Array.isArray(data.orders)) {
+            await db.query('TRUNCATE TABLE orders');
+            for (const o of data.orders) {
+                await db.query('INSERT INTO orders (id, user_id, delivery_date, status, total_price, created_at, data) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+                    [o.id, o.userId, o.deliveryDate, o.status, o.totalPrice, o.createdAt || new Date(), JSON.stringify(o)]);
+            }
+        }
+
+        // Discounts
+        if (selection.discountCodes && data.discountCodes && Array.isArray(data.discountCodes)) {
+            await db.query('TRUNCATE TABLE discounts');
+            for (const d of data.discountCodes) {
+                await db.query('INSERT INTO discounts (id, code, data) VALUES (?, ?, ?)', [d.id, d.code, JSON.stringify(d)]);
+            }
+        }
+
+        // Calendar
+        if (selection.dayConfigs && data.dayConfigs && Array.isArray(data.dayConfigs)) {
+            await db.query('TRUNCATE TABLE calendar_exceptions');
+            for (const c of data.dayConfigs) {
+                await db.query('INSERT INTO calendar_exceptions (date, data) VALUES (?, ?)', [c.date, JSON.stringify(c)]);
+            }
+        }
+
+        // Settings
+        if (selection.settings && data.settings) {
+            await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(data.settings), JSON.stringify(data.settings)]);
+        }
+
+        await db.commit();
+        res.json({ success: true });
+
+    } catch (e) {
+        await db.rollback();
+        console.error('Import Failed:', e);
+        res.status(500).json({ error: 'Import failed: ' + e.message });
+    }
 }));
 
 const startServer = () => {

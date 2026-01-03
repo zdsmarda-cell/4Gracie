@@ -69,6 +69,23 @@ export interface DeliveryRegion {
   exceptions?: RegionException[];
 }
 
+export interface OpeningHoursDay {
+  isOpen: boolean;
+  start: string; // HH:MM
+  end: string;   // HH:MM
+}
+
+export interface PickupLocation {
+  id: string;
+  name: string;
+  street: string;
+  city: string;
+  zip: string;
+  enabled: boolean;
+  openingHours: { [key: number]: OpeningHoursDay }; // 0 = Sunday, 1 = Monday, ... 6 = Saturday
+  exceptions?: RegionException[];
+}
+
 export interface DiscountCode {
   id: string;
   code: string;
@@ -82,7 +99,7 @@ export interface DiscountCode {
   usageCount: number;
   totalSaved: number;
   enabled: boolean;
-  applicableCategories?: ProductCategory[];
+  applicableCategories?: string[]; // Changed from ProductCategory[] to string[]
 }
 
 export interface AppliedDiscount {
@@ -104,13 +121,20 @@ export interface PackagingType {
   enabled?: boolean;
 }
 
+export interface Category {
+  id: string; // slug, e.g. 'warm', 'burgers'
+  name: string; // Display name
+  order: number;
+  enabled: boolean;
+}
+
 export interface Product {
   id: string;
   name: string;
   description: string;
   price: number;
   unit: 'ks' | 'kg';
-  category: ProductCategory;
+  category: string; // Changed from ProductCategory to string
   images: string[];
   allergens: number[];
   leadTimeDays: number;
@@ -137,11 +161,13 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  phone: string; // NEW FIELD
   role: 'customer' | 'admin' | 'driver';
   billingAddresses: Address[];
   deliveryAddresses: Address[];
   isBlocked?: boolean;
   passwordHash?: string;
+  marketingConsent?: boolean;
 }
 
 export interface OrderStatusHistory {
@@ -184,9 +210,10 @@ export interface Order {
   invoiceUrl?: string;
   companyDetailsSnapshot?: CompanyDetails;
   language: Language;
+  pickupLocationId?: string; // New field
 }
 
-export type CategoryCapacities = Record<ProductCategory, number>;
+export type CategoryCapacities = Record<string, number>; // Changed key from ProductCategory to string
 
 export interface PaymentMethodConfig {
   id: PaymentMethod;
@@ -202,10 +229,12 @@ export interface DayConfig {
 }
 
 export interface GlobalSettings {
+  categories: Category[]; // NEW FIELD
   defaultCapacities: CategoryCapacities;
   companyDetails: CompanyDetails;
   paymentMethods: PaymentMethodConfig[];
   deliveryRegions: DeliveryRegion[];
+  pickupLocations: PickupLocation[]; // NEW FIELD
   packaging: {
     types: PackagingType[];
     freeFrom: number;

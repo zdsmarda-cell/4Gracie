@@ -96,7 +96,7 @@ const CustomCalendar: React.FC<{
             >
               <span>{day}</span>
               {((region && regionInfo.isException && regionInfo.isOpen) || (pickupLocation && pickupInfo.isException && pickupInfo.isOpen)) && (
-                <span className="w-1 h-1 rounded-full bg-blue-500 mt-0.5"></span>
+                <span className="w-1 h-1 rounded-full bg-blue-50 mt-0.5"></span>
               )}
             </button>
           );
@@ -263,7 +263,7 @@ export const Cart: React.FC = () => {
       deliveryAddress: deliveryType === DeliveryType.PICKUP 
         ? `Osobní odběr: ${pickupLocation?.name}, ${pickupLocation?.street}, ${pickupLocation?.city}` 
         : `${selectedAddr?.name}\n${selectedAddr?.street}\n${selectedAddr?.city}\n${selectedAddr?.zip}\nTel: ${selectedAddr?.phone}`,
-      billingAddress: `${selectedBilling?.name}, ${selectedBilling?.street}, ${selectedBilling?.city}`,
+      billingAddress: `${selectedBilling?.name}, ${selectedBilling?.street}, ${selectedBilling?.city}${selectedBilling?.ic ? `, IČ: ${selectedBilling.ic}` : ''}${selectedBilling?.dic ? `, DIČ: ${selectedBilling.dic}` : ''}`,
       status: OrderStatus.CREATED,
       isPaid: paymentMethod === PaymentMethod.GATEWAY,
       paymentMethod,

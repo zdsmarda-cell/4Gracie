@@ -1,20 +1,25 @@
 
 import React, { useState } from 'react';
 import { useStore } from '../context/StoreContext';
-import { X, Mail, Lock, User, AlertCircle, ArrowLeft } from 'lucide-react';
+import { X, Mail, Lock, User, AlertCircle, ArrowLeft, Phone } from 'lucide-react';
 
 type AuthMode = 'login' | 'register' | 'forgot';
 
 export const AuthModal: React.FC = () => {
-  const { isAuthModalOpen, closeAuthModal, login, register, sendPasswordReset } = useStore();
+  const { isAuthModalOpen, closeAuthModal, login, register, sendPasswordReset, t } = useStore();
   const [mode, setMode] = useState<AuthMode>('login');
   
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
   if (!isAuthModalOpen) return null;
+
+  const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const validatePhone = (phone: string) => /^[+]?[0-9]{9,}$/.test(phone.replace(/\s/g, ''));
+  const validateName = (name: string) => name.trim().length >= 3;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,15 +33,32 @@ export const AuthModal: React.FC = () => {
         setError(result.message || 'Chyba přihlášení');
       }
     } else if (mode === 'register') {
-      if (!name || !email || !password) {
-        setError('Vyplňte všechna pole');
+      if (!name || !email || !password || !phone) {
+        setError(t('validation.required'));
         return;
       }
-      register(name, email, password);
+      if (!validateName(name)) {
+        setError(t('validation.name_length'));
+        return;
+      }
+      if (!validateEmail(email)) {
+        setError(t('validation.email_format'));
+        return;
+      }
+      if (!validatePhone(phone)) {
+        setError(t('validation.phone_format'));
+        return;
+      }
+
+      register(name, email, phone, password);
       closeAuthModal();
     } else if (mode === 'forgot') {
       if (!email) {
-        setError('Zadejte email');
+        setError(t('validation.required'));
+        return;
+      }
+      if (!validateEmail(email)) {
+        setError(t('validation.email_format'));
         return;
       }
       sendPasswordReset(email);
@@ -59,7 +81,7 @@ export const AuthModal: React.FC = () => {
 
         <div className="text-center mb-8">
           <h2 className="text-2xl font-serif font-bold text-primary">
-            {mode === 'login' && 'Přihlášení'}
+            {mode === 'login' && t('nav.login')}
             {mode === 'register' && 'Registrace'}
             {mode === 'forgot' && 'Obnova hesla'}
           </h2>
@@ -72,23 +94,35 @@ export const AuthModal: React.FC = () => {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === 'register' && (
-            <div className="relative">
-              <User className="absolute left-3 top-3 text-gray-400" size={18} />
-              <input 
-                type="text" 
-                placeholder="Vaše jméno" 
-                className="w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none"
-                value={name}
-                onChange={e => setName(e.target.value)}
-              />
-            </div>
+            <>
+              <div className="relative">
+                <User className="absolute left-3 top-3 text-gray-400" size={18} />
+                <input 
+                  type="text" 
+                  placeholder={t('common.name')} 
+                  className="w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                />
+              </div>
+              <div className="relative">
+                <Phone className="absolute left-3 top-3 text-gray-400" size={18} />
+                <input 
+                  type="text" 
+                  placeholder={t('common.phone')} 
+                  className="w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none"
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                />
+              </div>
+            </>
           )}
 
           <div className="relative">
             <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
             <input 
               type="email" 
-              placeholder="Váš email" 
+              placeholder={t('common.email')}
               className="w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none"
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -124,7 +158,7 @@ export const AuthModal: React.FC = () => {
           )}
 
           <button type="submit" className="w-full bg-primary text-white py-3 rounded-xl font-bold shadow-lg hover:bg-black transition">
-            {mode === 'login' && 'Přihlásit se'}
+            {mode === 'login' && t('nav.login')}
             {mode === 'register' && 'Vytvořit účet'}
             {mode === 'forgot' && 'Odeslat email'}
           </button>

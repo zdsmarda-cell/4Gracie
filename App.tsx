@@ -9,7 +9,7 @@ import { Cart } from './pages/Cart';
 import { Admin } from './pages/Admin';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
-import { X, Info, Truck, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { X, Info, Truck, AlertCircle, CheckCircle, Loader2, Store } from 'lucide-react';
 
 // Login Overlay Mock (for demo purposes) - Updated to use AuthModal trigger for consistency
 const LoginMock = () => {
@@ -152,10 +152,92 @@ const DeliveryRegionsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
   );
 };
 
+const PickupLocationsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
+  const { settings } = useStore();
+  const locations = settings.pickupLocations?.filter(l => l.enabled) || [];
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+          <h2 className="text-xl font-serif font-bold text-primary flex items-center">
+            <Store className="mr-2 text-accent" /> Výdejní místa (Osobní odběr)
+          </h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={20}/></button>
+        </div>
+        <div className="p-6 overflow-y-auto space-y-6">
+          {locations.length === 0 ? (
+            <p className="text-center text-gray-500">Momentálně nejsou k dispozici žádná odběrná místa.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {locations.map(loc => (
+                <div key={loc.id} className="border rounded-xl p-4 bg-gray-50">
+                  <div className="mb-4">
+                    <h3 className="font-bold text-lg text-primary">{loc.name}</h3>
+                    <p className="text-sm text-gray-600">{loc.street}, {loc.city}, {loc.zip}</p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Otevírací doba</h4>
+                    <div className="space-y-1 text-xs">
+                        {[1, 2, 3, 4, 5, 6, 0].map(day => {
+                            const dayName = day === 0 ? 'Neděle' : day === 1 ? 'Pondělí' : day === 2 ? 'Úterý' : day === 3 ? 'Středa' : day === 4 ? 'Čtvrtek' : day === 5 ? 'Pátek' : 'Sobota';
+                            const config = loc.openingHours[day];
+                            return (
+                                <div key={day} className="flex justify-between border-b border-gray-100 last:border-0 py-1">
+                                    <span className="font-medium text-gray-600">{dayName}</span>
+                                    {config?.isOpen ? (
+                                        <span className="font-bold">{config.start} - {config.end}</span>
+                                    ) : (
+                                        <span className="text-gray-400 italic">Zavřeno</span>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                  </div>
+
+                  {loc.exceptions && loc.exceptions.length > 0 && (
+                    <div className="mt-4 bg-white border rounded-lg p-3">
+                      <h4 className="text-xs font-bold uppercase text-red-500 mb-2">Výjimky v otevírací době</h4>
+                      <div className="space-y-1">
+                        {loc.exceptions.map((ex, idx) => (
+                          <div key={idx} className="flex justify-between text-xs">
+                            <span className="font-mono font-bold">{ex.date}</span>
+                            <span>
+                              {ex.isOpen ? (
+                                <span className="text-blue-600 font-bold">{ex.deliveryTimeStart} - {ex.deliveryTimeEnd}</span>
+                              ) : (
+                                <span className="text-red-600 font-bold">ZAVŘENO</span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="p-4 bg-gray-50 border-t text-center">
+          <button onClick={onClose} className="px-6 py-2 bg-primary text-white rounded-lg text-sm font-bold">Zavřít</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { settings } = useStore();
   const [isRegionsModalOpen, setIsRegionsModalOpen] = useState(false);
+  const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
+  
   const hasActiveDelivery = settings.deliveryRegions.some(r => r.enabled);
+  const hasActivePickup = settings.pickupLocations?.some(l => l.enabled);
 
   return (
     <div className="min-h-screen flex flex-col font-sans">
@@ -164,20 +246,31 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       <GlobalLoadingSpinner />
       <AuthModal />
       <DeliveryRegionsModal isOpen={isRegionsModalOpen} onClose={() => setIsRegionsModalOpen(false)} />
+      <PickupLocationsModal isOpen={isPickupModalOpen} onClose={() => setIsPickupModalOpen(false)} />
       <main className="flex-grow">
         {children}
       </main>
       <footer className="bg-primary text-gray-400 py-8 text-center text-sm">
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4">
           <p>&copy; 2023 4Gracie Catering. All rights reserved.</p>
-          {hasActiveDelivery && (
-            <button 
-              onClick={() => setIsRegionsModalOpen(true)} 
-              className="text-accent hover:text-white transition underline text-xs font-bold flex items-center"
-            >
-              <Truck size={14} className="mr-1" /> Rozvozové regiony
-            </button>
-          )}
+          <div className="flex gap-4">
+              {hasActiveDelivery && (
+                <button 
+                  onClick={() => setIsRegionsModalOpen(true)} 
+                  className="text-accent hover:text-white transition underline text-xs font-bold flex items-center"
+                >
+                  <Truck size={14} className="mr-1" /> Rozvozové regiony
+                </button>
+              )}
+              {hasActivePickup && (
+                <button 
+                  onClick={() => setIsPickupModalOpen(true)} 
+                  className="text-accent hover:text-white transition underline text-xs font-bold flex items-center"
+                >
+                  <Store size={14} className="mr-1" /> Výdejní místa
+                </button>
+              )}
+          </div>
         </div>
       </footer>
       <LoginMock />

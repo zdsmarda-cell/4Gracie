@@ -6,7 +6,7 @@ import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileTe
 import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMethod, ProductCategory } from '../types';
 
 export const Profile: React.FC = () => {
-  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate } = useStore();
+  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo } = useStore();
   const [modalType, setModalType] = useState<'billing' | 'delivery' | null>(null);
   const [editingAddr, setEditingAddr] = useState<Partial<Address> | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -16,6 +16,11 @@ export const Profile: React.FC = () => {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [isEditOrderModalOpen, setIsEditOrderModalOpen] = useState(false);
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
+  const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
+  
+  // Helpers for selector state
+  const [selectedDeliveryAddrId, setSelectedDeliveryAddrId] = useState('');
+  const [selectedBillingAddrId, setSelectedBillingAddrId] = useState('');
 
   // Password Change State
   const [oldPass, setOldPass] = useState('');
@@ -84,6 +89,9 @@ export const Profile: React.FC = () => {
   const openEditOrderModal = (e: React.MouseEvent, order: Order) => {
     e.stopPropagation();
     setEditingOrder(JSON.parse(JSON.stringify(order))); // Deep copy
+    setOrderSaveError(null);
+    setSelectedDeliveryAddrId('');
+    setSelectedBillingAddrId('');
     setIsEditOrderModalOpen(true);
   };
 
@@ -112,11 +120,49 @@ export const Profile: React.FC = () => {
 
   const handleSaveOrder = () => {
     if(!editingOrder) return;
+    setOrderSaveError(null);
     
-    // Check Date Availability - PASS EXCLUDE ID to prevent self-collision
+    // 1. Validate Delivery
+    if (editingOrder.deliveryType === DeliveryType.PICKUP) {
+        if (!editingOrder.pickupLocationId) {
+            setOrderSaveError('Vyberte odběrné místo.');
+            return;
+        }
+        const loc = settings.pickupLocations?.find(l => l.id === editingOrder.pickupLocationId);
+        if (!loc) {
+            setOrderSaveError('Neplatné odběrné místo.');
+            return;
+        }
+        const info = getPickupPointInfo(loc, editingOrder.deliveryDate);
+        if (!info.isOpen) {
+            setOrderSaveError(`Odběrné místo má ${formatDate(editingOrder.deliveryDate)} zavřeno.`);
+            return;
+        }
+    } else {
+        if (!editingOrder.deliveryAddress) {
+            setOrderSaveError('Vyplňte doručovací adresu.');
+            return;
+        }
+        // ZIP Validation
+        const zipMatch = editingOrder.deliveryAddress.match(/\d{3}\s?\d{2}/);
+        if (zipMatch) {
+            const region = getDeliveryRegion(zipMatch[0]);
+            if (!region) {
+                setOrderSaveError(`Pro PSČ ${zipMatch[0]} neexistuje rozvozový region.`);
+                return;
+            }
+            const info = getRegionInfoForDate(region, editingOrder.deliveryDate);
+            if (!info.isOpen) {
+                setOrderSaveError(`Region "${region.name}" nerozváží dne ${formatDate(editingOrder.deliveryDate)}.`);
+                return;
+            }
+        }
+    }
+
+    // 2. Check Date Availability - PASS EXCLUDE ID to prevent self-collision
     const availability = checkAvailability(editingOrder.deliveryDate, editingOrder.items, editingOrder.id);
     if (!availability.allowed && availability.status !== 'available') {
-       alert(availability.reason || 'Vybraný termín není dostupný.');
+       setOrderSaveError(availability.reason || 'Vybraný termín není dostupný.');
        return;
     }
     
@@ -124,15 +170,36 @@ export const Profile: React.FC = () => {
     const itemsTotal = editingOrder.items.reduce((acc, i) => acc + i.price * i.quantity, 0);
     const packagingFee = itemsTotal >= settings.packaging.freeFrom ? 0 : 50;
     
-    // Keep original delivery fee unless logic is complex, for now we trust the existing fee or manual admin adjustments. 
-    // In a real app, we would recalculate delivery fee based on address/region here.
-
     updateOrder({
       ...editingOrder,
       totalPrice: itemsTotal,
       packagingFee
     });
     setIsEditOrderModalOpen(false);
+  };
+
+  const handleSelectDeliveryAddress = (addrId: string) => {
+    setSelectedDeliveryAddrId(addrId);
+    if (!addrId) return;
+    const addr = user.deliveryAddresses.find(a => a.id === addrId);
+    if (addr) {
+        setEditingOrder(prev => prev ? {
+            ...prev,
+            deliveryAddress: `${addr.name}\n${addr.street}\n${addr.city}\n${addr.zip}\nTel: ${addr.phone}`
+        } : null);
+    }
+  };
+
+  const handleSelectBillingAddress = (addrId: string) => {
+    setSelectedBillingAddrId(addrId);
+    if (!addrId) return;
+    const addr = user.billingAddresses.find(a => a.id === addrId);
+    if (addr) {
+        setEditingOrder(prev => prev ? {
+            ...prev,
+            billingAddress: `${addr.name}, ${addr.street}, ${addr.city}${addr.ic ? `, IČ: ${addr.ic}` : ''}${addr.dic ? `, DIČ: ${addr.dic}` : ''}`
+        } : null);
+    }
   };
 
   const handleChangePassword = (e: React.FormEvent) => {
@@ -506,6 +573,11 @@ export const Profile: React.FC = () => {
                <button onClick={() => setIsEditOrderModalOpen(false)} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={24}/></button>
              </div>
              <div className="p-8 overflow-y-auto space-y-8 flex-grow">
+               {orderSaveError && (
+                  <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded text-red-700 text-sm font-bold flex items-center">
+                      <AlertCircle size={18} className="mr-2"/> {orderSaveError}
+                  </div>
+               )}
                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                  <div className="space-y-4">
                     <h3 className="font-bold text-gray-400 uppercase text-xs tracking-widest border-b pb-2">Nastavení</h3>
@@ -514,11 +586,56 @@ export const Profile: React.FC = () => {
                          <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.date')}</label><input type="date" className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryDate} onChange={e => setEditingOrder({...editingOrder, deliveryDate: e.target.value})}/></div>
                          <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.delivery')}</label><select className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryType} onChange={e => setEditingOrder({...editingOrder, deliveryType: e.target.value as DeliveryType})}><option value={DeliveryType.PICKUP}>{t('checkout.pickup')}</option><option value={DeliveryType.DELIVERY}>{t('admin.delivery')}</option></select></div>
                        </div>
-                       <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.street')}</label><textarea className="w-full border rounded p-2 text-sm h-20" value={editingOrder.deliveryAddress} onChange={e => setEditingOrder({...editingOrder, deliveryAddress: e.target.value})}/></div>
+
+                       {/* Pickup Location Selector */}
+                        {editingOrder.deliveryType === DeliveryType.PICKUP && (
+                            <div>
+                                <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Odběrné místo</label>
+                                <select 
+                                    className="w-full border rounded p-2 text-sm" 
+                                    value={editingOrder.pickupLocationId || ''} 
+                                    onChange={e => {
+                                        const loc = settings.pickupLocations?.find(l => l.id === e.target.value);
+                                        setEditingOrder({...editingOrder, pickupLocationId: e.target.value, deliveryAddress: loc ? `Osobní odběr: ${loc.name}, ${loc.street}, ${loc.city}` : ''});
+                                    }}
+                                >
+                                    <option value="">Vyberte místo...</option>
+                                    {settings.pickupLocations?.filter(l => l.enabled).map(l => (
+                                        <option key={l.id} value={l.id}>{l.name} ({l.street})</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {/* Delivery Address Selector */}
+                        {editingOrder.deliveryType === DeliveryType.DELIVERY && (
+                            <>
+                                {user.deliveryAddresses.length > 0 && (
+                                    <div>
+                                        <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Vybrat z vašich adres</label>
+                                        <select 
+                                            className="w-full border rounded p-2 text-sm mb-2"
+                                            value={selectedDeliveryAddrId}
+                                            onChange={e => handleSelectDeliveryAddress(e.target.value)}
+                                        >
+                                            <option value="">-- Použít uloženou adresu --</option>
+                                            {user.deliveryAddresses.map(a => (
+                                                <option key={a.id} value={a.id}>{a.name}, {a.street}, {a.city}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                <div>
+                                    <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.street')} (Text)</label>
+                                    <textarea className="w-full border rounded p-2 text-sm h-20" value={editingOrder.deliveryAddress || ''} onChange={e => setEditingOrder({...editingOrder, deliveryAddress: e.target.value})}/>
+                                </div>
+                            </>
+                        )}
+
                        <div>
                          <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('admin.comm_lang')}</label>
                          <select className="w-full border rounded p-2 text-sm" value={editingOrder.language || Language.CS} onChange={e => setEditingOrder({...editingOrder, language: e.target.value as Language})}>
-                           {Object.values(Language).map(lang => <option key={lang} value={lang}>{lang.toUpperCase()}</option>)}
+                           {Object.values(Language).map(lang => <option key={lang} value={lang}>{(lang as string).toUpperCase()}</option>)}
                          </select>
                        </div>
                     </div>

@@ -98,6 +98,12 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.access_denied': 'Přístup odepřen',
     'admin.note_content': 'Obsah poznámky',
     
+    'validation.required': 'Vyplňte všechna pole',
+    'validation.email_format': 'Neplatný formát emailu',
+    'validation.phone_format': 'Telefon musí obsahovat min. 9 číslic a volitelně +',
+    'validation.name_length': 'Jméno musí mít alespoň 3 znaky',
+    'validation.password_length': 'Heslo musí mít alespoň 4 znaky',
+    
     'discount.code': 'Slevový kód',
     'discount.apply': 'Uplatnit',
     'discount.invalid': 'Neplatný kód',
@@ -279,6 +285,12 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.reset_password': 'Reset Password',
     'admin.access_denied': 'Access Denied',
     'admin.note_content': 'Note Content',
+    
+    'validation.required': 'Fill all fields',
+    'validation.email_format': 'Invalid email format',
+    'validation.phone_format': 'Phone must have at least 9 digits',
+    'validation.name_length': 'Name must be at least 3 chars',
+    'validation.password_length': 'Password must be at least 4 chars',
 
     'discount.code': 'Discount Code',
     'discount.apply': 'Apply',
@@ -411,7 +423,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.delivery': 'Lieferung',
     'admin.backup': 'Sicherung',
     'admin.capacities': 'Kapazitäten',
-    'admin.settings': 'Kapazität & Termine',
+    'admin.settings': 'Einstellungen',
     'admin.operator': 'Betreiber',
     'admin.payments': 'Zahlungen',
     'admin.discounts': 'Rabatte',
@@ -461,6 +473,12 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.reset_password': 'Passwort zurücksetzen',
     'admin.access_denied': 'Zugriff verweigert',
     'admin.note_content': 'Inhalt der Notiz',
+    
+    'validation.required': 'Alle Felder ausfüllen',
+    'validation.email_format': 'Ungültiges E-Mail-Format',
+    'validation.phone_format': 'Telefon mindestens 9 Ziffern',
+    'validation.name_length': 'Name mindestens 3 Zeichen',
+    'validation.password_length': 'Passwort mindestens 4 Zeichen',
 
     'discount.code': 'Rabattcode',
     'discount.apply': 'Anwenden',

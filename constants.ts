@@ -1,5 +1,5 @@
 
-import { Product, ProductCategory, Allergen, OrderStatus, Order, DeliveryType, PaymentMethod, GlobalSettings, Language } from './types';
+import { Product, ProductCategory, Allergen, OrderStatus, Order, DeliveryType, PaymentMethod, GlobalSettings, Language, PickupLocation } from './types';
 
 export const ALLERGENS: Allergen[] = [
   { id: 1, code: '1', name: 'Obiloviny obsahující lepek' },
@@ -81,7 +81,23 @@ export const PRODUCTS: Product[] = [
   },
 ];
 
+const DEFAULT_OPENING_HOURS = {
+  1: { isOpen: true, start: '08:00', end: '18:00' }, // Mon
+  2: { isOpen: true, start: '08:00', end: '18:00' }, // Tue
+  3: { isOpen: true, start: '08:00', end: '18:00' }, // Wed
+  4: { isOpen: true, start: '08:00', end: '18:00' }, // Thu
+  5: { isOpen: true, start: '08:00', end: '18:00' }, // Fri
+  6: { isOpen: false, start: '09:00', end: '12:00' }, // Sat
+  0: { isOpen: false, start: '09:00', end: '12:00' }, // Sun
+};
+
 export const DEFAULT_SETTINGS: GlobalSettings = {
+  categories: [
+    { id: ProductCategory.WARM, name: 'Teplý catering', order: 1, enabled: true },
+    { id: ProductCategory.COLD, name: 'Studený catering', order: 2, enabled: true },
+    { id: ProductCategory.DESSERT, name: 'Zákusky', order: 3, enabled: true },
+    { id: ProductCategory.DRINK, name: 'Nápoje', order: 4, enabled: true }
+  ],
   defaultCapacities: {
     [ProductCategory.WARM]: 1000,
     [ProductCategory.COLD]: 2000,
@@ -108,6 +124,18 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   deliveryRegions: [
     { id: '1', name: 'Praha Centrum', zips: ['11000', '12000'], price: 150, freeFrom: 2000, enabled: true, deliveryTimeStart: '10:00', deliveryTimeEnd: '14:00' },
   ],
+  pickupLocations: [
+    {
+      id: 'store-1',
+      name: 'Prodejna 4Gracie',
+      street: 'Václavské náměstí 1',
+      city: 'Praha 1',
+      zip: '110 00',
+      enabled: true,
+      openingHours: DEFAULT_OPENING_HOURS,
+      exceptions: []
+    }
+  ],
   packaging: {
     types: [
       { id: 'box-small', name: 'Malá krabice', volume: 500, price: 15 },
@@ -119,12 +147,8 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
 };
 
 export const EMPTY_SETTINGS: GlobalSettings = {
-  defaultCapacities: {
-    [ProductCategory.WARM]: 0,
-    [ProductCategory.COLD]: 0,
-    [ProductCategory.DESSERT]: 0,
-    [ProductCategory.DRINK]: 0
-  },
+  categories: [],
+  defaultCapacities: {},
   companyDetails: {
     name: '',
     ic: '',
@@ -139,6 +163,7 @@ export const EMPTY_SETTINGS: GlobalSettings = {
   },
   paymentMethods: [],
   deliveryRegions: [],
+  pickupLocations: [],
   packaging: {
     types: [],
     freeFrom: 0

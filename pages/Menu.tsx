@@ -2,8 +2,8 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { ALLERGENS } from '../constants';
-import { ProductCategory, Product } from '../types';
-import { Filter, Info, ChevronLeft, ChevronRight, X, Maximize2, Clock } from 'lucide-react';
+import { Product } from '../types';
+import { Filter, Info, ChevronLeft, ChevronRight, X, Maximize2, Clock, AlertCircle } from 'lucide-react';
 
 const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -71,13 +71,6 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
             </div>
           </>
         )}
-
-        {/* Allergen Overlay */}
-        {product.allergens.length > 0 && (
-          <div className="absolute top-2 left-2 bg-gray-200/90 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] font-bold text-gray-700 flex gap-1 z-10">
-            {product.allergens.join(' ')}
-          </div>
-        )}
       </div>
 
       {/* Lightbox Modal */}
@@ -128,22 +121,26 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
 };
 
 export const Menu: React.FC = () => {
-  const { t, addToCart, products } = useStore();
-  const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'all'>('all');
+  const { t, addToCart, products, settings } = useStore();
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [excludeAllergens, setExcludeAllergens] = useState<number[]>([]);
   const [showAllergenFilter, setShowAllergenFilter] = useState(false);
+  const [selectedAllergenProduct, setSelectedAllergenProduct] = useState<Product | null>(null);
 
   // Determine active categories (categories with at least one active product)
   const activeCategories = useMemo(() => {
-    const categories = new Set<ProductCategory>();
+    const productsInCats = new Set<string>();
     products.forEach(p => {
       if (p.visibility?.online) {
-        categories.add(p.category);
+        productsInCats.add(p.category);
       }
     });
-    // Return only categories that are in the Set and maintain order from Enum
-    return Object.values(ProductCategory).filter(cat => categories.has(cat));
-  }, [products]);
+    
+    // Sort based on the order defined in settings
+    return settings.categories
+      .filter(cat => cat.enabled && productsInCats.has(cat.id))
+      .sort((a, b) => a.order - b.order);
+  }, [products, settings.categories]);
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -194,11 +191,11 @@ export const Menu: React.FC = () => {
               </button>
               {activeCategories.map(cat => (
                 <button 
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition ${selectedCategory === cat ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition ${selectedCategory === cat.id ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                 >
-                  {t(`cat.${cat}`)}
+                  {cat.name}
                 </button>
               ))}
             </div>
@@ -237,8 +234,20 @@ export const Menu: React.FC = () => {
         {/* Product Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {filteredProducts.map(product => (
-            <div key={product.id} className="bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden group border border-gray-100 flex flex-col h-full">
+            <div key={product.id} className="bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden group border border-gray-100 flex flex-col h-full relative">
               
+              {/* Allergen Badge Trigger */}
+              {product.allergens && product.allergens.length > 0 && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setSelectedAllergenProduct(product); }}
+                  className="absolute top-2 left-2 z-20 bg-white/90 backdrop-blur-md shadow-sm px-2 py-1 rounded-lg text-[10px] font-bold text-gray-700 flex items-center hover:bg-white hover:text-orange-600 transition border border-transparent hover:border-orange-200"
+                  title="Zobrazit alergeny"
+                >
+                  <AlertCircle size={12} className="mr-1 text-orange-500" />
+                  <span>{product.allergens.length}</span>
+                </button>
+              )}
+
               <ProductImageGallery product={product} />
 
               <div className="p-6 flex flex-col flex-grow">
@@ -278,6 +287,50 @@ export const Menu: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Allergen Modal */}
+      {selectedAllergenProduct && (
+        <div 
+          className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200" 
+          onClick={() => setSelectedAllergenProduct(null)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95 duration-200 relative overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-red-500"></div>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="font-bold text-lg text-gray-900 flex items-center">
+                <AlertCircle className="text-orange-500 mr-2" size={20} />
+                Alergeny
+              </h3>
+              <button onClick={() => setSelectedAllergenProduct(null)} className="p-2 hover:bg-gray-100 rounded-full transition text-gray-500"><X size={20}/></button>
+            </div>
+            
+            <div className="mb-6">
+                <h4 className="font-serif font-bold text-xl text-primary mb-1">{selectedAllergenProduct.name}</h4>
+                <p className="text-xs text-gray-500">Obsahuje následující alergeny:</p>
+            </div>
+            
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1 custom-scrollbar">
+              {selectedAllergenProduct.allergens.map(id => {
+                const allergen = ALLERGENS.find(a => a.id === id);
+                return (
+                  <div key={id} className="flex items-start p-3 bg-orange-50/50 rounded-xl border border-orange-100">
+                    <span className="font-bold text-orange-600 mr-3 min-w-[24px] text-lg leading-none">{allergen?.code}</span>
+                    <span className="text-sm text-gray-700 font-medium">{allergen?.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+            
+            <div className="mt-8 pt-4 border-t border-gray-100 flex justify-end">
+              <button onClick={() => setSelectedAllergenProduct(null)} className="bg-gray-900 text-white px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-black transition shadow-lg">Rozumím</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

@@ -1,16 +1,16 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { 
     Product, Category, DiscountCode, PackagingType, DayConfig, 
     OrderStatus, User, DeliveryRegion, PickupLocation, 
-    DiscountType, RegionException, Order, Language, DeliveryType 
+    DiscountType, RegionException, Order, Language, DeliveryType, Address 
 } from '../types';
 import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, Filter 
+    Ban, ImageIcon, Store, Truck, Filter, AlertCircle, Save 
 } from 'lucide-react';
 
 const RegionModal: React.FC<{
@@ -125,7 +125,8 @@ export const Admin: React.FC = () => {
         dataSource, setDataSource, allUsers, orders, products, discountCodes, dayConfigs, settings, 
         importDatabase, t, updateProduct, addProduct, deleteProduct, updateSettings, 
         updateDiscountCode, addDiscountCode, deleteDiscountCode, updateDayConfig, 
-        updateUserAdmin, addUser, updateOrder, updateOrderStatus, formatDate, removeDiacritics, getDailyLoad 
+        updateUserAdmin, addUser, updateOrder, updateOrderStatus, formatDate, removeDiacritics, getDailyLoad,
+        getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, checkAvailability
     } = useStore();
 
     const [activeTab, setActiveTab] = useState('orders');
@@ -162,13 +163,14 @@ export const Admin: React.FC = () => {
 
     const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
     const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+    const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
 
     const [showLoadHistory, setShowLoadHistory] = useState(false);
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
     const [userFilters, setUserFilters] = useState({ search: '', spentMin: '', spentMax: '', ordersMin: '', ordersMax: '', marketing: '', status: '' });
     
     // Order Filters
-    const [orderFilters, setOrderFilters] = useState({ id: '', date: '', customer: '', status: '' });
+    const [orderFilters, setOrderFilters] = useState({ id: '', dateFrom: '', dateTo: '', customer: '', status: '', ic: '' });
     
     const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
     const [notifyCustomer, setNotifyCustomer] = useState(false);
@@ -177,6 +179,11 @@ export const Admin: React.FC = () => {
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     
+    // Helpers for Edit Order Modal
+    const [selectedDeliveryAddrId, setSelectedDeliveryAddrId] = useState('');
+    const [selectedBillingAddrId, setSelectedBillingAddrId] = useState('');
+    const orderUser = useMemo(() => editingOrder ? allUsers.find(u => u.id === editingOrder.userId) : null, [editingOrder, allUsers]);
+
     const loadDates = useMemo(() => {
         const dates = new Set<string>();
         orders.forEach(o => dates.add(o.deliveryDate));
@@ -214,12 +221,19 @@ export const Admin: React.FC = () => {
     const filteredOrders = useMemo(() => {
         return orders.filter(o => {
             if (orderFilters.id && !o.id.toLowerCase().includes(orderFilters.id.toLowerCase())) return false;
-            if (orderFilters.date && !o.deliveryDate.includes(orderFilters.date)) return false;
+            if (orderFilters.dateFrom && o.deliveryDate < orderFilters.dateFrom) return false;
+            if (orderFilters.dateTo && o.deliveryDate > orderFilters.dateTo) return false;
             if (orderFilters.customer && !o.userName?.toLowerCase().includes(orderFilters.customer.toLowerCase())) return false;
             if (orderFilters.status && o.status !== orderFilters.status) return false;
+            
+            const orderUser = allUsers.find(u => u.id === o.userId);
+            const hasIc = (o.billingAddress && o.billingAddress.includes('IČ')) || (orderUser?.billingAddresses?.some(a => !!a.ic && a.ic.length > 0));
+            if (orderFilters.ic === 'yes' && !hasIc) return false;
+            if (orderFilters.ic === 'no' && hasIc) return false;
+
             return true;
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }, [orders, orderFilters]);
+    }, [orders, orderFilters, allUsers]);
 
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
     
@@ -285,7 +299,89 @@ export const Admin: React.FC = () => {
 
     const openOrderModal = (o: Order) => {
         setEditingOrder(JSON.parse(JSON.stringify(o)));
+        setOrderSaveError(null);
+        setSelectedDeliveryAddrId(''); 
+        setSelectedBillingAddrId(''); 
         setIsOrderModalOpen(true);
+    };
+
+    const handleOrderSave = async () => {
+        if (!editingOrder) return;
+        setOrderSaveError(null);
+
+        // 1. Validate Delivery Type & Date
+        if (editingOrder.deliveryType === DeliveryType.PICKUP) {
+            if (!editingOrder.pickupLocationId) {
+                setOrderSaveError('Vyberte odběrné místo.');
+                return;
+            }
+            const loc = settings.pickupLocations?.find(l => l.id === editingOrder.pickupLocationId);
+            if (!loc) {
+                setOrderSaveError('Neplatné odběrné místo.');
+                return;
+            }
+            const info = getPickupPointInfo(loc, editingOrder.deliveryDate);
+            if (!info.isOpen) {
+                setOrderSaveError(`Odběrné místo má ${formatDate(editingOrder.deliveryDate)} zavřeno.`);
+                return;
+            }
+        } else {
+            // Delivery
+            if (!editingOrder.deliveryAddress) {
+                setOrderSaveError('Vyplňte doručovací adresu.');
+                return;
+            }
+            // Parse ZIP from address string or use selected logic. 
+            const zipMatch = editingOrder.deliveryAddress.match(/\d{3}\s?\d{2}/);
+            if (zipMatch) {
+                const region = getDeliveryRegion(zipMatch[0]);
+                if (!region) {
+                    setOrderSaveError(`Pro PSČ ${zipMatch[0]} neexistuje rozvozový region.`);
+                    return;
+                }
+                const info = getRegionInfoForDate(region, editingOrder.deliveryDate);
+                if (!info.isOpen) {
+                    setOrderSaveError(`Region "${region.name}" nerozváží dne ${formatDate(editingOrder.deliveryDate)}.`);
+                    return;
+                }
+            }
+        }
+
+        // 2. Validate Capacity (excluding this order's own load)
+        const availability = checkAvailability(editingOrder.deliveryDate, editingOrder.items, editingOrder.id);
+        if (!availability.allowed && availability.status !== 'available') {
+            setOrderSaveError(`Kapacita: ${availability.reason || 'Termín není dostupný'}`);
+            return;
+        }
+
+        // 3. Save
+        const success = await updateOrder(editingOrder);
+        if (success) setIsOrderModalOpen(false);
+        else setOrderSaveError('Chyba při ukládání (API Error).');
+    };
+
+    const handleSelectDeliveryAddress = (addrId: string) => {
+        setSelectedDeliveryAddrId(addrId);
+        if (!addrId || !orderUser) return;
+        const addr = orderUser.deliveryAddresses.find(a => a.id === addrId);
+        if (addr) {
+            setEditingOrder(prev => prev ? {
+                ...prev,
+                deliveryAddress: `${addr.name}\n${addr.street}\n${addr.city}\n${addr.zip}\nTel: ${addr.phone}`
+            } : null);
+        }
+    };
+
+    const handleSelectBillingAddress = (addrId: string) => {
+        setSelectedBillingAddrId(addrId);
+        if (!addrId || !orderUser) return;
+        const addr = orderUser.billingAddresses.find(a => a.id === addrId);
+        if (addr) {
+            setEditingOrder(prev => prev ? {
+                ...prev,
+                billingAddress: `${addr.name}, ${addr.street}, ${addr.city}${addr.ic ? `, IČ: ${addr.ic}` : ''}${addr.dic ? `, DIČ: ${addr.dic}` : ''}`
+            } : null);
+        }
     };
 
     const handleBulkStatusChange = async (status: OrderStatus) => {
@@ -329,7 +425,6 @@ export const Admin: React.FC = () => {
     const addPickupException = () => {
         if (!newPickupException.date) return;
 
-        // VALIDATION: Check for active orders if closing the location
         if (!newPickupException.isOpen) {
             const conflictingOrders = orders.filter(o => {
                 if (o.deliveryDate !== newPickupException.date) return false;
@@ -482,7 +577,6 @@ export const Admin: React.FC = () => {
         alert('Nastavení uloženo.');
     };
 
-    // Helper for restore labels
     const getRestoreLabel = (key: string) => {
         switch(key) {
             case 'users': return t('admin.users');
@@ -528,6 +622,7 @@ export const Admin: React.FC = () => {
 
     return (
         <div className="max-w-7xl mx-auto px-4 py-8">
+            {/* ... Dashboard Header & Tabs ... */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                 <h1 className="text-3xl font-serif font-bold text-gray-800 tracking-tight">{t('admin.dashboard')}</h1>
                 <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl shadow-sm overflow-x-auto">
@@ -575,7 +670,6 @@ export const Admin: React.FC = () => {
             {activeTab === 'backup' && (
             <div className="bg-white p-8 rounded-xl shadow-sm border max-w-2xl mx-auto animate-fade-in">
                 <h2 className="text-xl font-bold mb-6 flex items-center justify-center gap-2"><Database className="text-primary"/> {t('admin.backup')}</h2>
-                
                 <div className="bg-gray-50 p-4 rounded-lg text-center mb-8 border">
                     <p className="text-sm text-gray-500 mb-1">Aktuální zdroj dat</p>
                     <p className="font-bold text-lg text-primary flex items-center justify-center gap-2">
@@ -583,7 +677,6 @@ export const Admin: React.FC = () => {
                         {dataSource === 'api' ? 'MariaDB (Databáze)' : 'Lokální Paměť (Browser)'}
                     </p>
                 </div>
-
                 <div className="space-y-8">
                     <div>
                         <h3 className="font-bold text-lg mb-2 flex items-center"><Download size={18} className="mr-2"/> {t('admin.export_title')}</h3>
@@ -598,18 +691,15 @@ export const Admin: React.FC = () => {
                             a.click();
                         }} className="w-full bg-primary text-white px-6 py-4 rounded-xl font-bold flex items-center justify-center hover:bg-gray-800 transition"><Download size={20} className="mr-2"/> Stáhnout JSON Zálohu</button>
                     </div>
-
                     <div className="border-t pt-6">
                         <h3 className="font-bold text-lg mb-2 flex items-center"><Upload size={18} className="mr-2"/> {t('admin.import_title')}</h3>
                         <p className="text-sm text-gray-500 mb-4">{t('admin.import_desc')}</p>
-                        
                         {dataSource === 'api' && (
                             <div className="bg-blue-50 text-blue-700 p-3 rounded-lg text-xs mb-4 flex items-start">
                                 <Server size={16} className="mr-2 flex-shrink-0 mt-0.5"/>
                                 Import proběhne jako transakce do databáze. Všechna stávající data budou nahrazena daty ze souboru.
                             </div>
                         )}
-
                         <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:bg-gray-50 transition cursor-pointer relative mb-4">
                             <input 
                                 type="file" 
@@ -629,7 +719,6 @@ export const Admin: React.FC = () => {
                                 </div>
                             )}
                         </div>
-
                         {importFile && (
                             <div className="mb-4 bg-gray-50 p-4 rounded-xl border">
                                 <h4 className="font-bold text-sm mb-2">{t('admin.restore_sections')}</h4>
@@ -648,7 +737,6 @@ export const Admin: React.FC = () => {
                                 </div>
                             </div>
                         )}
-
                         {importFile && (
                             <button 
                                 onClick={handleImport} 
@@ -662,47 +750,105 @@ export const Admin: React.FC = () => {
             </div>
             )}
 
-            {/* Categories Tab */}
-            {activeTab === 'categories' && (
-            <div className="animate-fade-in space-y-4">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-bold text-primary flex items-center"><LayoutList className="mr-2 text-accent" /> Kategorie produktů</h2>
-                    <button onClick={() => { setEditingCategory({ order: sortedCategories.length + 1, enabled: true }); setIsCategoryModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> Nová kategorie</button>
-                </div>
-
-                <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
-                    <table className="min-w-full divide-y">
-                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                            <tr>
-                                <th className="px-6 py-4 text-left">Pořadí</th>
-                                <th className="px-6 py-4 text-left">Název</th>
-                                <th className="px-6 py-4 text-left">ID (Slug)</th>
-                                <th className="px-6 py-4 text-center">Viditelnost</th>
-                                <th className="px-6 py-4 text-right">Akce</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y text-xs">
-                            {sortedCategories.map(cat => (
-                                <tr key={cat.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 font-mono font-bold text-gray-500">{cat.order}</td>
-                                    <td className="px-6 py-4 font-bold text-sm">{cat.name}</td>
-                                    <td className="px-6 py-4 font-mono text-gray-400">{cat.id}</td>
-                                    <td className="px-6 py-4 text-center">
-                                        {cat.enabled ? <span className="text-green-500 font-bold">Aktivní</span> : <span className="text-gray-400">Skryto</span>}
-                                    </td>
-                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                        <button onClick={() => { setEditingCategory(cat); setIsCategoryModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                        <button onClick={() => handleCategoryDeleteCheck(cat)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                    {sortedCategories.length === 0 && (
-                        <div className="p-8 text-center text-gray-400">Žádné kategorie</div>
+            {activeTab === 'orders' && (
+                <div className="animate-fade-in space-y-4">
+                <div className="flex justify-between mb-4">
+                    <button onClick={exportToAccounting} className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm"><FileText size={16} className="mr-2 text-green-600" /> {t('admin.export')}</button>
+                    {selectedOrders.length > 0 && (
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center bg-accent/10 px-3 py-1 rounded-lg border border-accent/20">
+                        <span className="text-[10px] font-bold text-primary mr-3">{t('admin.orders')}: {selectedOrders.length}</span>
+                        <select className="text-[10px] border rounded bg-white p-1 mr-2" onChange={e => handleBulkStatusChange(e.target.value as OrderStatus)}>
+                            <option value="">{t('admin.status_update')}...</option>
+                            {Object.values(OrderStatus).map(s => <option key={s} value={s}>{t(`status.${s}`)}</option>)}
+                        </select>
+                        </div>
+                        <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none bg-white border px-3 py-1.5 rounded-lg hover:bg-gray-50">
+                        <input type="checkbox" checked={notifyCustomer} onChange={e => setNotifyCustomer(e.target.checked)} className="rounded text-accent" />
+                        <span>{t('admin.notify_customer')}</span>
+                        </label>
+                    </div>
                     )}
                 </div>
-            </div>
+
+                <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
+                    <div className="md:col-span-1">
+                        <label className="text-xs font-bold text-gray-400 block mb-1">ID</label>
+                        <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={orderFilters.id} onChange={e => setOrderFilters({...orderFilters, id: e.target.value})} />
+                    </div>
+                    <div className="md:col-span-1">
+                        <label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.date_from')}</label>
+                        <input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.dateFrom} onChange={e => setOrderFilters({...orderFilters, dateFrom: e.target.value})} />
+                    </div>
+                    <div className="md:col-span-1">
+                        <label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.date_to')}</label>
+                        <input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.dateTo} onChange={e => setOrderFilters({...orderFilters, dateTo: e.target.value})} />
+                    </div>
+                    <div className="md:col-span-1">
+                        <label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label>
+                        <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={orderFilters.customer} onChange={e => setOrderFilters({...orderFilters, customer: e.target.value})} />
+                    </div>
+                    <div className="md:col-span-1">
+                        <label className="text-xs font-bold text-gray-400 block mb-1">Stav</label>
+                        <select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.status} onChange={e => setOrderFilters({...orderFilters, status: e.target.value})}>
+                            <option value="">Všechny stavy</option>
+                            {Object.values(OrderStatus).map(s => <option key={s} value={s}>{t(`status.${s}`)}</option>)}
+                        </select>
+                    </div>
+                    <div className="md:col-span-1">
+                        <label className="text-xs font-bold text-gray-400 block mb-1">IČ</label>
+                        <select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.ic} onChange={e => setOrderFilters({...orderFilters, ic: e.target.value})}>
+                            <option value="">{t('filter.all')}</option>
+                            <option value="yes">{t('common.yes')}</option>
+                            <option value="no">{t('common.no')}</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                        <tr>
+                        <th className="px-6 py-4 text-center"><input type="checkbox" onChange={e => setSelectedOrders(e.target.checked ? filteredOrders.map(o => o.id) : [])} checked={selectedOrders.length === filteredOrders.length && filteredOrders.length > 0} /></th>
+                        <th className="px-6 py-4 text-left">{t('filter.id')}</th>
+                        <th className="px-6 py-4 text-left">{t('common.date')}</th>
+                        <th className="px-6 py-4 text-left">{t('filter.customer')}</th>
+                        <th className="px-6 py-4 text-left">{t('common.price')} (Kč)</th>
+                        <th className="px-6 py-4 text-left">{t('filter.payment')}</th>
+                        <th className="px-6 py-4 text-center">IČ</th>
+                        <th className="px-6 py-4 text-left">{t('filter.status')}</th>
+                        <th className="px-6 py-4 text-right">{t('common.actions')}</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y text-[11px]">
+                        {filteredOrders.map(order => {
+                            const orderUser = allUsers.find(u => u.id === order.userId);
+                            const hasIc = (order.billingAddress && order.billingAddress.includes('IČ')) || (orderUser?.billingAddresses?.some(a => !!a.ic && a.ic.length > 0));
+                            
+                            return (
+                                <tr key={order.id} className="hover:bg-gray-50 transition">
+                                    <td className="px-6 py-4 text-center"><input type="checkbox" checked={selectedOrders.includes(order.id)} onChange={() => setSelectedOrders(prev => prev.includes(order.id) ? prev.filter(x => x !== order.id) : [...prev, order.id])} /></td>
+                                    <td className="px-6 py-4 font-bold">{order.id}</td>
+                                    <td className="px-6 py-4 font-mono">{formatDate(order.deliveryDate)}</td>
+                                    <td className="px-6 py-4">{order.userName}</td>
+                                    <td className="px-6 py-4 font-bold">{order.totalPrice + order.packagingFee + (order.deliveryFee || 0)} Kč</td>
+                                    <td className="px-6 py-4">
+                                    {order.isPaid ? <span className="text-green-600 font-bold">{t('common.paid')}</span> : <span className="text-red-600 font-bold">{t('common.unpaid')}</span>}
+                                    </td>
+                                    <td className="px-6 py-4 text-center">
+                                        {hasIc ? <span className="text-gray-900 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
+                                    </td>
+                                    <td className="px-6 py-4"><span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${order.status === OrderStatus.CANCELLED ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-700'}`}>{t(`status.${order.status}`)}</span></td>
+                                    <td className="px-6 py-4 text-right">
+                                    <button onClick={() => openOrderModal(order)} className="text-blue-600 font-bold hover:underline">{t('common.detail_edit')}</button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                    </table>
+                </div>
+                </div>
             )}
 
             {activeTab === 'users' && (
@@ -815,6 +961,49 @@ export const Admin: React.FC = () => {
                 </div>
             )}
 
+            {activeTab === 'categories' && (
+                <div className="animate-fade-in space-y-4">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-bold text-primary flex items-center"><LayoutList className="mr-2 text-accent" /> Kategorie produktů</h2>
+                    <button onClick={() => { setEditingCategory({ order: sortedCategories.length + 1, enabled: true }); setIsCategoryModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> Nová kategorie</button>
+                </div>
+
+                <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+                    <table className="min-w-full divide-y">
+                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                            <tr>
+                                <th className="px-6 py-4 text-left">Pořadí</th>
+                                <th className="px-6 py-4 text-left">Název</th>
+                                <th className="px-6 py-4 text-left">ID (Slug)</th>
+                                <th className="px-6 py-4 text-center">Viditelnost</th>
+                                <th className="px-6 py-4 text-right">Akce</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y text-xs">
+                            {sortedCategories.map(cat => (
+                                <tr key={cat.id} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 font-mono font-bold text-gray-500">{cat.order}</td>
+                                    <td className="px-6 py-4 font-bold text-sm">{cat.name}</td>
+                                    <td className="px-6 py-4 font-mono text-gray-400">{cat.id}</td>
+                                    <td className="px-6 py-4 text-center">
+                                        {cat.enabled ? <span className="text-green-500 font-bold">Aktivní</span> : <span className="text-gray-400">Skryto</span>}
+                                    </td>
+                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                        <button onClick={() => { setEditingCategory(cat); setIsCategoryModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                        <button onClick={() => handleCategoryDeleteCheck(cat)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {sortedCategories.length === 0 && (
+                        <div className="p-8 text-center text-gray-400">Žádná kategorie</div>
+                    )}
+                </div>
+                </div>
+            )}
+
+            {/* Other tabs rendering calls (Products, Load, etc) */}
             {activeTab === 'products' && (
                 <div className="animate-fade-in space-y-4">
                 <div className="flex justify-between items-center mb-4">
@@ -1189,201 +1378,143 @@ export const Admin: React.FC = () => {
                 </div>
                 </div>
             )}
+
+            {/* MODALS */}
             
-            {activeTab === 'orders' && (
-                <div className="animate-fade-in space-y-4">
-                <div className="flex justify-between mb-4">
-                    <button onClick={exportToAccounting} className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm"><FileText size={16} className="mr-2 text-green-600" /> {t('admin.export')}</button>
-                    {selectedOrders.length > 0 && (
-                    <div className="flex items-center gap-2">
-                        <div className="flex items-center bg-accent/10 px-3 py-1 rounded-lg border border-accent/20">
-                        <span className="text-[10px] font-bold text-primary mr-3">{t('admin.orders')}: {selectedOrders.length}</span>
-                        <select className="text-[10px] border rounded bg-white p-1 mr-2" onChange={e => handleBulkStatusChange(e.target.value as OrderStatus)}>
-                            <option value="">{t('admin.status_update')}...</option>
-                            {Object.values(OrderStatus).map(s => <option key={s} value={s}>{t(`status.${s}`)}</option>)}
-                        </select>
+            {isOrderModalOpen && editingOrder && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+                        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+                            <h2 className="text-2xl font-serif font-bold text-primary">{t('admin.edit_order')} #{editingOrder.id}</h2>
+                            <button onClick={() => setIsOrderModalOpen(false)} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={24}/></button>
                         </div>
-                        <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none bg-white border px-3 py-1.5 rounded-lg hover:bg-gray-50">
-                        <input type="checkbox" checked={notifyCustomer} onChange={e => setNotifyCustomer(e.target.checked)} className="rounded text-accent" />
-                        <span>{t('admin.notify_customer')}</span>
-                        </label>
-                    </div>
-                    )}
-                </div>
+                        <div className="p-8 overflow-y-auto space-y-8 flex-grow">
+                            {orderSaveError && (
+                                <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded text-red-700 text-sm font-bold flex items-center">
+                                    <AlertCircle size={18} className="mr-2"/> {orderSaveError}
+                                </div>
+                            )}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div className="space-y-4">
+                                    <div className="p-4 bg-gray-50 rounded-2xl space-y-3">
+                                        <h3 className="font-bold text-gray-400 uppercase text-xs tracking-widest border-b pb-2">Zákazník & Termín</h3>
+                                        <div>
+                                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('filter.customer_placeholder')}</label>
+                                            <input type="text" className="w-full border rounded p-2 text-sm" value={editingOrder.userName} onChange={e => setEditingOrder({...editingOrder, userName: e.target.value})}/>
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.date')}</label>
+                                            <input type="date" className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryDate} onChange={e => setEditingOrder({...editingOrder, deliveryDate: e.target.value})}/>
+                                        </div>
+                                    </div>
 
-                {/* Filter Bar */}
-                <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div>
-                        <label className="text-xs font-bold text-gray-400 block mb-1">ID</label>
-                        <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={orderFilters.id} onChange={e => setOrderFilters({...orderFilters, id: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-400 block mb-1">Datum</label>
-                        <input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.date} onChange={e => setOrderFilters({...orderFilters, date: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label>
-                        <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={orderFilters.customer} onChange={e => setOrderFilters({...orderFilters, customer: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-400 block mb-1">Stav</label>
-                        <select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.status} onChange={e => setOrderFilters({...orderFilters, status: e.target.value})}>
-                            <option value="">Všechny stavy</option>
-                            {Object.values(OrderStatus).map(s => <option key={s} value={s}>{t(`status.${s}`)}</option>)}
-                        </select>
-                    </div>
-                </div>
+                                    <div className="p-4 bg-gray-50 rounded-2xl space-y-3">
+                                        <h3 className="font-bold text-gray-400 uppercase text-xs tracking-widest border-b pb-2">Doprava a Fakturace</h3>
+                                        
+                                        {/* Delivery Type */}
+                                        <div>
+                                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.delivery')}</label>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => setEditingOrder({...editingOrder, deliveryType: DeliveryType.PICKUP, deliveryAddress: undefined})}
+                                                    className={`flex-1 py-2 text-xs font-bold rounded border ${editingOrder.deliveryType === DeliveryType.PICKUP ? 'bg-primary text-white border-primary' : 'bg-white text-gray-600'}`}
+                                                >
+                                                    {t('checkout.pickup')}
+                                                </button>
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => setEditingOrder({...editingOrder, deliveryType: DeliveryType.DELIVERY, pickupLocationId: undefined})}
+                                                    className={`flex-1 py-2 text-xs font-bold rounded border ${editingOrder.deliveryType === DeliveryType.DELIVERY ? 'bg-primary text-white border-primary' : 'bg-white text-gray-600'}`}
+                                                >
+                                                    {t('admin.delivery')}
+                                                </button>
+                                            </div>
+                                        </div>
 
-                <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                        <tr>
-                        <th className="px-6 py-4 text-center"><input type="checkbox" onChange={e => setSelectedOrders(e.target.checked ? filteredOrders.map(o => o.id) : [])} checked={selectedOrders.length === filteredOrders.length && filteredOrders.length > 0} /></th>
-                        <th className="px-6 py-4 text-left">{t('filter.id')}</th>
-                        <th className="px-6 py-4 text-left">{t('common.date')}</th>
-                        <th className="px-6 py-4 text-left">{t('filter.customer')}</th>
-                        <th className="px-6 py-4 text-left">{t('common.price')} (Kč)</th>
-                        <th className="px-6 py-4 text-left">{t('filter.payment')}</th>
-                        <th className="px-6 py-4 text-left">{t('filter.status')}</th>
-                        <th className="px-6 py-4 text-right">{t('common.actions')}</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y text-[11px]">
-                        {filteredOrders.map(order => (
-                        <tr key={order.id} className="hover:bg-gray-50 transition">
-                            <td className="px-6 py-4 text-center"><input type="checkbox" checked={selectedOrders.includes(order.id)} onChange={() => setSelectedOrders(prev => prev.includes(order.id) ? prev.filter(x => x !== order.id) : [...prev, order.id])} /></td>
-                            <td className="px-6 py-4 font-bold">{order.id}</td>
-                            <td className="px-6 py-4 font-mono">{formatDate(order.deliveryDate)}</td>
-                            <td className="px-6 py-4">{order.userName}</td>
-                            <td className="px-6 py-4 font-bold">{order.totalPrice + order.packagingFee + (order.deliveryFee || 0)} Kč</td>
-                            <td className="px-6 py-4">
-                            {order.isPaid ? <span className="text-green-600 font-bold">{t('common.paid')}</span> : <span className="text-red-600 font-bold">{t('common.unpaid')}</span>}
-                            </td>
-                            <td className="px-6 py-4"><span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${order.status === OrderStatus.CANCELLED ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-700'}`}>{t(`status.${order.status}`)}</span></td>
-                            <td className="px-6 py-4 text-right">
-                            <button onClick={() => openOrderModal(order)} className="text-blue-600 font-bold hover:underline">{t('common.detail_edit')}</button>
-                            </td>
-                        </tr>
-                        ))}
-                    </tbody>
-                    </table>
-                </div>
-                </div>
-            )}
+                                        {/* Pickup Location Selector */}
+                                        {editingOrder.deliveryType === DeliveryType.PICKUP && (
+                                            <div>
+                                                <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Odběrné místo</label>
+                                                <select 
+                                                    className="w-full border rounded p-2 text-sm" 
+                                                    value={editingOrder.pickupLocationId || ''} 
+                                                    onChange={e => {
+                                                        const loc = settings.pickupLocations?.find(l => l.id === e.target.value);
+                                                        setEditingOrder({...editingOrder, pickupLocationId: e.target.value, deliveryAddress: loc ? `Osobní odběr: ${loc.name}, ${loc.street}, ${loc.city}` : ''});
+                                                    }}
+                                                >
+                                                    <option value="">Vyberte místo...</option>
+                                                    {settings.pickupLocations?.filter(l => l.enabled).map(l => (
+                                                        <option key={l.id} value={l.id}>{l.name} ({l.street})</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
 
-            {isPickupModalOpen && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-                    <form onSubmit={savePickup} className="bg-white rounded-2xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
-                        <h3 className="font-bold text-lg">{editingPickup?.id ? 'Upravit odběrné místo' : 'Nové odběrné místo'}</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Název místa</label>
-                                <input required className="w-full border rounded p-2" value={editingPickup?.name || ''} onChange={e => setEditingPickup({ ...editingPickup, name: e.target.value })} />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Ulice a č.p.</label>
-                                <input required className="w-full border rounded p-2" value={editingPickup?.street || ''} onChange={e => setEditingPickup({ ...editingPickup, street: e.target.value })} />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Město</label>
-                                <input required className="w-full border rounded p-2" value={editingPickup?.city || ''} onChange={e => setEditingPickup({ ...editingPickup, city: e.target.value })} />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">PSČ</label>
-                                <input required className="w-full border rounded p-2" value={editingPickup?.zip || ''} onChange={e => setEditingPickup({ ...editingPickup, zip: e.target.value })} />
-                            </div>
-                        </div>
-
-                        <div className="border rounded-xl p-4 bg-gray-50">
-                            <h4 className="font-bold text-sm mb-3">Otevírací doba</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
-                                {[1, 2, 3, 4, 5, 6, 0].map(day => (
-                                    <div key={day} className="flex items-center gap-2">
-                                        <span className="w-8 font-bold text-xs">{day === 0 ? 'Ne' : day === 1 ? 'Po' : day === 2 ? 'Út' : day === 3 ? 'St' : day === 4 ? 'Čt' : day === 5 ? 'Pá' : 'So'}</span>
-                                        <label className="flex items-center text-xs gap-1">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={editingPickup?.openingHours?.[day]?.isOpen ?? false}
-                                                onChange={e => setEditingPickup({
-                                                    ...editingPickup,
-                                                    openingHours: {
-                                                        ...editingPickup?.openingHours,
-                                                        [day]: { ...editingPickup?.openingHours?.[day], isOpen: e.target.checked }
-                                                    }
-                                                })}
-                                            />
-                                            Otevřeno
-                                        </label>
-                                        {editingPickup?.openingHours?.[day]?.isOpen && (
+                                        {/* Delivery Address Selector */}
+                                        {editingOrder.deliveryType === DeliveryType.DELIVERY && (
                                             <>
-                                                <input type="time" className="w-20 p-1 border rounded text-xs" value={editingPickup.openingHours[day].start} onChange={e => setEditingPickup({ ...editingPickup, openingHours: { ...editingPickup.openingHours, [day]: { ...editingPickup.openingHours![day], start: e.target.value } } })} />
-                                                <span className="text-xs">-</span>
-                                                <input type="time" className="w-20 p-1 border rounded text-xs" value={editingPickup.openingHours[day].end} onChange={e => setEditingPickup({ ...editingPickup, openingHours: { ...editingPickup.openingHours, [day]: { ...editingPickup.openingHours![day], end: e.target.value } } })} />
+                                                {orderUser && orderUser.deliveryAddresses.length > 0 && (
+                                                    <div>
+                                                        <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Vybrat z adres zákazníka</label>
+                                                        <select 
+                                                            className="w-full border rounded p-2 text-sm mb-2"
+                                                            value={selectedDeliveryAddrId}
+                                                            onChange={e => handleSelectDeliveryAddress(e.target.value)}
+                                                        >
+                                                            <option value="">-- Použít uloženou adresu --</option>
+                                                            {orderUser.deliveryAddresses.map(a => (
+                                                                <option key={a.id} value={a.id}>{a.name}, {a.street}, {a.city}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                )}
+                                                <div>
+                                                    <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.street')} (Text)</label>
+                                                    <textarea className="w-full border rounded p-2 text-sm h-20" value={editingOrder.deliveryAddress || ''} onChange={e => setEditingOrder({...editingOrder, deliveryAddress: e.target.value})}/>
+                                                </div>
                                             </>
                                         )}
+
+                                        {/* Billing Address Selector */}
+                                        <div className="pt-2 border-t mt-2">
+                                            {orderUser && orderUser.billingAddresses.length > 0 && (
+                                                <div>
+                                                    <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Vybrat fakturační adresu</label>
+                                                    <select 
+                                                        className="w-full border rounded p-2 text-sm mb-2"
+                                                        value={selectedBillingAddrId}
+                                                        onChange={e => handleSelectBillingAddress(e.target.value)}
+                                                    >
+                                                        <option value="">-- Použít uloženou fakturační --</option>
+                                                        {orderUser.billingAddresses.map(a => (
+                                                            <option key={a.id} value={a.id}>{a.name} {a.ic ? `(IČ: ${a.ic})` : ''}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
+                                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Fakturační adresa (Text)</label>
+                                            <textarea className="w-full border rounded p-2 text-sm h-16" value={editingOrder.billingAddress || ''} onChange={e => setEditingOrder({...editingOrder, billingAddress: e.target.value})}/>
+                                        </div>
                                     </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="bg-white border rounded-xl p-4">
-                            <label className="text-xs font-bold text-gray-400 block mb-2">Výjimky otevírací doby</label>
-                            <div className="flex gap-2 mb-2 items-end">
-                                <div className="flex-1">
-                                    <span className="text-[10px] block text-gray-400">Datum</span>
-                                    <input type="date" className="w-full border rounded p-1 text-xs" value={newPickupException.date} onChange={e => setNewPickupException({ ...newPickupException, date: e.target.value })} />
                                 </div>
-                                <div className="flex items-center gap-1 pb-2">
-                                    <input type="checkbox" checked={newPickupException.isOpen} onChange={e => setNewPickupException({ ...newPickupException, isOpen: e.target.checked })} />
-                                    <span className="text-xs">Otevřeno?</span>
-                                </div>
-                                {newPickupException.isOpen && (
-                                    <>
-                                        <div className="w-20"><input type="time" className="w-full border rounded p-1 text-xs" value={newPickupException.deliveryTimeStart || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeStart: e.target.value })} /></div>
-                                        <div className="w-20"><input type="time" className="w-full border rounded p-1 text-xs" value={newPickupException.deliveryTimeEnd || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeEnd: e.target.value })} /></div>
-                                    </>
-                                )}
-                                <button type="button" onClick={addPickupException} className="bg-accent text-white px-3 py-1.5 rounded text-xs font-bold self-end">+</button>
-                            </div>
-                            <div className="space-y-1 max-h-32 overflow-y-auto">
-                                {editingPickup?.exceptions?.map((ex, idx) => (
-                                    <div key={idx} className="flex justify-between items-center text-xs bg-gray-50 p-2 border rounded">
-                                        <span>{ex.date}: <strong>{ex.isOpen ? 'Otevřeno' : 'ZAVŘENO'}</strong> {ex.isOpen && `(${ex.deliveryTimeStart} - ${ex.deliveryTimeEnd})`}</span>
-                                        <button type="button" onClick={() => removePickupException(ex.date)} className="text-red-500"><X size={14} /></button>
+                                <div className="space-y-4">
+                                    <div className="bg-gray-50 p-4 rounded-2xl flex justify-between items-center">
+                                        <span className="font-bold text-sm">Celkem (Automatický výpočet):</span>
+                                        <span className="font-bold text-lg text-accent">{editingOrder.totalPrice + editingOrder.packagingFee + (editingOrder.deliveryFee || 0)} Kč</span>
                                     </div>
-                                ))}
+                                    <div className="border rounded-2xl p-4 text-sm text-gray-500 italic">
+                                        Editace položek košíku je dostupná v detailu (rozbalení sekce položek není implementováno v tomto náhledu, použijte "Detail" v tabulce pokud je to nutné pro admina).
+                                    </div>
+                                </div>
                             </div>
                         </div>
-
-                        <label className="flex items-center gap-2 mt-2">
-                            <input type="checkbox" checked={editingPickup?.enabled ?? true} onChange={e => setEditingPickup({ ...editingPickup, enabled: e.target.checked })} />
-                            <span className="text-sm">Aktivní</span>
-                        </label>
-                        <div className="flex gap-2 pt-4">
-                            <button type="button" onClick={() => setIsPickupModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>
-                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">Uložit</button>
-                        </div>
-                    </form>
-                </div>
-            )}
-
-            {isUserModalOpen && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl">
-                        <h3 className="font-bold text-lg mb-4">{editingUser ? 'Upravit uživatele' : 'Nový uživatel'}</h3>
-                        <div className="space-y-3">
-                            <input className="w-full border p-2 rounded" placeholder={t('common.name')} value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} />
-                            <input className="w-full border p-2 rounded" placeholder={t('common.email')} value={userForm.email} onChange={e => setUserForm({...userForm, email: e.target.value})} />
-                            <input className="w-full border p-2 rounded" placeholder={t('common.phone')} value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} />
-                            <select className="w-full border p-2 rounded" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as any})}>
-                                <option value="customer">Zákazník</option>
-                                <option value="driver">Řidič</option>
-                                <option value="admin">Administrátor</option>
-                            </select>
-                        </div>
-                        <div className="flex gap-2 mt-4">
-                            <button onClick={() => setIsUserModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded font-bold text-sm">Zrušit</button>
-                            <button onClick={handleUserModalSave} className="flex-1 py-2 bg-primary text-white rounded font-bold text-sm">Uložit</button>
+                        <div className="p-6 bg-gray-50 border-t flex gap-4">
+                            <button onClick={() => setIsOrderModalOpen(false)} className="flex-1 py-3 bg-white border rounded-xl font-bold text-sm uppercase transition">{t('admin.cancel')}</button>
+                            <button onClick={handleOrderSave} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-sm uppercase shadow-lg transition flex items-center justify-center gap-2">
+                                <Save size={16}/> {t('admin.save_changes')}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1424,37 +1555,11 @@ export const Admin: React.FC = () => {
                     </form>
                 </div>
             )}
-
-            {isOrderModalOpen && editingOrder && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
-                    <div className="p-6 border-b flex justify-between items-center bg-gray-50">
-                    <h2 className="text-2xl font-serif font-bold text-primary">{t('admin.edit_order')} #{editingOrder.id}</h2>
-                    <button onClick={() => setIsOrderModalOpen(false)} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={24}/></button>
-                    </div>
-                    <div className="p-8 overflow-y-auto space-y-8 flex-grow">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <div className="space-y-4">
-                            <div className="p-4 bg-gray-50 rounded-2xl space-y-3">
-                            <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('filter.customer_placeholder')}</label><input type="text" className="w-full border rounded p-2 text-sm" value={editingOrder.userName} onChange={e => setEditingOrder({...editingOrder, userName: e.target.value})}/></div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.date')}</label><input type="date" className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryDate} onChange={e => setEditingOrder({...editingOrder, deliveryDate: e.target.value})}/></div>
-                                <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.delivery')}</label><select className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryType} onChange={e => setEditingOrder({...editingOrder, deliveryType: e.target.value as DeliveryType})}><option value={DeliveryType.PICKUP}>{t('checkout.pickup')}</option><option value={DeliveryType.DELIVERY}>{t('admin.delivery')}</option></select></div>
-                            </div>
-                            </div>
-                        </div>
-                    </div>
-                    </div>
-                    <div className="p-6 bg-gray-50 border-t flex gap-4"><button onClick={() => setIsOrderModalOpen(false)} className="flex-1 py-3 bg-white border rounded-xl font-bold text-sm uppercase transition">{t('admin.cancel')}</button><button onClick={async () => { const success = await updateOrder(editingOrder); if(success) setIsOrderModalOpen(false); }} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-sm uppercase shadow-lg transition">{t('admin.save_changes')}</button></div>
-                </div>
-                </div>
-            )}
-
+            
             {isProductModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
                 <form onSubmit={saveProduct} className="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
                     <h3 className="font-bold text-lg">{editingProduct?.id ? t('admin.edit_product') : t('admin.add_product')}</h3>
-                    
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                             <div className="col-span-2">
@@ -1728,6 +1833,123 @@ export const Admin: React.FC = () => {
                 </div>
             )}
 
+            {isPickupModalOpen && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
+                    <form onSubmit={savePickup} className="bg-white rounded-2xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
+                        <h3 className="font-bold text-lg">{editingPickup?.id ? 'Upravit odběrné místo' : 'Nové odběrné místo'}</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">Název místa</label>
+                                <input required className="w-full border rounded p-2" value={editingPickup?.name || ''} onChange={e => setEditingPickup({ ...editingPickup, name: e.target.value })} />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">Ulice a č.p.</label>
+                                <input required className="w-full border rounded p-2" value={editingPickup?.street || ''} onChange={e => setEditingPickup({ ...editingPickup, street: e.target.value })} />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">Město</label>
+                                <input required className="w-full border rounded p-2" value={editingPickup?.city || ''} onChange={e => setEditingPickup({ ...editingPickup, city: e.target.value })} />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">PSČ</label>
+                                <input required className="w-full border rounded p-2" value={editingPickup?.zip || ''} onChange={e => setEditingPickup({ ...editingPickup, zip: e.target.value })} />
+                            </div>
+                        </div>
+
+                        <div className="border rounded-xl p-4 bg-gray-50">
+                            <h4 className="font-bold text-sm mb-3">Otevírací doba</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
+                                {[1, 2, 3, 4, 5, 6, 0].map(day => (
+                                    <div key={day} className="flex items-center gap-2">
+                                        <span className="w-8 font-bold text-xs">{day === 0 ? 'Ne' : day === 1 ? 'Po' : day === 2 ? 'Út' : day === 3 ? 'St' : day === 4 ? 'Čt' : day === 5 ? 'Pá' : 'So'}</span>
+                                        <label className="flex items-center text-xs gap-1">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={editingPickup?.openingHours?.[day]?.isOpen ?? false}
+                                                onChange={e => setEditingPickup({
+                                                    ...editingPickup,
+                                                    openingHours: {
+                                                        ...editingPickup?.openingHours,
+                                                        [day]: { ...editingPickup?.openingHours?.[day], isOpen: e.target.checked }
+                                                    }
+                                                })}
+                                            />
+                                            Otevřeno
+                                        </label>
+                                        {editingPickup?.openingHours?.[day]?.isOpen && (
+                                            <>
+                                                <input type="time" className="w-20 p-1 border rounded text-xs" value={editingPickup.openingHours[day].start} onChange={e => setEditingPickup({ ...editingPickup, openingHours: { ...editingPickup.openingHours, [day]: { ...editingPickup.openingHours![day], start: e.target.value } } })} />
+                                                <span className="text-xs">-</span>
+                                                <input type="time" className="w-20 p-1 border rounded text-xs" value={editingPickup.openingHours[day].end} onChange={e => setEditingPickup({ ...editingPickup, openingHours: { ...editingPickup.openingHours, [day]: { ...editingPickup.openingHours![day], end: e.target.value } } })} />
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="bg-white border rounded-xl p-4">
+                            <label className="text-xs font-bold text-gray-400 block mb-2">Výjimky otevírací doby</label>
+                            <div className="flex gap-2 mb-2 items-end">
+                                <div className="flex-1">
+                                    <span className="text-[10px] block text-gray-400">Datum</span>
+                                    <input type="date" className="w-full border rounded p-1 text-xs" value={newPickupException.date} onChange={e => setNewPickupException({ ...newPickupException, date: e.target.value })} />
+                                </div>
+                                <div className="flex items-center gap-1 pb-2">
+                                    <input type="checkbox" checked={newPickupException.isOpen} onChange={e => setNewPickupException({ ...newPickupException, isOpen: e.target.checked })} />
+                                    <span className="text-xs">Otevřeno?</span>
+                                </div>
+                                {newPickupException.isOpen && (
+                                    <>
+                                        <div className="w-20"><input type="time" className="w-full border rounded p-1 text-xs" value={newPickupException.deliveryTimeStart || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeStart: e.target.value })} /></div>
+                                        <div className="w-20"><input type="time" className="w-full border rounded p-1 text-xs" value={newPickupException.deliveryTimeEnd || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeEnd: e.target.value })} /></div>
+                                    </>
+                                )}
+                                <button type="button" onClick={addPickupException} className="bg-accent text-white px-3 py-1.5 rounded text-xs font-bold self-end">+</button>
+                            </div>
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                                {editingPickup?.exceptions?.map((ex, idx) => (
+                                    <div key={idx} className="flex justify-between items-center text-xs bg-gray-50 p-2 border rounded">
+                                        <span>{ex.date}: <strong>{ex.isOpen ? 'Otevřeno' : 'ZAVŘENO'}</strong> {ex.isOpen && `(${ex.deliveryTimeStart} - ${ex.deliveryTimeEnd})`}</span>
+                                        <button type="button" onClick={() => removePickupException(ex.date)} className="text-red-500"><X size={14} /></button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 mt-2">
+                            <input type="checkbox" checked={editingPickup?.enabled ?? true} onChange={e => setEditingPickup({ ...editingPickup, enabled: e.target.checked })} />
+                            <span className="text-sm">Aktivní</span>
+                        </label>
+                        <div className="flex gap-2 pt-4">
+                            <button type="button" onClick={() => setIsPickupModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>
+                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">Uložit</button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
+            {isUserModalOpen && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl">
+                        <h3 className="font-bold text-lg mb-4">{editingUser ? 'Upravit uživatele' : 'Nový uživatel'}</h3>
+                        <div className="space-y-3">
+                            <input className="w-full border p-2 rounded" placeholder={t('common.name')} value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} />
+                            <input className="w-full border p-2 rounded" placeholder={t('common.email')} value={userForm.email} onChange={e => setUserForm({...userForm, email: e.target.value})} />
+                            <input className="w-full border p-2 rounded" placeholder={t('common.phone')} value={userForm.phone} onChange={e => setUserForm({...userForm, phone: e.target.value})} />
+                            <select className="w-full border p-2 rounded" value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value as any})}>
+                                <option value="customer">Zákazník</option>
+                                <option value="driver">Řidič</option>
+                                <option value="admin">Administrátor</option>
+                            </select>
+                        </div>
+                        <div className="flex gap-2 mt-4">
+                            <button onClick={() => setIsUserModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded font-bold text-sm">Zrušit</button>
+                            <button onClick={handleUserModalSave} className="flex-1 py-2 bg-primary text-white rounded font-bold text-sm">Uložit</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
