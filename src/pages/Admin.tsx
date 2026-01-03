@@ -10,7 +10,7 @@ import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, AlertTriangle
+    Ban, ImageIcon, Store, Truck, AlertTriangle, Info, Calculator
 } from 'lucide-react';
 
 import { OrdersTab } from './admin/OrdersTab';
@@ -109,6 +109,193 @@ const PaymentMethodModal: React.FC<{
     );
 };
 
+// --- NEW COMPONENT: Load Detail Modal ---
+const LoadDetailModal: React.FC<{
+    date: string | null;
+    onClose: () => void;
+}> = ({ date, onClose }) => {
+    const { orders, products, settings, dayConfigs, formatDate } = useStore();
+
+    const detailData = useMemo(() => {
+        if (!date) return null;
+
+        const activeOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED);
+        const groupedByCategory: Record<string, {
+            products: Record<string, { name: string, quantity: number, workload: number, overhead: number }>;
+            totalWorkload: number;
+        }> = {};
+
+        // Initialize Categories
+        settings.categories.forEach(cat => {
+            groupedByCategory[cat.id] = { products: {}, totalWorkload: 0 };
+        });
+
+        activeOrders.forEach(order => {
+            order.items.forEach(item => {
+                const productDef = products.find(p => p.id === item.id);
+                // Use definition or item snapshot (fallback)
+                const workload = Number(productDef?.workload ?? item.workload ?? 0);
+                const overhead = Number(productDef?.workloadOverhead ?? item.workloadOverhead ?? 0);
+                const catId = item.category;
+
+                if (!groupedByCategory[catId]) {
+                    // Handle legacy categories or deleted ones
+                    groupedByCategory[catId] = { products: {}, totalWorkload: 0 };
+                }
+
+                if (!groupedByCategory[catId].products[item.id]) {
+                    groupedByCategory[catId].products[item.id] = {
+                        name: item.name,
+                        quantity: 0,
+                        workload: workload,
+                        overhead: overhead
+                    };
+                }
+
+                groupedByCategory[catId].products[item.id].quantity += item.quantity;
+            });
+        });
+
+        // Calculate Totals per Category
+        Object.keys(groupedByCategory).forEach(catId => {
+            let catTotal = 0;
+            Object.values(groupedByCategory[catId].products).forEach(p => {
+                // Formula: (Qty * Workload) + Overhead (Once per day per product type)
+                // Note: Overhead logic matches getDailyLoad in StoreContext
+                const productTotal = (p.quantity * p.workload) + p.overhead;
+                catTotal += productTotal;
+            });
+            groupedByCategory[catId].totalWorkload = catTotal;
+        });
+
+        return groupedByCategory;
+    }, [date, orders, products, settings]);
+
+    const getCapacityLimit = (date: string, catId: string) => {
+        const config = dayConfigs.find(d => d.date === date);
+        return config?.capacityOverrides?.[catId] ?? settings.defaultCapacities[catId] ?? 0;
+    };
+
+    const handleExport = () => {
+        if (!detailData || !date) return;
+
+        const rows = [];
+        // Add BOM for Excel UTF-8 compatibility
+        let csvContent = "data:text/csv;charset=utf-8,\uFEFF"; 
+        
+        // Header
+        rows.push(["Produkt", "Množství", "Kategorie", "Pracnost Celkem"]);
+
+        Object.keys(detailData).forEach(catId => {
+            const catName = settings.categories.find(c => c.id === catId)?.name || catId;
+            const products = Object.values(detailData[catId].products);
+            
+            products.forEach(p => {
+                if (p.quantity > 0) {
+                    const totalPoints = (p.quantity * p.workload) + p.overhead;
+                    // Escape quotes in names
+                    rows.push([`"${p.name.replace(/"/g, '""')}"`, p.quantity, `"${catName}"`, totalPoints]);
+                }
+            });
+        });
+
+        // Convert to CSV string (using semicolon for Excel in CZ locale usually)
+        csvContent += rows.map(e => e.join(";")).join("\n");
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `produkty_den_${date}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    if (!date || !detailData) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95">
+                <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+                    <h2 className="text-xl font-bold text-primary flex items-center">
+                        <Calculator className="mr-2 text-accent" /> Detail vytížení: {formatDate(date)}
+                    </h2>
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={handleExport} 
+                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-bold shadow-sm"
+                            title="Stáhnout seznam do Excelu"
+                        >
+                            <Download size={16} /> Exportovat
+                        </button>
+                        <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={24}/></button>
+                    </div>
+                </div>
+                
+                <div className="p-6 overflow-y-auto space-y-8">
+                    {settings.categories.sort((a,b) => a.order - b.order).map(cat => {
+                        const data = detailData[cat.id];
+                        // Skip categories with no load if you prefer, or show them as empty
+                        // Showing all allows admins to see limits even if empty
+                        const productList = Object.values(data?.products || {});
+                        const limit = getCapacityLimit(date, cat.id);
+                        const usagePercent = limit > 0 ? Math.round((data.totalWorkload / limit) * 100) : 0;
+                        const isOverLimit = data.totalWorkload > limit;
+
+                        return (
+                            <div key={cat.id} className="border rounded-2xl overflow-hidden">
+                                <div className="bg-gray-100 px-6 py-3 flex justify-between items-center">
+                                    <h3 className="font-bold text-gray-800">{cat.name}</h3>
+                                    <div className="flex items-center gap-4 text-sm">
+                                        <div className="font-mono">
+                                            <span className={isOverLimit ? "text-red-600 font-bold" : "text-gray-700"}>{Math.round(data.totalWorkload)}</span> 
+                                            <span className="text-gray-400"> / {limit}</span>
+                                        </div>
+                                        <div className={`px-2 py-0.5 rounded text-xs font-bold ${isOverLimit ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                                            {usagePercent}%
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {productList.length > 0 ? (
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left">Produkt</th>
+                                                <th className="px-6 py-3 text-center">Počet (ks)</th>
+                                                <th className="px-6 py-3 text-right">Pracnost / ks</th>
+                                                <th className="px-6 py-3 text-right">Kap. přípravy (Overhead)</th>
+                                                <th className="px-6 py-3 text-right">Celkem body</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100 text-sm">
+                                            {productList.map((p, idx) => (
+                                                <tr key={idx} className="hover:bg-gray-50">
+                                                    <td className="px-6 py-3 font-medium text-gray-900">{p.name}</td>
+                                                    <td className="px-6 py-3 text-center font-bold">{p.quantity}</td>
+                                                    <td className="px-6 py-3 text-right text-gray-500">{p.workload}</td>
+                                                    <td className="px-6 py-3 text-right text-gray-500">{p.overhead}</td>
+                                                    <td className="px-6 py-3 text-right font-bold text-primary">
+                                                        {(p.quantity * p.workload) + p.overhead}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                ) : (
+                                    <div className="p-6 text-center text-gray-400 text-sm italic">
+                                        Žádné objednávky v této kategorii.
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export const Admin: React.FC = () => {
     const { 
         dataSource, setDataSource, t, products, dayConfigs, settings, 
@@ -120,6 +307,7 @@ export const Admin: React.FC = () => {
     
     // Cross-tab filter state
     const [ordersTabFilterDate, setOrdersTabFilterDate] = useState<string | null>(null);
+    const [loadDetailDate, setLoadDetailDate] = useState<string | null>(null); // New State for Modal
 
     // Modal States
     const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
@@ -289,6 +477,12 @@ export const Admin: React.FC = () => {
                 onClose={() => setValidationMessage(null)}
             />
 
+            {/* Load Detail Modal */}
+            <LoadDetailModal 
+                date={loadDetailDate} 
+                onClose={() => setLoadDetailDate(null)} 
+            />
+
             {/* --- TABS --- */}
 
             {activeTab === 'orders' && (
@@ -304,6 +498,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'delivery' && <DeliveryTab />}
             {activeTab === 'pickup' && <PickupTab />}
 
+            {/* ... Categories, Packaging, Payments, Operator, DB tabs remain unchanged ... */}
             {activeTab === 'categories' && (
             <div className="animate-fade-in space-y-4">
                 <div className="flex justify-between items-center mb-4">
@@ -423,7 +618,7 @@ export const Admin: React.FC = () => {
                     <table className="min-w-full divide-y">
                     <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
                         <tr>
-                        <th className="px-6 py-4 text-left min-w-[120px]">Datum</th>
+                        <th className="px-6 py-4 text-left min-w-[140px]">Datum</th>
                         <th className="px-6 py-4 text-left w-32">Stav</th>
                         <th className="px-6 py-4 text-center">Objednávky</th>
                         {sortedCategories.map(cat => (
@@ -440,8 +635,17 @@ export const Admin: React.FC = () => {
                         
                         return (
                             <tr key={date} className={`hover:bg-gray-50 ${isClosed ? 'bg-red-50' : ''}`}>
-                            <td className="px-6 py-4 font-mono font-bold text-sm">
-                                {formatDate(date)}
+                            <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-sm">{formatDate(date)}</span>
+                                    <button 
+                                        onClick={() => setLoadDetailDate(date)} 
+                                        className="text-gray-400 hover:text-accent p-1 bg-white border rounded-full shadow-sm"
+                                        title="Detail vytížení"
+                                    >
+                                        <Info size={14}/>
+                                    </button>
+                                </div>
                             </td>
                             <td className="px-6 py-4">
                                 {isClosed ? 
