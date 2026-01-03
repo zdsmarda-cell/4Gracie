@@ -4,13 +4,13 @@ import { useStore } from '../context/StoreContext';
 import { 
     Product, Category, DiscountCode, PackagingType, DayConfig, 
     DeliveryRegion, PickupLocation, RegionException, PaymentMethodConfig,
-    OrderStatus, User, DiscountType, Order, DeliveryType
+    OrderStatus, User, DiscountType, Order, DeliveryType, GlobalSettings
 } from '../types';
 import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, AlertTriangle, Info, Calculator
+    Ban, ImageIcon, Store, Truck, Filter, AlertTriangle, Info, Calculator, Save
 } from 'lucide-react';
 
 import { OrdersTab } from './admin/OrdersTab';
@@ -311,6 +311,14 @@ export const Admin: React.FC = () => {
         formatDate, removeDiacritics, getDailyLoad, orders
     } = useStore();
 
+    // Local State for Forms to prevent auto-save on keystroke
+    const [localSettings, setLocalSettings] = useState<GlobalSettings>(settings);
+
+    // Sync local state when settings change (e.g. initial load or save complete)
+    useEffect(() => {
+        setLocalSettings(settings);
+    }, [settings]);
+
     const [activeTab, setActiveTab] = useState('orders');
     
     // Cross-tab filter state
@@ -415,6 +423,7 @@ export const Admin: React.FC = () => {
 
     // Payment Handlers
     const savePaymentMethod = async (method: PaymentMethodConfig) => {
+        // This is from Modal
         const newMethods = settings.paymentMethods.map(m => m.id === method.id ? method : m);
         await updateSettings({ ...settings, paymentMethods: newMethods });
         setIsPaymentModalOpen(false);
@@ -430,8 +439,20 @@ export const Admin: React.FC = () => {
 
     const saveOperator = async (e: React.FormEvent) => {
         e.preventDefault();
-        await updateSettings({ ...settings });
-        alert('Nastavení uloženo.');
+        await updateSettings(localSettings);
+        // Alert is removed/handled by Store notification
+    };
+
+    const saveGlobalLimits = async () => {
+        await updateSettings(localSettings);
+    };
+
+    const savePackagingLimit = async () => {
+        await updateSettings(localSettings);
+    };
+
+    const savePaymentSettings = async () => {
+        await updateSettings(localSettings);
     };
 
     // Unified Delete Confirm Handler
@@ -554,9 +575,16 @@ export const Admin: React.FC = () => {
                 <div className="bg-white p-6 rounded-2xl border shadow-sm">
                     <h3 className="font-bold mb-4">{t('admin.settings')}</h3>
                     <div className="flex items-center gap-4">
-                    <label className="text-sm text-gray-600">{t('admin.pkg_limit')} (Kč):</label>
-                    <input type="number" className="border rounded p-2 w-32" value={settings.packaging.freeFrom} onChange={e => updateSettings({...settings, packaging: {...settings.packaging, freeFrom: Number(e.target.value)}})} />
-                    <button onClick={() => updateSettings(settings)} className="text-xs bg-primary text-white px-3 py-2 rounded font-bold">Uložit limit</button>
+                        <label className="text-sm text-gray-600">{t('admin.pkg_limit')} (Kč):</label>
+                        <input 
+                            type="number" 
+                            className="border rounded p-2 w-32" 
+                            value={localSettings.packaging.freeFrom} 
+                            onChange={e => setLocalSettings({...localSettings, packaging: {...localSettings.packaging, freeFrom: Number(e.target.value)}})} 
+                        />
+                        <button onClick={savePackagingLimit} className="text-xs bg-primary text-white px-3 py-2 rounded font-bold flex items-center gap-2">
+                            <Save size={14}/> Uložit limit
+                        </button>
                     </div>
                 </div>
                 
@@ -589,7 +617,7 @@ export const Admin: React.FC = () => {
                 <div className="bg-white p-6 rounded-2xl border shadow-sm">
                     <h2 className="text-xl font-bold mb-6">{t('admin.payment_methods')}</h2>
                     <div className="space-y-4">
-                    {settings.paymentMethods.map((pm, idx) => (
+                    {localSettings.paymentMethods.map((pm, idx) => (
                         <div key={pm.id} className="flex items-center justify-between p-4 border rounded-xl bg-gray-50">
                         <div className="flex-1 mr-4">
                             <div className="flex items-center gap-2 mb-1">
@@ -600,14 +628,19 @@ export const Admin: React.FC = () => {
                         </div>
                         <label className="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" className="sr-only peer" checked={pm.enabled} onChange={e => {
-                                const newMethods = [...settings.paymentMethods];
+                                const newMethods = [...localSettings.paymentMethods];
                                 newMethods[idx].enabled = e.target.checked;
-                                updateSettings({...settings, paymentMethods: newMethods});
+                                setLocalSettings({...localSettings, paymentMethods: newMethods});
                             }} />
                             <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
                         </label>
                         </div>
                     ))}
+                    </div>
+                    <div className="mt-6 pt-4 border-t">
+                        <button onClick={savePaymentSettings} className="w-full bg-primary text-white px-6 py-3 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-gray-800 transition">
+                            <Save size={18}/> {t('admin.save_changes')}
+                        </button>
                     </div>
                 </div>
                 </div>
@@ -719,11 +752,18 @@ export const Admin: React.FC = () => {
                     {sortedCategories.map(cat => (
                         <div key={cat.id}>
                         <label className="text-xs font-bold text-gray-400 block mb-1">{cat.name}</label>
-                        <input type="number" className="w-full border rounded p-2" value={settings.defaultCapacities[cat.id]} onChange={e => updateSettings({...settings, defaultCapacities: {...settings.defaultCapacities, [cat.id]: Number(e.target.value)}})} />
+                        <input 
+                            type="number" 
+                            className="w-full border rounded p-2" 
+                            value={localSettings.defaultCapacities[cat.id]} 
+                            onChange={e => setLocalSettings({...localSettings, defaultCapacities: {...localSettings.defaultCapacities, [cat.id]: Number(e.target.value)}})} 
+                        />
                         </div>
                     ))}
                     </div>
-                    <button onClick={() => updateSettings(settings)} className="mt-4 bg-primary text-white px-4 py-2 rounded text-xs font-bold">Uložit globální limity</button>
+                    <button onClick={saveGlobalLimits} className="mt-4 bg-primary text-white px-6 py-3 rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-gray-800 transition shadow-lg">
+                        <Save size={16}/> Uložit globální limity
+                    </button>
                 </div>
 
                 <div className="bg-white p-6 rounded-2xl border shadow-sm">
@@ -754,26 +794,26 @@ export const Admin: React.FC = () => {
                 <h2 className="text-xl font-bold mb-6">{t('admin.company_data')}</h2>
                 <form onSubmit={saveOperator} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Název</label><input className="w-full border rounded p-2" value={settings.companyDetails.name} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, name: e.target.value}})} /></div>
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Email</label><input className="w-full border rounded p-2" value={settings.companyDetails.email} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, email: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Název</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.name} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, name: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Email</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.email} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, email: e.target.value}})} /></div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Telefon</label><input className="w-full border rounded p-2" value={settings.companyDetails.phone} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, phone: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Telefon</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.phone} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, phone: e.target.value}})} /></div>
                     <div><label className="text-xs font-bold text-gray-400 block mb-1">Web/Jiné</label><input className="w-full border rounded p-2" disabled value="www.4gracie.cz" /></div>
                     </div>
                     <hr className="border-gray-100" />
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Ulice</label><input className="w-full border rounded p-2" value={settings.companyDetails.street} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, street: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Ulice</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.street} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, street: e.target.value}})} /></div>
                     <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Město</label><input className="w-full border rounded p-2" value={settings.companyDetails.city} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, city: e.target.value}})} /></div>
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">PSČ</label><input className="w-full border rounded p-2" value={settings.companyDetails.zip} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, zip: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Město</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.city} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, city: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">PSČ</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.zip} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, zip: e.target.value}})} /></div>
                     </div>
                     <hr className="border-gray-100" />
                     <div className="grid grid-cols-2 gap-4">
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">IČ</label><input className="w-full border rounded p-2" value={settings.companyDetails.ic} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, ic: e.target.value}})} /></div>
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">DIČ</label><input className="w-full border rounded p-2" value={settings.companyDetails.dic} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, dic: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">IČ</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.ic} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, ic: e.target.value}})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">DIČ</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.dic} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, dic: e.target.value}})} /></div>
                     </div>
-                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Číslo účtu</label><input className="w-full border rounded p-2" value={settings.companyDetails.bankAccount} onChange={e => updateSettings({...settings, companyDetails: {...settings.companyDetails, bankAccount: e.target.value}})} /></div>
-                    <div className="pt-4"><button type="submit" className="bg-primary text-white px-6 py-2 rounded-lg font-bold shadow-lg">Uložit změny</button></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">Číslo účtu</label><input className="w-full border rounded p-2" value={localSettings.companyDetails.bankAccount} onChange={e => setLocalSettings({...localSettings, companyDetails: {...localSettings.companyDetails, bankAccount: e.target.value}})} /></div>
+                    <div className="pt-4"><button type="submit" className="bg-primary text-white px-6 py-3 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-gray-800 transition"><Save size={18}/> Uložit změny</button></div>
                 </form>
                 </div>
             )}
