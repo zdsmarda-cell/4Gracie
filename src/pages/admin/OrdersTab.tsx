@@ -125,7 +125,7 @@ export const OrdersTab: React.FC = () => {
                     <span className="text-[10px] font-bold text-primary mr-3">{t('admin.orders')}: {selectedOrders.length}</span>
                     <select className="text-[10px] border rounded bg-white p-1 mr-2" onChange={e => handleBulkStatusChange(e.target.value as OrderStatus)}>
                         <option value="">{t('admin.status_update')}...</option>
-                        {Object.values(OrderStatus).map(s => <option key={s as string} value={s}>{t(`status.${s}`)}</option>)}
+                        {Object.values(OrderStatus).map(s => <option key={s as string} value={s as string}>{t(`status.${s}`)}</option>)}
                     </select>
                     </div>
                     <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none bg-white border px-3 py-1.5 rounded-lg hover:bg-gray-50">
@@ -157,7 +157,7 @@ export const OrdersTab: React.FC = () => {
                     <label className="text-xs font-bold text-gray-400 block mb-1">Stav</label>
                     <select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.status} onChange={e => setOrderFilters({...orderFilters, status: e.target.value})}>
                         <option value="">Všechny stavy</option>
-                        {Object.values(OrderStatus).map(s => <option key={s as string} value={s}>{t(`status.${s}`)}</option>)}
+                        {Object.values(OrderStatus).map(s => <option key={s as string} value={s as string}>{t(`status.${s}`)}</option>)}
                     </select>
                 </div>
                 <div className="md:col-span-1">

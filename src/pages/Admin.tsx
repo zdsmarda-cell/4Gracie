@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { 
     Category, PackagingType, DayConfig, 
@@ -19,19 +19,22 @@ export const Admin: React.FC = () => {
     const { 
         dataSource, setDataSource, orders, products, dayConfigs, settings, 
         t, updateSettings, 
-        updateDayConfig, 
+        updateDayConfig, removeDayConfig,
         formatDate, removeDiacritics, getDailyLoad 
     } = useStore();
 
     const [activeTab, setActiveTab] = useState('orders');
     
-    // Legacy simple states for small tabs kept inline to avoid too many files, or could be moved later
+    // States for inline tabs (Categories, Packaging, Capacities)
     const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
+    
     const [isPackagingModalOpen, setIsPackagingModalOpen] = useState(false);
     const [editingPackaging, setEditingPackaging] = useState<Partial<PackagingType> | null>(null);
+    
     const [isDayConfigModalOpen, setIsDayConfigModalOpen] = useState(false);
     const [editingDayConfig, setEditingDayConfig] = useState<Partial<DayConfig> | null>(null);
+    
     const [showLoadHistory, setShowLoadHistory] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState<{type: string, id: string, name?: string} | null>(null);
 
@@ -107,12 +110,15 @@ export const Admin: React.FC = () => {
         alert('Nastavení uloženo.');
     };
 
-    React.useEffect(() => {
+    useEffect(() => {
         if (confirmDelete) {
             if (confirm(`Opravdu smazat ${confirmDelete.name || 'položku'}?`)) {
                 if (confirmDelete.type === 'packaging') {
                     const newPkg = settings.packaging.types.filter(p => p.id !== confirmDelete.id);
                     updateSettings({...settings, packaging: {...settings.packaging, types: newPkg}});
+                }
+                if (confirmDelete.type === 'exception') {
+                    removeDayConfig(confirmDelete.id);
                 }
             }
             setConfirmDelete(null);
@@ -124,6 +130,7 @@ export const Admin: React.FC = () => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                 <h1 className="text-3xl font-serif font-bold text-gray-800 tracking-tight">{t('admin.dashboard')}</h1>
                 <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl shadow-sm overflow-x-auto">
+                {/* Note: 'backup' is removed from this list */}
                 {(['orders', 'users', 'load', 'products', 'categories', 'delivery', 'pickup', 'capacities', 'discounts', 'packaging', 'operator', 'payments', 'db'] as const).map(tab => (
                     <button 
                     key={tab}
@@ -144,7 +151,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'delivery' && <DeliveryTab />}
             {activeTab === 'pickup' && <PickupTab />}
 
-            {/* --- INLINE TABS (Kept here for now to avoid creating too many files at once) --- */}
+            {/* --- INLINE TABS (Categories, Load, Packaging, Operator, Capacities, Payments, DB) --- */}
 
             {activeTab === 'db' && (
                 <div className="animate-fade-in space-y-8">
@@ -381,7 +388,7 @@ export const Admin: React.FC = () => {
                         </div>
                         <div className="flex gap-2">
                             <button onClick={() => { setEditingDayConfig(c); setIsDayConfigModalOpen(true); }} className="p-1 hover:bg-white rounded"><Edit size={16}/></button>
-                            <button onClick={() => {if(confirm('Smazat výjimku?')) updateDayConfig({...c, date: 'DELETE'});}} className="p-1 hover:bg-white rounded text-red-500"><Trash2 size={16}/></button>
+                            <button onClick={() => setConfirmDelete({type: 'exception', id: c.date})} className="p-1 hover:bg-white rounded text-red-500"><Trash2 size={16}/></button>
                         </div>
                         </div>
                     ))}
@@ -415,6 +422,8 @@ export const Admin: React.FC = () => {
                 </div>
                 </div>
             )}
+
+            {/* --- MODALS --- */}
 
             {isCategoryModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">

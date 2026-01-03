@@ -4,12 +4,12 @@ import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { StoreProvider, useStore } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { AuthModal } from './components/AuthModal';
-// Explicit relative paths to ensure resolution works
-import { Menu } from './src/pages/Menu';
-import { Cart } from './src/pages/Cart';
-import { Admin } from './src/pages/Admin';
-import { Profile } from './src/pages/Profile';
-import { ResetPassword } from './src/pages/ResetPassword';
+// IMPORTS NOW RELATIVE TO SRC/
+import { Menu } from './pages/Menu';
+import { Cart } from './pages/Cart';
+import { Admin } from './pages/Admin';
+import { Profile } from './pages/Profile';
+import { ResetPassword } from './pages/ResetPassword';
 import { X, Info, Truck, AlertCircle, CheckCircle, Loader2, Store } from 'lucide-react';
 
 // Login Overlay Mock (for demo purposes) - Updated to use AuthModal trigger for consistency
