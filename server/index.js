@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import nodemailer from 'nodemailer';
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Fix for __dirname in ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -354,6 +355,66 @@ app.get('/api/health', async (req, res) => {
     lastDbError: lastDbError,
     smtpConfigured: !!process.env.SMTP_HOST
   });
+});
+
+// --- TRANSLATION ENDPOINT ---
+app.post('/api/admin/translate', async (req, res) => {
+    try {
+        const { sourceData } = req.body;
+        if (!process.env.API_KEY) {
+            console.error('Missing API_KEY in env');
+            return res.status(500).json({ error: 'API_KEY not configured on server' });
+        }
+        
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
+        const prompt = `
+          Translate the following JSON object values from Czech (CS) to English (EN) and German (DE).
+          Return a JSON object with 'en' and 'de' keys, each containing the translated key-value pairs.
+          Keep the tone professional and suitable for a catering e-shop.
+          
+          Source Data:
+          ${JSON.stringify(sourceData)}
+        `;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                en: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    label: { type: Type.STRING },
+                  }
+                },
+                de: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    label: { type: Type.STRING },
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        if (response.text) {
+             res.json({ success: true, translations: JSON.parse(response.text) });
+        } else {
+             res.json({ success: false, translations: {} });
+        }
+    } catch (e) {
+        console.error("Translation Error:", e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // --- MANUAL SETUP ENDPOINT ---

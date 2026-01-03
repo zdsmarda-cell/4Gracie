@@ -37,9 +37,6 @@ export default defineConfig({
             if (id.includes('jspdf') || id.includes('pdfmake')) {
               return 'pdf-libs';
             }
-            if (id.includes('@google/genai')) {
-              return 'genai-lib';
-            }
             if (id.includes('lucide-react')) {
               return 'ui-icons';
             }
