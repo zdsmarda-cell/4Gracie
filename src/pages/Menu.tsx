@@ -121,7 +121,7 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
 };
 
 export const Menu: React.FC = () => {
-  const { t, addToCart, products, settings } = useStore();
+  const { t, tData, addToCart, products, settings } = useStore();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [excludeAllergens, setExcludeAllergens] = useState<number[]>([]);
   const [showAllergenFilter, setShowAllergenFilter] = useState(false);
@@ -195,7 +195,7 @@ export const Menu: React.FC = () => {
                   onClick={() => setSelectedCategory(cat.id)}
                   className={`px-4 py-2 rounded-full text-sm font-medium transition ${selectedCategory === cat.id ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                 >
-                  {cat.name}
+                  {tData(cat, 'name')}
                 </button>
               ))}
             </div>
@@ -252,10 +252,10 @@ export const Menu: React.FC = () => {
 
               <div className="p-6 flex flex-col flex-grow">
                 <div className="flex justify-between items-start mb-2">
-                  <h3 className="text-xl font-serif font-bold text-gray-900">{product.name}</h3>
+                  <h3 className="text-xl font-serif font-bold text-gray-900">{tData(product, 'name')}</h3>
                   <span className="text-lg font-bold text-accent whitespace-nowrap ml-2">{product.price} Kč</span>
                 </div>
-                <p className="text-gray-500 text-sm mb-4 line-clamp-2 flex-grow">{product.description}</p>
+                <p className="text-gray-500 text-sm mb-4 line-clamp-2 flex-grow">{tData(product, 'description')}</p>
                 
                 <div className="flex flex-col space-y-3 mt-auto">
                   <div className="flex items-center justify-between text-[11px] text-gray-400 font-medium">
@@ -265,7 +265,7 @@ export const Menu: React.FC = () => {
                     </div>
                     <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                       <Clock size={14} className="mr-1.5 text-gray-300" />
-                      Spotřebujte do: {product.shelfLifeDays} d.
+                      {t('common.shelf_life')}: {product.shelfLifeDays} d.
                     </div>
                   </div>
                   <button 
@@ -302,13 +302,13 @@ export const Menu: React.FC = () => {
             <div className="flex justify-between items-center mb-6">
               <h3 className="font-bold text-lg text-gray-900 flex items-center">
                 <AlertCircle className="text-orange-500 mr-2" size={20} />
-                Alergeny
+                {t('common.allergens')}
               </h3>
               <button onClick={() => setSelectedAllergenProduct(null)} className="p-2 hover:bg-gray-100 rounded-full transition text-gray-500"><X size={20}/></button>
             </div>
             
             <div className="mb-6">
-                <h4 className="font-serif font-bold text-xl text-primary mb-1">{selectedAllergenProduct.name}</h4>
+                <h4 className="font-serif font-bold text-xl text-primary mb-1">{tData(selectedAllergenProduct, 'name')}</h4>
                 <p className="text-xs text-gray-500">Obsahuje následující alergeny:</p>
             </div>
             

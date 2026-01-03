@@ -39,6 +39,16 @@ export enum DiscountType {
   FIXED = 'fixed'
 }
 
+// Support for translations in data objects
+export interface LocalizedContent {
+  [key: string]: string | undefined; 
+}
+
+export interface Translations {
+  en?: LocalizedContent;
+  de?: LocalizedContent;
+}
+
 export interface Address {
   id: string;
   name: string;
@@ -67,6 +77,7 @@ export interface DeliveryRegion {
   deliveryTimeStart?: string; // Format HH:MM
   deliveryTimeEnd?: string;   // Format HH:MM
   exceptions?: RegionException[];
+  translations?: Translations; // Added translations
 }
 
 export interface OpeningHoursDay {
@@ -84,6 +95,7 @@ export interface PickupLocation {
   enabled: boolean;
   openingHours: { [key: number]: OpeningHoursDay }; // 0 = Sunday, 1 = Monday, ... 6 = Saturday
   exceptions?: RegionException[];
+  translations?: Translations; // Added translations
 }
 
 export interface DiscountCode {
@@ -99,7 +111,7 @@ export interface DiscountCode {
   usageCount: number;
   totalSaved: number;
   enabled: boolean;
-  applicableCategories?: string[]; // Changed from ProductCategory[] to string[]
+  applicableCategories?: string[]; 
 }
 
 export interface AppliedDiscount {
@@ -119,6 +131,7 @@ export interface PackagingType {
   volume: number;
   price: number;
   enabled?: boolean;
+  translations?: Translations; // Added translations
 }
 
 export interface Category {
@@ -126,6 +139,7 @@ export interface Category {
   name: string; // Display name
   order: number;
   enabled: boolean;
+  translations?: Translations; // Added translations
 }
 
 export interface Product {
@@ -134,7 +148,7 @@ export interface Product {
   description: string;
   price: number;
   unit: 'ks' | 'kg';
-  category: string; // Changed from ProductCategory to string
+  category: string; 
   images: string[];
   allergens: number[];
   leadTimeDays: number;
@@ -151,6 +165,7 @@ export interface Product {
   commentsAllowed: boolean;
   vatRateInner: number;
   vatRateTakeaway: number;
+  translations?: Translations; // Added translations
 }
 
 export interface CartItem extends Product {
@@ -210,16 +225,17 @@ export interface Order {
   invoiceUrl?: string;
   companyDetailsSnapshot?: CompanyDetails;
   language: Language;
-  pickupLocationId?: string; // New field
+  pickupLocationId?: string; 
 }
 
-export type CategoryCapacities = Record<string, number>; // Changed key from ProductCategory to string
+export type CategoryCapacities = Record<string, number>; 
 
 export interface PaymentMethodConfig {
   id: PaymentMethod;
   label: string;
   description: string;
   enabled: boolean;
+  translations?: Translations; // Added translations
 }
 
 export interface DayConfig {
@@ -229,12 +245,12 @@ export interface DayConfig {
 }
 
 export interface GlobalSettings {
-  categories: Category[]; // NEW FIELD
+  categories: Category[]; 
   defaultCapacities: CategoryCapacities;
   companyDetails: CompanyDetails;
   paymentMethods: PaymentMethodConfig[];
   deliveryRegions: DeliveryRegion[];
-  pickupLocations: PickupLocation[]; // NEW FIELD
+  pickupLocations: PickupLocation[]; 
   packaging: {
     types: PackagingType[];
     freeFrom: number;

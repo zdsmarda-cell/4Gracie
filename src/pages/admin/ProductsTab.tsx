@@ -3,13 +3,15 @@ import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { ALLERGENS } from '../../constants';
-import { Plus, Edit, Trash2, ImageIcon, Check, X } from 'lucide-react';
+import { generateTranslations } from '../../utils/aiTranslator';
+import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages } from 'lucide-react';
 
 export const ProductsTab: React.FC = () => {
     const { products, t, addProduct, updateProduct, deleteProduct, settings } = useStore();
     const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<{type: string, id: string, name?: string} | null>(null);
+    const [isTranslating, setIsTranslating] = useState(false);
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
@@ -17,6 +19,7 @@ export const ProductsTab: React.FC = () => {
     const saveProduct = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingProduct) return;
+        setIsTranslating(true);
         const prod = { ...editingProduct } as Product;
         if (!prod.id) prod.id = Date.now().toString();
         
@@ -29,8 +32,16 @@ export const ProductsTab: React.FC = () => {
         prod.workload = Number(prod.workload ?? 0);
         prod.workloadOverhead = Number(prod.workloadOverhead ?? 0);
         
+        // Generate Translations
+        const translations = await generateTranslations({ 
+            name: prod.name, 
+            description: prod.description 
+        });
+        prod.translations = translations;
+
         if (products.some(p => p.id === prod.id)) await updateProduct(prod);
         else await addProduct(prod);
+        setIsTranslating(false);
         setIsProductModalOpen(false);
     };
 
@@ -79,7 +90,15 @@ export const ProductsTab: React.FC = () => {
                         <td className="px-6 py-4">
                         {p.images?.[0] ? <img src={p.images[0]} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
                         </td>
-                        <td className="px-6 py-4 font-bold">{p.name}</td>
+                        <td className="px-6 py-4 font-bold">
+                            {p.name}
+                            {p.translations && (
+                                <div className="flex gap-1 mt-1">
+                                    <span className="text-[8px] px-1 bg-blue-100 rounded text-blue-700">EN</span>
+                                    <span className="text-[8px] px-1 bg-yellow-100 rounded text-yellow-700">DE</span>
+                                </div>
+                            )}
+                        </td>
                         <td className="px-6 py-4">{getCategoryName(p.category)}</td>
                         <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
                         <td className="px-6 py-4 text-center">{p.visibility?.online ? <Check size={16} className="inline text-green-500"/> : <X size={16} className="inline text-gray-300"/>}</td>
@@ -179,7 +198,9 @@ export const ProductsTab: React.FC = () => {
 
                     <div className="flex gap-2 pt-4 border-t">
                     <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
-                    <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('common.save')}</button>
+                    <button type="submit" disabled={isTranslating} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
+                        {isTranslating ? <><Languages size={14} className="mr-2 animate-pulse"/> Překládám...</> : t('common.save')}
+                    </button>
                     </div>
                 </form>
                 </div>

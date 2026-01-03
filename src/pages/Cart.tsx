@@ -7,7 +7,7 @@ import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegio
 import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Cart: React.FC = () => {
-  const { cart, removeFromCart, updateCartItemQuantity, t, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
+  const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
@@ -137,7 +137,7 @@ export const Cart: React.FC = () => {
     if (result.success) {
       setDiscountInput('');
     } else {
-      setDiscountError(result.error || 'Neplatný kód.');
+      setDiscountError(result.error || t('discount.invalid'));
     }
   };
 
@@ -163,7 +163,7 @@ export const Cart: React.FC = () => {
       deliveryType,
       deliveryDate: date,
       deliveryAddress: deliveryType === DeliveryType.PICKUP 
-        ? `Osobní odběr: ${pickupLocation?.name}, ${pickupLocation?.street}, ${pickupLocation?.city}` 
+        ? `${t('cart.pickup')}: ${pickupLocation?.name}, ${pickupLocation?.street}, ${pickupLocation?.city}` 
         : `${selectedAddr?.name}\n${selectedAddr?.street}\n${selectedAddr?.city}\n${selectedAddr?.zip}\nTel: ${selectedAddr?.phone}`,
       billingAddress: `${selectedBilling?.name}, ${selectedBilling?.street}, ${selectedBilling?.city}`,
       status: OrderStatus.CREATED,
@@ -221,8 +221,8 @@ export const Cart: React.FC = () => {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center animate-fade-in">
          <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6"><CheckCircle size={48} /></div>
-         <h1 className="text-3xl font-serif font-bold mb-2">Děkujeme za objednávku!</h1>
-         <p className="text-gray-500 mb-8">Vaše číslo objednávky je <span className="font-bold text-gray-900">#{submittedOrder.id}</span>.</p>
+         <h1 className="text-3xl font-serif font-bold mb-2">{t('cart.thank_you')}</h1>
+         <p className="text-gray-500 mb-8">{t('cart.order_number')} <span className="font-bold text-gray-900">#{submittedOrder.id}</span>.</p>
          
          {submittedOrder.paymentMethod === PaymentMethod.QR && (
            <div className="bg-white p-6 rounded-2xl border shadow-sm max-w-sm mx-auto mb-8 animate-in zoom-in-95 duration-500">
@@ -232,18 +232,18 @@ export const Cart: React.FC = () => {
                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`SPD*1.0*${acc}*AM:${total.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:${msg}`)}`} alt="QR Code" className="w-40 h-40" />
              </div>
              <div className="text-xs text-gray-500 space-y-1">
-               <p>Číslo účtu: <span className="font-bold text-gray-700">{settings.companyDetails.bankAccount}</span></p>
-               <p>Variabilní symbol: <span className="font-bold text-gray-700">{submittedOrder.id}</span></p>
-               <p>Částka: <span className="font-bold text-gray-700">{total} Kč</span></p>
+               <p>{t('common.bank_acc')}: <span className="font-bold text-gray-700">{settings.companyDetails.bankAccount}</span></p>
+               <p>Var. symbol: <span className="font-bold text-gray-700">{submittedOrder.id}</span></p>
+               <p>{t('common.price')}: <span className="font-bold text-gray-700">{total} Kč</span></p>
              </div>
            </div>
          )}
-         <button onClick={() => navigate('/')} className="bg-primary text-white py-4 px-10 rounded-xl font-bold shadow-lg">Zpět do menu</button>
+         <button onClick={() => navigate('/')} className="bg-primary text-white py-4 px-10 rounded-xl font-bold shadow-lg">{t('cart.back_to_menu')}</button>
       </div>
     );
   }
 
-  if (cart.length === 0) return <div className="text-center py-24"><ShoppingBag size={48} className="mx-auto text-gray-200 mb-4"/><h2 className="text-xl font-bold text-gray-400">Váš košík je prázdný</h2></div>;
+  if (cart.length === 0) return <div className="text-center py-24"><ShoppingBag size={48} className="mx-auto text-gray-200 mb-4"/><h2 className="text-xl font-bold text-gray-400">{t('cart.empty')}</h2></div>;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-12">
@@ -256,7 +256,7 @@ export const Cart: React.FC = () => {
                    <div className="flex items-center gap-4 flex-1">
                      <img src={item.images[0]} className="w-16 h-16 object-cover rounded-lg shadow-sm" />
                      <div className="flex-1">
-                       <div className="font-bold text-sm text-gray-800">{item.name}</div>
+                       <div className="font-bold text-sm text-gray-800">{tData(item, 'name')}</div>
                        {item.minOrderQuantity && item.minOrderQuantity > 1 && (
                          <div className="text-[10px] text-gray-400 mt-1">{t('common.min_qty')}: {item.minOrderQuantity}</div>
                        )}
@@ -286,10 +286,10 @@ export const Cart: React.FC = () => {
                {/* Auth check... */}
                {!user && (
                   <div className="bg-white p-8 rounded-2xl border shadow-sm text-center space-y-4">
-                     <h3 className="font-serif font-bold text-xl">Pro dokončení objednávky se přihlaste</h3>
-                     <p className="text-sm text-gray-500">Můžete se přihlásit nebo pokračovat jako host (registrace).</p>
+                     <h3 className="font-serif font-bold text-xl">{t('cart.login_required')}</h3>
+                     <p className="text-sm text-gray-500">{t('cart.login_desc')}</p>
                      <div className="flex justify-center gap-4">
-                        <button onClick={openAuthModal} className="px-6 py-2 bg-primary text-white rounded-lg font-bold">Přihlásit / Registrovat</button>
+                        <button onClick={openAuthModal} className="px-6 py-2 bg-primary text-white rounded-lg font-bold">{t('cart.login_btn')}</button>
                      </div>
                   </div>
                )}
@@ -300,23 +300,23 @@ export const Cart: React.FC = () => {
                     <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg flex items-start">
                       <Ban className="text-red-500 mr-3 flex-shrink-0" size={24} />
                       <div>
-                        <h4 className="font-bold text-red-700">Váš účet byl zablokován</h4>
-                        <p className="text-xs text-red-600 mt-1">Nemůžete dokončit objednávku. Pro více informací kontaktujte podporu.</p>
+                        <h4 className="font-bold text-red-700">{t('cart.blocked_alert')}</h4>
+                        <p className="text-xs text-red-600 mt-1">{t('cart.blocked_desc')}</p>
                       </div>
                     </div>
                   )}
 
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
-                    <h3 className="font-bold mb-4 flex items-center"><Truck className="mr-2 text-accent" size={20}/> Způsob doručení</h3>
+                    <h3 className="font-bold mb-4 flex items-center"><Truck className="mr-2 text-accent" size={20}/> {t('cart.delivery_pickup')}</h3>
                     <div className={`grid ${enabledRegions.length > 0 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} gap-4`}>
                        <button onClick={() => setDeliveryType(DeliveryType.PICKUP)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.PICKUP ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
-                          <div className="font-bold text-sm mb-1">Osobní odběr</div>
-                          <div className="text-xs text-gray-500">Zdarma na pobočce</div>
+                          <div className="font-bold text-sm mb-1">{t('cart.pickup')}</div>
+                          <div className="text-xs text-gray-500">{t('cart.pickup_free')}</div>
                        </button>
                        {enabledRegions.length > 0 && (
                          <button onClick={() => setDeliveryType(DeliveryType.DELIVERY)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.DELIVERY ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
-                            <div className="font-bold text-sm mb-1">Rozvoz 4Gracie</div>
-                            <div className="text-xs text-gray-500">Od {Math.min(...enabledRegions.map(r => r.price))} Kč</div>
+                            <div className="font-bold text-sm mb-1">{t('cart.delivery_courier')}</div>
+                            <div className="text-xs text-gray-500">{t('cart.delivery_from', { price: Math.min(...enabledRegions.map(r => r.price)).toString() })}</div>
                          </button>
                        )}
                     </div>
@@ -326,7 +326,7 @@ export const Cart: React.FC = () => {
                        <div className="mt-3 p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700 flex items-center animate-in slide-in-from-top-2">
                           <Clock size={16} className="mr-2 flex-shrink-0" />
                           <span>
-                             Předpokládané okno rozvozu: <strong>
+                             {t('cart.time_window_delivery')}: <strong>
                                {date ? (regionInfo.timeStart || region.deliveryTimeStart) : region.deliveryTimeStart} 
                                {' - '} 
                                {date ? (regionInfo.timeEnd || region.deliveryTimeEnd) : region.deliveryTimeEnd}
@@ -338,7 +338,7 @@ export const Cart: React.FC = () => {
                     {/* PICKUP LOCATION SELECTOR */}
                     {deliveryType === DeliveryType.PICKUP && (
                         <div className="mt-4 pt-4 border-t animate-in slide-in-from-top-2">
-                            <label className="text-xs font-bold uppercase text-gray-400 mb-2 block">Vyberte odběrné místo</label>
+                            <label className="text-xs font-bold uppercase text-gray-400 mb-2 block">{t('cart.select_pickup')}</label>
                             {activePickupLocations.length > 0 ? (
                                 <div className="space-y-2">
                                     {activePickupLocations.map(loc => (
@@ -356,7 +356,7 @@ export const Cart: React.FC = () => {
                                     ))}
                                 </div>
                             ) : (
-                                <p className="text-red-500 text-sm">Žádná odběrná místa nejsou k dispozici.</p>
+                                <p className="text-red-500 text-sm">{t('cart.no_pickup_available')}</p>
                             )}
                             
                             {/* Pickup Time Window Display */}
@@ -364,10 +364,10 @@ export const Cart: React.FC = () => {
                                 <div className="mt-3 p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700 flex items-center animate-in slide-in-from-top-2">
                                     <Clock size={16} className="mr-2 flex-shrink-0" />
                                     <span>
-                                        Otevírací doba: <strong>
+                                        {t('cart.time_window_pickup')}: <strong>
                                             {date 
-                                                ? (pickupInfo.isOpen ? `${pickupInfo.timeStart} - ${pickupInfo.timeEnd}` : 'ZAVŘENO') 
-                                                : 'Vyberte datum'}
+                                                ? (pickupInfo.isOpen ? `${pickupInfo.timeStart} - ${pickupInfo.timeEnd}` : t('error.day_closed')) 
+                                                : t('cart.date_selection')}
                                         </strong>
                                     </span>
                                 </div>
@@ -377,7 +377,7 @@ export const Cart: React.FC = () => {
 
                     {deliveryType === DeliveryType.DELIVERY && enabledRegions.length > 0 && (
                       <div className="mt-4 pt-4 border-t">
-                        <div className="flex justify-between items-center mb-2"><label className="text-xs font-bold uppercase text-gray-400">Doručovací adresa</label><button onClick={() => {setModalType('delivery'); setEditingAddr({});}} className="text-xs font-bold text-accent">+ Nová adresa</button></div>
+                        <div className="flex justify-between items-center mb-2"><label className="text-xs font-bold uppercase text-gray-400">{t('cart.select_delivery_address')}</label><button onClick={() => {setModalType('delivery'); setEditingAddr({});}} className="text-xs font-bold text-accent">+ {t('cart.new_address')}</button></div>
                         <div className="space-y-2">
                            {user.deliveryAddresses.map(addr => {
                              const reg = getDeliveryRegion(addr.zip);
@@ -387,7 +387,7 @@ export const Cart: React.FC = () => {
                                     <div className="font-bold text-sm">{addr.name}</div>
                                     <div className="text-xs text-gray-500">{addr.street}, {addr.city}, {addr.zip}</div>
                                     <div className="text-[10px] text-gray-400 mt-1">{addr.phone}</div>
-                                    {!reg && <div className="text-[10px] text-red-500 font-bold mt-1">Na tuto adresu nerozvážíme</div>}
+                                    {!reg && <div className="text-[10px] text-red-500 font-bold mt-1">{t('cart.delivery_unavailable')}</div>}
                                   </div>
                                   <div className="flex items-center gap-3">
                                     <button 
@@ -401,14 +401,14 @@ export const Cart: React.FC = () => {
                                </div>
                              );
                            })}
-                           {user.deliveryAddresses.length === 0 && <p className="text-xs text-gray-400 italic">Nemáte uložené žádné adresy.</p>}
+                           {user.deliveryAddresses.length === 0 && <p className="text-xs text-gray-400 italic">{t('cart.no_saved_addresses')}</p>}
                         </div>
                       </div>
                     )}
                   </div>
                   
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
-                    <h3 className="font-bold mb-4 flex items-center"><Activity className="mr-2 text-accent" size={20}/> Datum doručení / vyzvednutí</h3>
+                    <h3 className="font-bold mb-4 flex items-center"><Activity className="mr-2 text-accent" size={20}/> {t('cart.date_selection')}</h3>
                     
                     {/* Replaced with Imported CustomCalendar */}
                     <CustomCalendar 
@@ -426,7 +426,7 @@ export const Cart: React.FC = () => {
                     {((region && regionInfo.isException && regionInfo.isOpen) || (pickupLocation && pickupInfo.isException && pickupInfo.isOpen)) && (
                       <div className="mt-4 p-3 bg-blue-50 text-blue-700 rounded-lg text-xs flex items-start">
                         <Clock size={16} className="mr-2 mt-0.5 flex-shrink-0"/>
-                        <span>Pro vybraný den ({formatDate(date)}) je upravený čas {deliveryType === DeliveryType.PICKUP ? 'otevírací doby' : 'rozvozu'}.</span>
+                        <span>{t('cart.date_modified_time', { date: formatDate(date), type: deliveryType === DeliveryType.PICKUP ? t('cart.time_window_pickup') : t('cart.delivery_fee') })}</span>
                       </div>
                     )}
 
@@ -434,22 +434,28 @@ export const Cart: React.FC = () => {
                     {isDeliveryMethodInvalid && (
                       <div className="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-xs flex items-start">
                         <Ban size={16} className="mr-2 mt-0.5 flex-shrink-0"/>
-                        <span>{deliveryType === DeliveryType.PICKUP ? 'V tento den má výdejní místo zavřeno.' : 'V tento den se do vybraného regionu nerozváží.'}</span>
+                        <span>{deliveryType === DeliveryType.PICKUP ? t('cart.date_closed_pickup') : t('cart.date_closed_region')}</span>
                       </div>
                     )}
 
                     {availability?.status === 'exceeds' && (
                        <div className="mt-4 p-3 bg-orange-50 text-orange-700 rounded-lg text-xs flex items-start">
                          <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0"/>
-                         <span>Vaše objednávka překračuje zbývající kapacitu pro vybraný den. Zkuste jiný termín nebo upravte košík.</span>
+                         <span>{t('cart.capacity_exceeded')}</span>
+                       </div>
+                    )}
+                    {availability?.status === 'too_soon' && (
+                       <div className="mt-4 p-3 bg-orange-50 text-orange-700 rounded-lg text-xs flex items-start">
+                         <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0"/>
+                         <span>{t('error.too_soon')}</span>
                        </div>
                     )}
                   </div>
 
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <div className="flex justify-between items-center mb-4">
-                       <h3 className="font-bold flex items-center"><Building className="mr-2 text-accent" size={20}/> Fakturační údaje</h3>
-                       <button onClick={() => {setModalType('billing'); setEditingAddr({});}} className="text-xs font-bold text-accent">+ Nová</button>
+                       <h3 className="font-bold flex items-center"><Building className="mr-2 text-accent" size={20}/> {t('cart.billing_details')}</h3>
+                       <button onClick={() => {setModalType('billing'); setEditingAddr({});}} className="text-xs font-bold text-accent">+ {t('cart.new_address')}</button>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                        {user.billingAddresses.map(addr => (
@@ -457,7 +463,7 @@ export const Cart: React.FC = () => {
                             <div>
                               <div className="font-bold text-xs">{addr.name}</div>
                               <div className="text-[10px] text-gray-500">{addr.street}, {addr.city}</div>
-                              {addr.ic && <div className="text-[10px] text-gray-400">IČ: {addr.ic}</div>}
+                              {addr.ic && <div className="text-[10px] text-gray-400">{t('common.ic')}: {addr.ic}</div>}
                             </div>
                             <button 
                               onClick={(e) => { e.stopPropagation(); setEditingAddr(addr); setModalType('billing'); }} 
@@ -471,14 +477,14 @@ export const Cart: React.FC = () => {
                   </div>
 
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
-                    <h3 className="font-bold mb-4 flex items-center"><CreditCard className="mr-2 text-accent" size={20}/> Platba</h3>
+                    <h3 className="font-bold mb-4 flex items-center"><CreditCard className="mr-2 text-accent" size={20}/> {t('cart.payment_method')}</h3>
                     <div className="space-y-2">
                       {settings.paymentMethods.filter(m => m.enabled).map(method => (
                         <label key={method.id} className="flex items-center p-3 border rounded-xl cursor-pointer hover:bg-gray-50 transition">
                           <input type="radio" name="payment" className="text-accent focus:ring-accent" checked={paymentMethod === method.id} onChange={() => setPaymentMethod(method.id)} />
                           <div className="ml-3">
-                            <span className="block text-sm font-bold text-gray-900">{method.label}</span>
-                            <span className="block text-xs text-gray-500">{method.description}</span>
+                            <span className="block text-sm font-bold text-gray-900">{tData(method, 'label')}</span>
+                            <span className="block text-xs text-gray-500">{tData(method, 'description')}</span>
                           </div>
                         </label>
                       ))}
@@ -502,13 +508,13 @@ export const Cart: React.FC = () => {
 
         <div className="space-y-6">
            <div className="bg-white p-8 rounded-3xl border shadow-xl sticky top-24">
-              <h2 className="text-2xl font-serif font-bold mb-6 text-primary">Souhrn</h2>
+              <h2 className="text-2xl font-serif font-bold mb-6 text-primary">{t('cart.summary')}</h2>
               
               <div className="mb-6 space-y-3">
                 <div className="flex gap-2">
                   <input 
                     type="text" 
-                    placeholder="Slevový kód" 
+                    placeholder={t('cart.code_placeholder')}
                     className="flex-1 border rounded-lg p-2 text-xs uppercase font-bold focus:ring-accent outline-none"
                     value={discountInput}
                     onChange={e => setDiscountInput(e.target.value)}
@@ -534,18 +540,18 @@ export const Cart: React.FC = () => {
               </div>
 
               <div className="space-y-4 text-sm mb-6 border-b pb-6">
-                <div className="flex justify-between text-gray-500"><span>Zboží celkem</span><span className="font-bold text-gray-900">{itemsTotal} Kč</span></div>
-                {discountTotal > 0 && <div className="flex justify-between text-green-600 font-bold"><span>Uplatněné slevy</span><span>-{discountTotal} Kč</span></div>}
-                <div className="flex justify-between text-gray-500"><span>Doprava</span><span className="font-bold text-gray-900">{deliveryFee} Kč</span></div>
-                <div className="flex justify-between text-gray-500"><span>Balné</span><span className="font-bold text-gray-900">{packagingFee} Kč</span></div>
+                <div className="flex justify-between text-gray-500"><span>{t('cart.goods_total')}</span><span className="font-bold text-gray-900">{itemsTotal} Kč</span></div>
+                {discountTotal > 0 && <div className="flex justify-between text-green-600 font-bold"><span>{t('cart.discounts_applied')}</span><span>-{discountTotal} Kč</span></div>}
+                <div className="flex justify-between text-gray-500"><span>{t('cart.delivery_fee')}</span><span className="font-bold text-gray-900">{deliveryFee} Kč</span></div>
+                <div className="flex justify-between text-gray-500"><span>{t('cart.packaging_fee')}</span><span className="font-bold text-gray-900">{packagingFee} Kč</span></div>
               </div>
               <div className="flex justify-between items-end mb-8">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Celkem s DPH</span>
+                <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{t('cart.total_vat')}</span>
                 <span className="text-4xl font-bold text-accent tracking-tighter">{total} Kč</span>
               </div>
               
               {step === 1 && (
-                <button onClick={() => setStep(2)} disabled={hasValidationErrors} className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition uppercase text-xs tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">Pokračovat</button>
+                <button onClick={() => setStep(2)} disabled={hasValidationErrors} className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition uppercase text-xs tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">{t('cart.continue')}</button>
               )}
               
               {step === 2 && (
@@ -559,7 +565,7 @@ export const Cart: React.FC = () => {
                             onChange={e => setMarketingConsent(e.target.checked)} 
                             className="rounded text-accent mt-0.5" 
                         />
-                        <span>Souhlasím se zasíláním novinek a marketingových sdělení.</span>
+                        <span>{t('cart.marketing_consent')}</span>
                         </label>
                         
                         <label className={`flex items-start space-x-2 text-xs cursor-pointer p-2 rounded ${!termsConsent ? 'text-red-600 bg-red-50' : 'text-gray-600 hover:bg-gray-50'}`}>
@@ -570,7 +576,7 @@ export const Cart: React.FC = () => {
                             className="rounded text-accent mt-0.5" 
                         />
                         <span>
-                            Souhlasím se <Link to="/terms" target="_blank" className="font-bold underline hover:text-accent">Všeobecnými obchodními podmínkami</Link>.
+                            {t('cart.terms_consent')}
                         </span>
                         </label>
                     </div>
@@ -580,9 +586,9 @@ export const Cart: React.FC = () => {
                     onClick={handleSubmit} 
                     className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50 disabled:bg-gray-300 uppercase text-xs tracking-widest"
                   >
-                    {user?.isBlocked ? 'Účet blokován' : 'Odeslat objednávku'}
+                    {user?.isBlocked ? t('cart.account_blocked') : t('cart.submit_order')}
                   </button>
-                  <button onClick={() => setStep(1)} className="w-full text-gray-400 text-[10px] font-bold uppercase tracking-widest hover:text-gray-600">Zpět</button>
+                  <button onClick={() => setStep(1)} className="w-full text-gray-400 text-[10px] font-bold uppercase tracking-widest hover:text-gray-600">{t('cart.back')}</button>
                 </div>
               )}
            </div>
@@ -592,7 +598,7 @@ export const Cart: React.FC = () => {
       {modalType && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
           <form onSubmit={saveAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h2 className="text-xl font-bold">{editingAddr?.id ? 'Upravit adresu' : 'Nová adresa'}</h2>
+            <h2 className="text-xl font-bold">{editingAddr?.id ? t('common.edit') : t('cart.new_address')}</h2>
             
             {addressError && (
                 <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-xs font-bold flex items-center">
@@ -601,12 +607,12 @@ export const Cart: React.FC = () => {
             )}
 
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Jméno / Firma</label>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.name')}</label>
               <input placeholder={t('common.name')} className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.name || ''} onChange={e => setEditingAddr({...editingAddr, name: e.target.value})} />
             </div>
             
             <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ulice a č.p.</label>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.street')}</label>
               <input placeholder={t('common.street')} className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.street || ''} onChange={e => setEditingAddr({...editingAddr, street: e.target.value})} />
             </div>
 
@@ -638,7 +644,7 @@ export const Cart: React.FC = () => {
                  </div>
                </div>
             )}
-            <div className="flex gap-2 pt-4"><button type="button" onClick={() => setModalType(null)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-xs uppercase">Zrušit</button><button type="submit" className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-xs uppercase shadow-lg">Uložit</button></div>
+            <div className="flex gap-2 pt-4"><button type="button" onClick={() => setModalType(null)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-xs uppercase">{t('common.cancel')}</button><button type="submit" className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-xs uppercase shadow-lg">{t('common.save')}</button></div>
           </form>
         </div>
       )}

@@ -7,10 +7,11 @@ import {
     OrderStatus, User, DiscountType, Order, DeliveryType, GlobalSettings
 } from '../types';
 import { ALLERGENS } from '../constants';
+import { generateTranslations } from '../utils/aiTranslator';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, Filter, AlertTriangle, Info, Calculator, Save
+    Ban, ImageIcon, Store, Truck, Filter, AlertTriangle, Info, Calculator, Save, Languages
 } from 'lucide-react';
 
 import { OrdersTab } from './admin/OrdersTab';
@@ -77,8 +78,19 @@ const PaymentMethodModal: React.FC<{
     onSave: (m: PaymentMethodConfig) => void;
 }> = ({ isOpen, method, onClose, onSave }) => {
     const [formData, setFormData] = useState(method);
+    const [isTranslating, setIsTranslating] = useState(false);
     
     useEffect(() => { setFormData(method); }, [method]);
+
+    const handleSave = async () => {
+        setIsTranslating(true);
+        // Translate text fields
+        const sourceData = { label: formData.label || '', description: formData.description || '' };
+        const translations = await generateTranslations(sourceData);
+        
+        onSave({ ...formData, translations } as PaymentMethodConfig);
+        setIsTranslating(false);
+    };
 
     if (!isOpen) return null;
 
@@ -102,7 +114,9 @@ const PaymentMethodModal: React.FC<{
                 </div>
                 <div className="flex gap-2 mt-6">
                     <button onClick={onClose} className="flex-1 py-2 bg-gray-100 rounded font-bold text-sm">Zrušit</button>
-                    <button onClick={() => onSave(formData as PaymentMethodConfig)} className="flex-1 py-2 bg-primary text-white rounded font-bold text-sm">Uložit</button>
+                    <button onClick={handleSave} disabled={isTranslating} className="flex-1 py-2 bg-primary text-white rounded font-bold text-sm flex justify-center items-center">
+                        {isTranslating ? 'Překládám...' : 'Uložit'}
+                    </button>
                 </div>
             </div>
         </div>
@@ -320,6 +334,7 @@ export const Admin: React.FC = () => {
     }, [settings]);
 
     const [activeTab, setActiveTab] = useState('orders');
+    const [isTranslating, setIsTranslating] = useState(false);
     
     // Cross-tab filter state
     const [ordersTabFilterDate, setOrdersTabFilterDate] = useState<string | null>(null);
@@ -422,6 +437,7 @@ export const Admin: React.FC = () => {
     const saveCategory = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingCategory) return;
+        setIsTranslating(true);
         const newCats = [...settings.categories];
         const cat = { ...editingCategory } as Category;
         
@@ -429,9 +445,14 @@ export const Admin: React.FC = () => {
             cat.id = removeDiacritics(cat.name).toLowerCase().replace(/\s+/g, '-');
             if (newCats.some(c => c.id === cat.id)) {
                 alert('Kategorie s tímto ID již existuje.');
+                setIsTranslating(false);
                 return;
             }
         }
+
+        // Generate Translations
+        const translations = await generateTranslations({ name: cat.name });
+        cat.translations = translations;
         
         if (newCats.some(c => c.id === cat.id)) {
             const index = newCats.findIndex(c => c.id === cat.id);
@@ -440,6 +461,7 @@ export const Admin: React.FC = () => {
             newCats.push(cat);
         }
         await updateSettings({ ...settings, categories: newCats });
+        setIsTranslating(false);
         setIsCategoryModalOpen(false);
     };
 
@@ -447,14 +469,21 @@ export const Admin: React.FC = () => {
     const savePackaging = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingPackaging) return;
+        setIsTranslating(true);
         let updatedTypes = [...settings.packaging.types];
         const pkg = { ...editingPackaging } as PackagingType;
+        
+        // Generate Translations
+        const translations = await generateTranslations({ name: pkg.name });
+        pkg.translations = translations;
+
         if (updatedTypes.some(p => p.id === pkg.id)) {
             updatedTypes = updatedTypes.map(p => p.id === pkg.id ? pkg : p);
         } else {
             updatedTypes.push({ ...pkg, id: 'pkg-' + Date.now() });
         }
         await updateSettings({ ...settings, packaging: { ...settings.packaging, types: updatedTypes } });
+        setIsTranslating(false);
         setIsPackagingModalOpen(false);
     };
 
@@ -587,7 +616,15 @@ export const Admin: React.FC = () => {
                             {sortedCategories.map(cat => (
                                 <tr key={cat.id} className="hover:bg-gray-50">
                                     <td className="px-6 py-4 font-mono font-bold text-gray-500">{cat.order}</td>
-                                    <td className="px-6 py-4 font-bold text-sm">{cat.name}</td>
+                                    <td className="px-6 py-4 font-bold text-sm">
+                                        {cat.name}
+                                        {cat.translations && (
+                                            <div className="flex gap-1 mt-1">
+                                                <span className="text-[8px] px-1 bg-blue-100 rounded text-blue-700">EN</span>
+                                                <span className="text-[8px] px-1 bg-yellow-100 rounded text-yellow-700">DE</span>
+                                            </div>
+                                        )}
+                                    </td>
                                     <td className="px-6 py-4 font-mono text-gray-400">{cat.id}</td>
                                     <td className="px-6 py-4 text-center">
                                         {cat.enabled ? <span className="text-green-500 font-bold">Aktivní</span> : <span className="text-gray-400">Skryto</span>}
@@ -634,7 +671,10 @@ export const Admin: React.FC = () => {
                     {settings.packaging.types.map(p => (
                         <div key={p.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border">
                         <div>
-                            <span className="font-bold text-sm block">{p.name}</span>
+                            <span className="font-bold text-sm block">
+                                {p.name}
+                                {p.translations && <span className="ml-2 text-[8px] text-gray-400 bg-gray-100 px-1 rounded">TR</span>}
+                            </span>
                             <span className="text-xs text-gray-500">{p.volume} ml</span>
                         </div>
                         <div className="flex items-center gap-4">
@@ -660,6 +700,7 @@ export const Admin: React.FC = () => {
                             <div className="flex items-center gap-2 mb-1">
                                 <h4 className="font-bold">{pm.label}</h4>
                                 <button onClick={() => { setEditingPayment(pm); setIsPaymentModalOpen(true); }} className="text-gray-400 hover:text-primary"><Edit size={14} /></button>
+                                {pm.translations && <span className="text-[9px] bg-blue-100 text-blue-600 px-1 rounded">Auto-Translated</span>}
                             </div>
                             <p className="text-xs text-gray-500">{pm.description}</p>
                         </div>
@@ -928,7 +969,9 @@ export const Admin: React.FC = () => {
                         </label>
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsCategoryModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
-                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('common.save')}</button>
+                            <button type="submit" disabled={isTranslating} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
+                                {isTranslating ? <><Languages size={14} className="mr-2 animate-pulse"/> Překládám...</> : t('common.save')}
+                            </button>
                         </div>
                     </form>
                 </div>
@@ -954,7 +997,9 @@ export const Admin: React.FC = () => {
                         </div>
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsPackagingModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>
-                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">Uložit</button>
+                            <button type="submit" disabled={isTranslating} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
+                                {isTranslating ? 'Překládám...' : 'Uložit'}
+                            </button>
                         </div>
                     </form>
                 </div>

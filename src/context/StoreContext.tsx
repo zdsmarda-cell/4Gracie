@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, DeliveryType } from '../types';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, DeliveryType, LocalizedContent } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
@@ -112,6 +112,7 @@ interface StoreContextType {
   calculatePackagingFee: (items: CartItem[]) => number;
   
   t: (key: string, params?: Record<string, string>) => string;
+  tData: (obj: any, field: string) => string; // NEW HELPER
   generateInvoice: (order: Order) => string;
   printInvoice: (order: Order) => Promise<void>;
   generateCzIban: (accountStr: string) => string;
@@ -211,6 +212,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       });
     }
     return text;
+  };
+
+  const tData = (obj: any, field: string): string => {
+    if (!obj) return '';
+    // If current language is CS, return original field directly
+    if (language === Language.CS) return obj[field] || '';
+    
+    // Check if translations exist for current language
+    const translated = obj.translations?.[language]?.[field];
+    if (translated) return translated;
+    
+    // Fallback to original
+    return obj[field] || '';
   };
 
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
@@ -364,7 +378,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       return [...prev, { ...product, quantity }];
     });
-    showNotify(`Produkt "${product.name}" přidán do košíku`);
+    showNotify(`Produkt "${tData(product, 'name')}" přidán do košíku`);
   };
 
   const removeFromCart = (id: string) => {
@@ -504,7 +518,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
     if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
-    const newUser: User = { id: Date.now().toString(), name, email, phone, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
     
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', newUser);
@@ -643,14 +657,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const applyDiscount = (code: string): { success: boolean; error?: string } => {
-    if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: 'Kód již uplatněn.' };
+    if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
     const result = calculateDiscountAmount(code, cart);
     if (result.success && result.discount && result.amount !== undefined) {
-      if (appliedDiscounts.length > 0 && !result.discount.isStackable) return { success: false, error: 'Kód nelze kombinovat.' };
+      if (appliedDiscounts.length > 0 && !result.discount.isStackable) return { success: false, error: t('discount.not_stackable') };
       setAppliedDiscounts([...appliedDiscounts, { code: result.discount.code, amount: result.amount }]);
       return { success: true };
     } else {
-      return { success: false, error: result.error || 'Neplatný kód.' };
+      return { success: false, error: result.error || t('discount.invalid') };
     }
   };
 
@@ -707,13 +721,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
-    if (targetDate < today) return { allowed: false, reason: 'Minulost.', status: 'past' };
+    if (targetDate < today) return { allowed: false, reason: 'error.past', status: 'past' };
     const categoriesInCart = new Set(items.map(i => i.category));
     const maxLeadTime = items.length > 0 ? Math.max(...items.map(i => i.leadTimeDays || 0)) : 0;
     const minPossibleDate = new Date(today); minPossibleDate.setDate(minPossibleDate.getDate() + maxLeadTime);
-    if (targetDate < minPossibleDate) return { allowed: false, reason: 'Příliš brzy.', status: 'too_soon' };
+    if (targetDate < minPossibleDate) return { allowed: false, reason: 'error.too_soon', status: 'too_soon' };
     const config = dayConfigs.find(d => d.date === date);
-    if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
+    if (config && !config.isOpen) return { allowed: false, reason: 'error.day_closed', status: 'closed' };
     
     const load = getDailyLoad(date, excludeOrderId);
     
@@ -744,7 +758,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
     }
     
-    if (anyExceeds) return { allowed: false, reason: 'Kapacita vyčerpána.', status: 'exceeds' };
+    if (anyExceeds) return { allowed: false, reason: 'error.capacity_exceeded', status: 'exceeds' };
     return { allowed: true, status: 'available' };
   };
 
@@ -1185,7 +1199,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
       getPickupPointInfo,
       calculatePackagingFee,
-      t, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification,
+      t, tData, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate
     }}>
       {children}
