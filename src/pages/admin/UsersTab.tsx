@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { User } from '../../types';
-import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle } from 'lucide-react';
+import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail } from 'lucide-react';
 
 export const UsersTab: React.FC = () => {
     const { allUsers, orders, t, addUser, updateUserAdmin } = useStore();
@@ -12,7 +12,7 @@ export const UsersTab: React.FC = () => {
     // Modal
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
-    const [userForm, setUserForm] = useState({ name: '', email: '', phone: '', role: 'customer' as 'customer' | 'admin' | 'driver' });
+    const [userForm, setUserForm] = useState({ name: '', email: '', phone: '', role: 'customer' as 'customer' | 'admin' | 'driver', marketingConsent: false });
     const [validationError, setValidationError] = useState<string | null>(null);
 
     const filteredUsers = useMemo(() => {
@@ -59,7 +59,19 @@ export const UsersTab: React.FC = () => {
     const openUserModal = (u?: User) => {
         setValidationError(null);
         setEditingUser(u || null);
-        setUserForm(u ? { name: u.name, email: u.email, phone: u.phone, role: u.role } : { name: '', email: '', phone: '', role: 'customer' });
+        setUserForm(u ? { 
+            name: u.name, 
+            email: u.email, 
+            phone: u.phone, 
+            role: u.role,
+            marketingConsent: u.marketingConsent || false
+        } : { 
+            name: '', 
+            email: '', 
+            phone: '', 
+            role: 'customer',
+            marketingConsent: false
+        });
         setIsUserModalOpen(true);
     };
 
@@ -217,8 +229,21 @@ export const UsersTab: React.FC = () => {
                                 <option value="driver">Řidič</option>
                                 <option value="admin">Administrátor</option>
                             </select>
+                            
+                            <label className="flex items-center gap-2 p-3 border rounded bg-gray-50 cursor-pointer hover:bg-gray-100 transition">
+                                <input 
+                                    type="checkbox" 
+                                    checked={userForm.marketingConsent} 
+                                    onChange={e => setUserForm({...userForm, marketingConsent: e.target.checked})} 
+                                    className="rounded text-accent focus:ring-accent w-4 h-4"
+                                />
+                                <span className="text-sm font-bold text-gray-700 flex items-center">
+                                    <Mail size={16} className="mr-2 text-gray-400" />
+                                    Marketingový souhlas (Newsletter)
+                                </span>
+                            </label>
                         </div>
-                        <div className="flex gap-2 mt-4">
+                        <div className="flex gap-2 mt-6">
                             <button onClick={() => setIsUserModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded font-bold text-sm">Zrušit</button>
                             <button onClick={handleUserModalSave} className="flex-1 py-2 bg-primary text-white rounded font-bold text-sm">Uložit</button>
                         </div>
