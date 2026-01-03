@@ -170,7 +170,7 @@ export const Menu: React.FC = () => {
            <img 
              src="/logo.png" 
              alt="4Gracie Catering" 
-             className="h-40 md:h-56 object-contain drop-shadow-2xl"
+             className="h-40 md:h-56 object-contain drop-shadow-2xl border-4 border-accent rounded-3xl p-4 bg-white"
            />
         </div>
       </div>

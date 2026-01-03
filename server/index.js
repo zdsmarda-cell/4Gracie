@@ -72,7 +72,8 @@ if (process.env.SMTP_HOST) {
     console.warn('⚠️ SMTP settings not found. Emails will NOT be sent.');
 }
 
-const sendEmail = async (to, subject, html) => {
+// Unified send function accepting options (like attachments)
+const sendEmail = async (to, subject, html, attachments = []) => {
     if (!transporter) {
         console.warn(`⚠️ Cannot send email to ${to}: Transporter not configured.`);
         return false;
@@ -83,6 +84,7 @@ const sendEmail = async (to, subject, html) => {
             to,
             subject,
             html,
+            attachments
         });
         console.log(`📧 Email sent to ${to}: ${info.messageId}`);
         return true;
@@ -518,14 +520,44 @@ app.post('/api/orders', withDb(async (req, res, db) => {
       const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [o.userId]);
       const userEmail = userRows.length > 0 ? userRows[0].email : null;
       
+      const lang = o.language || 'cs';
+      const t = EMAIL_TRANSLATIONS[lang] || EMAIL_TRANSLATIONS.cs;
+      const subject = `${t.statuses.created}: #${o.id}`; 
+      const subTitle = `Vaše objednávka <strong>#${o.id}</strong> byla přijata ke zpracování.`;
+      const html = generateOrderEmailHtml(o, 'Děkujeme za vaši objednávku!', subTitle);
+
+      // --- SEND TO CUSTOMER (WITH ATTACHMENT) ---
       if (userEmail) {
-          const lang = o.language || 'cs';
-          const t = EMAIL_TRANSLATIONS[lang] || EMAIL_TRANSLATIONS.cs;
-          const subject = `${t.statuses.created}: #${o.id}`; // Simple subject
-          const subTitle = `Vaše objednávka <strong>#${o.id}</strong> byla přijata ke zpracování.`;
-          const html = generateOrderEmailHtml(o, 'Děkujeme za vaši objednávku!', subTitle);
+          // Assume VOP.pdf is in public folder. Resolve relative to THIS file (server/index.js)
+          const vopPath = path.resolve(__dirname, '../public/VOP.pdf');
+          let userAttachments = [];
           
-          sendEmail(userEmail, subject, html);
+          if (fs.existsSync(vopPath)) {
+              userAttachments.push({
+                  filename: 'VOP_4Gracie.pdf',
+                  path: vopPath
+              });
+          } else {
+              console.warn('⚠️ VOP.pdf not found in public folder, sending email without attachment.');
+          }
+
+          sendEmail(userEmail, subject, html, userAttachments);
+      }
+
+      // --- SEND TO OPERATOR (WITHOUT ATTACHMENT) ---
+      // Get operator email from settings if available, or fallback to env/default
+      const [settingsRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
+      let operatorEmail = process.env.SMTP_USER || 'info@4gracie.cz';
+      
+      if (settingsRows.length > 0) {
+          const s = typeof settingsRows[0].data === 'string' ? JSON.parse(settingsRows[0].data) : settingsRows[0].data;
+          if (s.companyDetails?.email) operatorEmail = s.companyDetails.email;
+      }
+
+      if (operatorEmail) {
+          const operatorHtml = generateOrderEmailHtml(o, 'Nová objednávka z eshopu', `Zákazník: ${o.userName}`);
+          // Send to operator without VOP attachment
+          sendEmail(operatorEmail, `NOVÁ OBJEDNÁVKA #${o.id}`, operatorHtml, []); 
       }
   }
 

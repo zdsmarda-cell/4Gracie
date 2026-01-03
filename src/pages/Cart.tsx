@@ -1,110 +1,10 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
-import { useNavigate } from 'react-router-dom';
-import { Trash2, ShoppingBag, CreditCard, ChevronRight, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, ChevronLeft, Tag, Ban, FileText, Clock, Store } from 'lucide-react';
-import { DeliveryType, PaymentMethod, Order, OrderStatus, ProductCategory, Address, AppliedDiscount, DeliveryRegion, PickupLocation } from '../types';
-
-const CustomCalendar: React.FC<{ 
-  onSelect: (date: string) => void, 
-  selectedDate: string,
-  checkAvailability: (date: string, items: any[]) => any,
-  cart: any[],
-  region?: DeliveryRegion | undefined,
-  getRegionInfo: (region: DeliveryRegion, date: string) => any,
-  pickupLocation?: PickupLocation | undefined,
-  getPickupInfo: (location: PickupLocation, date: string) => any
-}> = ({ onSelect, selectedDate, checkAvailability, cart, region, getRegionInfo, pickupLocation, getPickupInfo }) => {
-  const [viewDate, setViewDate] = useState(new Date());
-  const monthNames = ["Leden", "Únor", "Březen", "Duben", "Květen", "Červen", "Červenec", "Srpen", "Září", "Říjen", "Listopad", "Prosinec"];
-  
-  const daysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
-  const startDayOfMonth = (month: number, year: number) => new Date(year, month, 1).getDay() || 7; // Monday = 1
-
-  const currentYear = viewDate.getFullYear();
-  const currentMonth = viewDate.getMonth();
-  
-  const days = [];
-  const totalDays = daysInMonth(currentMonth, currentYear);
-  const startOffset = startDayOfMonth(currentMonth, currentYear) - 1;
-
-  for (let i = 0; i < startOffset; i++) days.push(null);
-  for (let i = 1; i <= totalDays; i++) days.push(i);
-
-  const handleMonthChange = (offset: number) => {
-    setViewDate(new Date(currentYear, currentMonth + offset, 1));
-  };
-
-  return (
-    <div className="bg-white border rounded-2xl shadow-sm p-4 w-full">
-      <div className="flex justify-between items-center mb-4">
-        <button onClick={() => handleMonthChange(-1)} className="p-1 hover:bg-gray-100 rounded-full"><ChevronLeft size={20}/></button>
-        <span className="font-bold text-sm text-primary uppercase tracking-widest">{monthNames[currentMonth]} {currentYear}</span>
-        <button onClick={() => handleMonthChange(1)} className="p-1 hover:bg-gray-100 rounded-full"><ChevronRight size={20}/></button>
-      </div>
-      <div className="grid grid-cols-7 gap-1 mb-2">
-        {['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'].map(d => <div key={d} className="text-center text-[9px] font-bold text-gray-400 uppercase">{d}</div>)}
-      </div>
-      <div className="grid grid-cols-7 gap-1">
-        {days.map((day, idx) => {
-          if (!day) return <div key={`empty-${idx}`} className="h-10" />;
-          const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          const availability = checkAvailability(dateStr, cart);
-          
-          // Region Check
-          let regionInfo = { isOpen: true, isException: false };
-          if (region) {
-            regionInfo = getRegionInfo(region, dateStr);
-          }
-
-          // Pickup Check
-          let pickupInfo = { isOpen: true, isException: false };
-          if (pickupLocation) {
-            pickupInfo = getPickupInfo(pickupLocation, dateStr);
-          }
-
-          let bgColor = "bg-white hover:bg-gray-50";
-          let textColor = "text-gray-900";
-          let cursor = "cursor-pointer";
-          let isBlocked = false;
-          let title = '';
-          
-          if (availability.status === 'closed' || availability.status === 'full' || (region && !regionInfo.isOpen) || (pickupLocation && !pickupInfo.isOpen)) {
-            bgColor = "bg-red-100 text-red-600";
-            isBlocked = true;
-            if (region && !regionInfo.isOpen) title = 'V tento den se do tohoto regionu nerozváží.';
-            else if (pickupLocation && !pickupInfo.isOpen) title = 'V tento den má výdejní místo zavřeno.';
-            else title = availability.reason;
-          } else if (availability.status === 'exceeds') {
-            bgColor = "bg-orange-100 text-orange-600";
-            isBlocked = true;
-            title = availability.reason;
-          } else if (availability.status === 'past' || availability.status === 'too_soon') {
-            bgColor = "bg-gray-50 text-gray-300";
-            isBlocked = true;
-          }
-          
-          if (selectedDate === dateStr) bgColor = "bg-accent text-white";
-
-          return (
-            <button
-              key={dateStr}
-              disabled={isBlocked}
-              onClick={() => onSelect(dateStr)}
-              className={`h-10 text-[11px] font-bold rounded-lg transition-all flex flex-col items-center justify-center border border-transparent ${bgColor} ${textColor} ${isBlocked ? 'cursor-not-allowed opacity-80' : cursor}`}
-              title={title}
-            >
-              <span>{day}</span>
-              {((region && regionInfo.isException && regionInfo.isOpen) || (pickupLocation && pickupInfo.isException && pickupInfo.isOpen)) && (
-                <span className="w-1 h-1 rounded-full bg-blue-50 mt-0.5"></span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
+import { useNavigate, Link } from 'react-router-dom';
+import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store } from 'lucide-react';
+import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation } from '../types';
+import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Cart: React.FC = () => {
   const { cart, removeFromCart, updateCartItemQuantity, t, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
@@ -117,19 +17,21 @@ export const Cart: React.FC = () => {
   });
   const [selectedAddrId, setSelectedAddrId] = useState<string>('');
   const [selectedBillingId, setSelectedBillingId] = useState<string>('');
-  const [selectedPickupLocationId, setSelectedPickupLocationId] = useState<string>(''); // NEW
+  const [selectedPickupLocationId, setSelectedPickupLocationId] = useState<string>(''); 
   const [date, setDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => {
     return (localStorage.getItem('cart_paymentMethod') as PaymentMethod) || PaymentMethod.GATEWAY;
   });
   const [orderNote, setOrderNote] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(true);
+  const [termsConsent, setTermsConsent] = useState(false); // NEW STATE for Terms
 
   const [discountInput, setDiscountInput] = useState('');
   const [discountError, setDiscountError] = useState('');
 
   const [modalType, setModalType] = useState<'billing' | 'delivery' | null>(null);
   const [editingAddr, setEditingAddr] = useState<Partial<Address> | null>(null);
+  const [addressError, setAddressError] = useState<string | null>(null);
 
   const enabledRegions = useMemo(() => settings.deliveryRegions.filter(r => r.enabled), [settings.deliveryRegions]);
   const activePickupLocations = useMemo(() => settings.pickupLocations?.filter(l => l.enabled) || [], [settings.pickupLocations]);
@@ -240,7 +142,7 @@ export const Cart: React.FC = () => {
   };
 
   const handleSubmit = () => {
-    if (!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || hasValidationErrors || isDeliveryMethodInvalid) return;
+    if (!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || hasValidationErrors || isDeliveryMethodInvalid || !termsConsent) return;
     if (deliveryType === DeliveryType.DELIVERY && !region) return;
     if (deliveryType === DeliveryType.PICKUP && !pickupLocation) return;
 
@@ -263,7 +165,7 @@ export const Cart: React.FC = () => {
       deliveryAddress: deliveryType === DeliveryType.PICKUP 
         ? `Osobní odběr: ${pickupLocation?.name}, ${pickupLocation?.street}, ${pickupLocation?.city}` 
         : `${selectedAddr?.name}\n${selectedAddr?.street}\n${selectedAddr?.city}\n${selectedAddr?.zip}\nTel: ${selectedAddr?.phone}`,
-      billingAddress: `${selectedBilling?.name}, ${selectedBilling?.street}, ${selectedBilling?.city}${selectedBilling?.ic ? `, IČ: ${selectedBilling.ic}` : ''}${selectedBilling?.dic ? `, DIČ: ${selectedBilling.dic}` : ''}`,
+      billingAddress: `${selectedBilling?.name}, ${selectedBilling?.street}, ${selectedBilling?.city}`,
       status: OrderStatus.CREATED,
       isPaid: paymentMethod === PaymentMethod.GATEWAY,
       paymentMethod,
@@ -282,7 +184,21 @@ export const Cart: React.FC = () => {
 
   const saveAddress = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !modalType || !editingAddr?.street) return;
+    setAddressError(null);
+    if (!user || !modalType || !editingAddr) return;
+
+    // Validation
+    if (!editingAddr.name || editingAddr.name.trim().length < 3) { setAddressError(t('validation.name_length')); return; }
+    if (!editingAddr.street || editingAddr.street.trim().length < 1) { setAddressError(t('validation.street_required')); return; }
+    if (!editingAddr.city || editingAddr.city.trim().length < 1) { setAddressError(t('validation.city_required')); return; }
+    if (!editingAddr.zip || !editingAddr.zip.replace(/\s/g, '').match(/^\d{5}$/)) { setAddressError(t('validation.zip_format')); return; }
+    
+    // Validate phone for both delivery and billing to ensure contact info
+    if (!editingAddr.phone || !/^[+]?[0-9]{9,}$/.test(editingAddr.phone.replace(/\s/g, ''))) { 
+        setAddressError(t('validation.phone_format')); 
+        return; 
+    }
+
     const newAddr = { ...editingAddr, id: editingAddr.id || Date.now().toString() } as Address;
     const key = modalType === 'billing' ? 'billingAddresses' : 'deliveryAddresses';
     const updated = editingAddr.id ? user[key].map(a => a.id === editingAddr.id ? newAddr : a) : [...user[key], newAddr];
@@ -296,7 +212,6 @@ export const Cart: React.FC = () => {
   };
 
   if (step === 3 && submittedOrder) {
-    // ... same as before
     const iban = generateCzIban(settings.companyDetails.bankAccount).replace(/\s/g,'');
     const bic = settings.companyDetails.bic ? `+${settings.companyDetails.bic}` : '';
     const acc = `ACC:${iban}${bic}`;
@@ -495,7 +410,7 @@ export const Cart: React.FC = () => {
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <h3 className="font-bold mb-4 flex items-center"><Activity className="mr-2 text-accent" size={20}/> Datum doručení / vyzvednutí</h3>
                     
-                    {/* Pass region and helper to CustomCalendar */}
+                    {/* Replaced with Imported CustomCalendar */}
                     <CustomCalendar 
                       cart={cart} 
                       checkAvailability={checkAvailability} 
@@ -636,18 +551,32 @@ export const Cart: React.FC = () => {
               {step === 2 && (
                 <div className="space-y-3">
                   {user && (
-                    <label className="flex items-start space-x-2 text-xs text-gray-600 cursor-pointer p-2 hover:bg-gray-50 rounded">
-                      <input 
-                        type="checkbox" 
-                        checked={marketingConsent} 
-                        onChange={e => setMarketingConsent(e.target.checked)} 
-                        className="rounded text-accent mt-0.5" 
-                      />
-                      <span>Souhlasím se zasíláním novinek a marketingových sdělení (lze kdykoliv zrušit v profilu).</span>
-                    </label>
+                    <div className="space-y-2 mb-4">
+                        <label className="flex items-start space-x-2 text-xs text-gray-600 cursor-pointer p-2 hover:bg-gray-50 rounded">
+                        <input 
+                            type="checkbox" 
+                            checked={marketingConsent} 
+                            onChange={e => setMarketingConsent(e.target.checked)} 
+                            className="rounded text-accent mt-0.5" 
+                        />
+                        <span>Souhlasím se zasíláním novinek a marketingových sdělení.</span>
+                        </label>
+                        
+                        <label className={`flex items-start space-x-2 text-xs cursor-pointer p-2 rounded ${!termsConsent ? 'text-red-600 bg-red-50' : 'text-gray-600 hover:bg-gray-50'}`}>
+                        <input 
+                            type="checkbox" 
+                            checked={termsConsent} 
+                            onChange={e => setTermsConsent(e.target.checked)} 
+                            className="rounded text-accent mt-0.5" 
+                        />
+                        <span>
+                            Souhlasím se <Link to="/terms" target="_blank" className="font-bold underline hover:text-accent">Všeobecnými obchodními podmínkami</Link>.
+                        </span>
+                        </label>
+                    </div>
                   )}
                   <button 
-                    disabled={!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || isDeliveryMethodInvalid || (deliveryType === DeliveryType.PICKUP && !pickupLocation) || (deliveryType === DeliveryType.DELIVERY && !region)} 
+                    disabled={!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || isDeliveryMethodInvalid || !termsConsent || (deliveryType === DeliveryType.PICKUP && !pickupLocation) || (deliveryType === DeliveryType.DELIVERY && !region)} 
                     onClick={handleSubmit} 
                     className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50 disabled:bg-gray-300 uppercase text-xs tracking-widest"
                   >
@@ -664,20 +593,49 @@ export const Cart: React.FC = () => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
           <form onSubmit={saveAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold">{editingAddr?.id ? 'Upravit adresu' : 'Nová adresa'}</h2>
-            <input placeholder="Jméno / Firma" className="w-full border rounded-lg p-3 text-sm" required value={editingAddr?.name || ''} onChange={e => setEditingAddr({...editingAddr, name: e.target.value})} />
-            <input placeholder="Ulice a č.p." className="w-full border rounded-lg p-3 text-sm" required value={editingAddr?.street || ''} onChange={e => setEditingAddr({...editingAddr, street: e.target.value})} />
-            <div className="grid grid-cols-2 gap-4">
-              <input placeholder="Město" className="border rounded-lg p-3 text-sm" required value={editingAddr?.city || ''} onChange={e => setEditingAddr({...editingAddr, city: e.target.value})} />
-              <input placeholder="PSČ" className="border rounded-lg p-3 text-sm" required value={editingAddr?.zip || ''} onChange={e => setEditingAddr({...editingAddr, zip: e.target.value})} />
+            
+            {addressError && (
+                <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-xs font-bold flex items-center">
+                    <AlertCircle size={16} className="mr-2 flex-shrink-0"/> {addressError}
+                </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Jméno / Firma</label>
+              <input placeholder={t('common.name')} className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.name || ''} onChange={e => setEditingAddr({...editingAddr, name: e.target.value})} />
             </div>
             
-            {/* Added Phone Field */}
-            <input placeholder="Kontaktní telefon" className="w-full border rounded-lg p-3 text-sm" required={modalType === 'delivery'} value={editingAddr?.phone || ''} onChange={e => setEditingAddr({...editingAddr, phone: e.target.value})} />
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ulice a č.p.</label>
+              <input placeholder={t('common.street')} className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.street || ''} onChange={e => setEditingAddr({...editingAddr, street: e.target.value})} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.city')}</label>
+                <input placeholder={t('common.city')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.city || ''} onChange={e => setEditingAddr({...editingAddr, city: e.target.value})} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.zip')}</label>
+                <input placeholder={t('common.zip')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.zip || ''} onChange={e => setEditingAddr({...editingAddr, zip: e.target.value})} />
+              </div>
+            </div>
+            
+            <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.phone')}</label>
+                <input placeholder="+420..." className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.phone || ''} onChange={e => setEditingAddr({...editingAddr, phone: e.target.value})} />
+            </div>
 
             {modalType === 'billing' && (
                <div className="grid grid-cols-2 gap-4">
-                 <input placeholder="IČ (volitelné)" className="border rounded-lg p-3 text-sm" value={editingAddr?.ic || ''} onChange={e => setEditingAddr({...editingAddr, ic: e.target.value})} />
-                 <input placeholder="DIČ (volitelné)" className="border rounded-lg p-3 text-sm" value={editingAddr?.dic || ''} onChange={e => setEditingAddr({...editingAddr, dic: e.target.value})} />
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.ic')}</label>
+                    <input placeholder={t('common.ic')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.ic || ''} onChange={e => setEditingAddr({...editingAddr, ic: e.target.value})} />
+                 </div>
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.dic')}</label>
+                    <input placeholder={t('common.dic')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.dic || ''} onChange={e => setEditingAddr({...editingAddr, dic: e.target.value})} />
+                 </div>
                </div>
             )}
             <div className="flex gap-2 pt-4"><button type="button" onClick={() => setModalType(null)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-xs uppercase">Zrušit</button><button type="submit" className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-xs uppercase shadow-lg">Uložit</button></div>

@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { StoreProvider, useStore } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { AuthModal } from './components/AuthModal';
@@ -10,6 +10,7 @@ import { Cart } from './pages/Cart';
 import { Admin } from './pages/Admin';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
+import { Terms } from './pages/Terms';
 import { X, Info, Truck, AlertCircle, CheckCircle, Loader2, Store } from 'lucide-react';
 
 // Login Overlay Mock (for demo purposes) - Updated to use AuthModal trigger for consistency
@@ -253,7 +254,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       </main>
       <footer className="bg-primary text-gray-400 py-8 text-center text-sm">
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p>&copy; 2023 4Gracie Catering. All rights reserved.</p>
+          <div className="flex flex-col items-center md:items-start gap-1">
+            <p>&copy; 2023 4Gracie Catering. All rights reserved.</p>
+            <Link to="/terms" className="text-accent hover:text-white transition font-bold text-xs underline">Všeobecné obchodní podmínky</Link>
+          </div>
           <div className="flex gap-4">
               {hasActiveDelivery && (
                 <button 
@@ -290,6 +294,7 @@ const App: React.FC = () => {
             <Route path="/profile" element={<Profile />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/terms" element={<Terms />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Layout>

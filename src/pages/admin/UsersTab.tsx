@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { User } from '../../types';
-import { User as UserIcon, Plus, Download, Ban, Check } from 'lucide-react';
+import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle } from 'lucide-react';
 
 export const UsersTab: React.FC = () => {
     const { allUsers, orders, t, addUser, updateUserAdmin } = useStore();
@@ -13,6 +13,7 @@ export const UsersTab: React.FC = () => {
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [userForm, setUserForm] = useState({ name: '', email: '', phone: '', role: 'customer' as 'customer' | 'admin' | 'driver' });
+    const [validationError, setValidationError] = useState<string | null>(null);
 
     const filteredUsers = useMemo(() => {
         return allUsers.filter(u => {
@@ -30,6 +31,8 @@ export const UsersTab: React.FC = () => {
             
             if (userFilters.spentMin && spent < Number(userFilters.spentMin)) return false;
             if (userFilters.spentMax && spent > Number(userFilters.spentMax)) return false;
+            
+            // Filtering by number of orders
             if (userFilters.ordersMin && userOrders.length < Number(userFilters.ordersMin)) return false;
             if (userFilters.ordersMax && userOrders.length > Number(userFilters.ordersMax)) return false;
             
@@ -39,10 +42,12 @@ export const UsersTab: React.FC = () => {
 
     const handleUserExport = () => {
         const csvContent = "data:text/csv;charset=utf-8," 
-            + ["ID,Name,Email,Phone,Role,Marketing,Status"].join(",") + "\n"
-            + filteredUsers.filter(u => selectedUserIds.includes(u.id)).map(u => 
-                `${u.id},"${u.name}",${u.email},${u.phone},${u.role},${u.marketingConsent?'YES':'NO'},${u.isBlocked?'BLOCKED':'ACTIVE'}`
-            ).join("\n");
+            + ["ID,Name,Email,Phone,Role,Marketing,Status,OrdersCount,TotalSpent"].join(",") + "\n"
+            + filteredUsers.filter(u => selectedUserIds.includes(u.id)).map(u => {
+                const userOrders = orders.filter(o => o.userId === u.id);
+                const totalSpent = userOrders.reduce((sum, o) => sum + o.totalPrice, 0);
+                return `${u.id},"${u.name}",${u.email},${u.phone},${u.role},${u.marketingConsent?'YES':'NO'},${u.isBlocked?'BLOCKED':'ACTIVE'},${userOrders.length},${totalSpent}`;
+            }).join("\n");
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
         link.setAttribute("href", encodedUri);
@@ -52,12 +57,30 @@ export const UsersTab: React.FC = () => {
     };
 
     const openUserModal = (u?: User) => {
+        setValidationError(null);
         setEditingUser(u || null);
         setUserForm(u ? { name: u.name, email: u.email, phone: u.phone, role: u.role } : { name: '', email: '', phone: '', role: 'customer' });
         setIsUserModalOpen(true);
     };
 
     const handleUserModalSave = async () => {
+        setValidationError(null);
+        
+        // VALIDATION
+        if (!userForm.name || userForm.name.length < 3) {
+            setValidationError(t('validation.name_length'));
+            return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userForm.email)) {
+            setValidationError(t('validation.email_format'));
+            return;
+        }
+        // Phone: Digits or +, min 9 chars (ignoring spaces)
+        if (!/^[+]?[0-9]{9,}$/.test(userForm.phone.replace(/\s/g, ''))) {
+            setValidationError(t('validation.phone_format'));
+            return;
+        }
+
         if (editingUser) {
             await updateUserAdmin({ ...editingUser, ...userForm });
         } else {
@@ -91,6 +114,13 @@ export const UsersTab: React.FC = () => {
                         <div className="flex gap-2">
                             <input type="number" className="w-20 border rounded p-2" placeholder="Od" value={userFilters.spentMin} onChange={e => setUserFilters({...userFilters, spentMin: e.target.value})} />
                             <input type="number" className="w-20 border rounded p-2" placeholder="Do" value={userFilters.spentMax} onChange={e => setUserFilters({...userFilters, spentMax: e.target.value})} />
+                        </div>
+                    </div>
+                    <div>
+                        <div className="mb-1 font-bold text-gray-400">{t('admin.orders')}</div>
+                        <div className="flex gap-2">
+                            <input type="number" className="w-20 border rounded p-2" placeholder="Od" value={userFilters.ordersMin} onChange={e => setUserFilters({...userFilters, ordersMin: e.target.value})} />
+                            <input type="number" className="w-20 border rounded p-2" placeholder="Do" value={userFilters.ordersMax} onChange={e => setUserFilters({...userFilters, ordersMax: e.target.value})} />
                         </div>
                     </div>
                     <div>
@@ -149,7 +179,7 @@ export const UsersTab: React.FC = () => {
                         <td className="px-6 py-4 font-bold">{u.name}</td>
                         <td className="px-6 py-4 text-gray-600">{u.email}<br/><span className="text-[10px]">{u.phone}</span></td>
                         <td className="px-6 py-4 uppercase font-bold text-[10px]">{u.role}</td>
-                        <td className="px-6 py-4 text-center">{userOrders.length}</td>
+                        <td className="px-6 py-4 text-center font-bold">{userOrders.length}</td>
                         <td className="px-6 py-4 text-right font-mono">{totalSpent} Kč</td>
                         <td className="px-6 py-4 text-center">
                             {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
@@ -171,6 +201,13 @@ export const UsersTab: React.FC = () => {
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                     <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl">
                         <h3 className="font-bold text-lg mb-4">{editingUser ? 'Upravit uživatele' : 'Nový uživatel'}</h3>
+                        
+                        {validationError && (
+                            <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-xs font-bold flex items-center">
+                                <AlertCircle size={16} className="mr-2 flex-shrink-0"/> {validationError}
+                            </div>
+                        )}
+
                         <div className="space-y-3">
                             <input className="w-full border p-2 rounded" placeholder={t('common.name')} value={userForm.name} onChange={e => setUserForm({...userForm, name: e.target.value})} />
                             <input className="w-full border p-2 rounded" placeholder={t('common.email')} value={userForm.email} onChange={e => setUserForm({...userForm, email: e.target.value})} />

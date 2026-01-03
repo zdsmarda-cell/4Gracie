@@ -2,7 +2,36 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DeliveryRegion, PickupLocation, RegionException, Order, OrderStatus } from '../../types';
-import { Plus, Edit, Trash2, X, Store } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Store, AlertTriangle } from 'lucide-react';
+
+// Reusing a similar component structure for Delete Modal inside this file to keep it self-contained
+// or we could import it if we exported it from a common place. 
+// For now, implementing locally to avoid modifying App structure too much.
+const DeleteConfirmModal: React.FC<{
+    isOpen: boolean;
+    title: string;
+    onConfirm: () => void;
+    onClose: () => void;
+}> = ({ isOpen, title, onConfirm, onClose }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
+                <div className="flex flex-col items-center text-center">
+                    <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mb-4 text-red-600">
+                        <Trash2 size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
+                    <p className="text-sm text-gray-500 mb-6">Tato akce je nevratná.</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={onClose} className="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-sm hover:bg-gray-200 transition">Zrušit</button>
+                        <button onClick={onConfirm} className="flex-1 py-2 bg-red-600 text-white rounded-lg font-bold text-sm hover:bg-red-700 transition">Smazat</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const RegionModal: React.FC<{
     isOpen: boolean;
@@ -114,6 +143,7 @@ export const DeliveryTab: React.FC = () => {
     const { settings, updateSettings, t } = useStore();
     const [isRegionModalOpen, setIsRegionModalOpen] = useState(false);
     const [editingRegion, setEditingRegion] = useState<Partial<DeliveryRegion> | null>(null);
+    const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
     const saveRegion = async (r: DeliveryRegion) => {
         let newRegions = [...settings.deliveryRegions];
@@ -127,10 +157,11 @@ export const DeliveryTab: React.FC = () => {
         setIsRegionModalOpen(false);
     };
 
-    const handleDelete = (id: string) => {
-        if(confirm('Smazat region?')) {
-            const newRegs = settings.deliveryRegions.filter(r => r.id !== id);
+    const confirmDelete = () => {
+        if(deleteTargetId) {
+            const newRegs = settings.deliveryRegions.filter(r => r.id !== deleteTargetId);
             updateSettings({...settings, deliveryRegions: newRegs});
+            setDeleteTargetId(null);
         }
     };
 
@@ -150,7 +181,7 @@ export const DeliveryTab: React.FC = () => {
                     </div>
                     <div className="flex gap-2">
                         <button onClick={() => { setEditingRegion(r); setIsRegionModalOpen(true); }} className="p-1 hover:bg-gray-100 rounded"><Edit size={16}/></button>
-                        <button onClick={() => handleDelete(r.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 size={16}/></button>
+                        <button onClick={() => setDeleteTargetId(r.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 size={16}/></button>
                     </div>
                     </div>
                     <div className="flex justify-between text-sm mb-4 bg-gray-50 p-3 rounded-lg">
@@ -182,6 +213,12 @@ export const DeliveryTab: React.FC = () => {
                 ))}
             </div>
             <RegionModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} region={editingRegion || {}} onSave={saveRegion} />
+            <DeleteConfirmModal 
+                isOpen={!!deleteTargetId} 
+                title="Smazat region?" 
+                onClose={() => setDeleteTargetId(null)} 
+                onConfirm={confirmDelete} 
+            />
         </div>
     );
 };
@@ -191,6 +228,7 @@ export const PickupTab: React.FC = () => {
     const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
     const [editingPickup, setEditingPickup] = useState<Partial<PickupLocation> | null>(null);
     const [newPickupException, setNewPickupException] = useState<Partial<RegionException>>({ date: '', isOpen: false });
+    const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
     const savePickup = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -203,10 +241,11 @@ export const PickupTab: React.FC = () => {
         setIsPickupModalOpen(false);
     };
 
-    const handleDelete = (id: string) => {
-        if(confirm('Smazat odběrné místo?')) {
-            const newLocs = settings.pickupLocations.filter(l => l.id !== id);
+    const confirmDelete = () => {
+        if(deleteTargetId) {
+            const newLocs = settings.pickupLocations.filter(l => l.id !== deleteTargetId);
             updateSettings({...settings, pickupLocations: newLocs});
+            setDeleteTargetId(null);
         }
     };
 
@@ -263,7 +302,7 @@ export const PickupTab: React.FC = () => {
                             <div><h3 className="font-bold text-lg">{loc.name}</h3><div className="text-xs text-gray-500 mt-1">{loc.street}, {loc.city}</div></div>
                             <div className="flex gap-2">
                                 <button onClick={() => { setEditingPickup(loc); setIsPickupModalOpen(true); }} className="p-1 hover:bg-gray-100 rounded"><Edit size={16}/></button>
-                                <button onClick={() => handleDelete(loc.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 size={16}/></button>
+                                <button onClick={() => setDeleteTargetId(loc.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 size={16}/></button>
                             </div>
                         </div>
                         <div className="space-y-1 text-[10px] text-gray-500 border-t pt-2">
@@ -271,9 +310,33 @@ export const PickupTab: React.FC = () => {
                             <div className="flex justify-between"><span>Pá:</span> <strong>{loc.openingHours[5]?.isOpen ? `${loc.openingHours[5].start}-${loc.openingHours[5].end}` : 'Zavřeno'}</strong></div>
                             <div className="flex justify-between"><span>Ne:</span> <strong>{loc.openingHours[0]?.isOpen ? `${loc.openingHours[0].start}-${loc.openingHours[0].end}` : 'Zavřeno'}</strong></div>
                         </div>
+
+                        {/* Display Exceptions in List View */}
+                        {loc.exceptions && loc.exceptions.length > 0 && (
+                            <div className="mt-3 pt-2 border-t">
+                                <div className="text-[9px] font-bold text-gray-400 uppercase mb-1">Výjimky</div>
+                                <div className="space-y-1">
+                                    {loc.exceptions.map((ex, idx) => (
+                                        <div key={idx} className="flex justify-between text-[10px] bg-gray-50 p-1 rounded">
+                                            <span className="font-mono">{ex.date}</span>
+                                            <span className={ex.isOpen ? "text-blue-600 font-bold" : "text-red-600 font-bold"}>
+                                                {ex.isOpen ? 'JINÝ ČAS' : 'ZAVŘENO'}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>
+
+            <DeleteConfirmModal 
+                isOpen={!!deleteTargetId} 
+                title="Smazat odběrné místo?" 
+                onClose={() => setDeleteTargetId(null)} 
+                onConfirm={confirmDelete} 
+            />
 
             {isPickupModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
@@ -292,7 +355,20 @@ export const PickupTab: React.FC = () => {
                                 {[1, 2, 3, 4, 5, 6, 0].map(day => (
                                     <div key={day} className="flex items-center gap-2">
                                         <span className="w-8 font-bold text-xs">{day === 0 ? 'Ne' : day === 1 ? 'Po' : day === 2 ? 'Út' : day === 3 ? 'St' : day === 4 ? 'Čt' : day === 5 ? 'Pá' : 'So'}</span>
-                                        <label className="flex items-center text-xs gap-1"><input type="checkbox" checked={editingPickup?.openingHours?.[day]?.isOpen ?? false} onChange={e => setEditingPickup({...editingPickup, openingHours: {...editingPickup?.openingHours, [day]: { ...editingPickup?.openingHours?.[day], isOpen: e.target.checked }}})} /> Otevřeno</label>
+                                        <label className="flex items-center text-xs gap-1">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={editingPickup?.openingHours?.[day]?.isOpen ?? false}
+                                                onChange={e => setEditingPickup({
+                                                    ...editingPickup,
+                                                    openingHours: {
+                                                        ...editingPickup?.openingHours,
+                                                        [day]: { ...editingPickup?.openingHours?.[day], isOpen: e.target.checked }
+                                                    }
+                                                })}
+                                            />
+                                            Otevřeno
+                                        </label>
                                         {editingPickup?.openingHours?.[day]?.isOpen && (
                                             <>
                                                 <input type="time" className="w-20 p-1 border rounded text-xs" value={editingPickup.openingHours[day].start} onChange={e => setEditingPickup({ ...editingPickup, openingHours: { ...editingPickup.openingHours, [day]: { ...editingPickup.openingHours![day], start: e.target.value } } })} />
@@ -308,8 +384,14 @@ export const PickupTab: React.FC = () => {
                         <div className="bg-white border rounded-xl p-4">
                             <label className="text-xs font-bold text-gray-400 block mb-2">Výjimky otevírací doby</label>
                             <div className="flex gap-2 mb-2 items-end">
-                                <div className="flex-1"><span className="text-[10px] block text-gray-400">Datum</span><input type="date" className="w-full border rounded p-1 text-xs" value={newPickupException.date} onChange={e => setNewPickupException({ ...newPickupException, date: e.target.value })} /></div>
-                                <div className="flex items-center gap-1 pb-2"><input type="checkbox" checked={newPickupException.isOpen} onChange={e => setNewPickupException({ ...newPickupException, isOpen: e.target.checked })} /><span className="text-xs">Otevřeno?</span></div>
+                                <div className="flex-1">
+                                    <span className="text-[10px] block text-gray-400">Datum</span>
+                                    <input type="date" className="w-full border rounded p-1 text-xs" value={newPickupException.date} onChange={e => setNewPickupException({ ...newPickupException, date: e.target.value })} />
+                                </div>
+                                <div className="flex items-center gap-1 pb-2">
+                                    <input type="checkbox" checked={newPickupException.isOpen} onChange={e => setNewPickupException({ ...newPickupException, isOpen: e.target.checked })} />
+                                    <span className="text-xs">Otevřeno?</span>
+                                </div>
                                 {newPickupException.isOpen && (
                                     <>
                                         <div className="w-20"><input type="time" className="w-full border rounded p-1 text-xs" value={newPickupException.deliveryTimeStart || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeStart: e.target.value })} /></div>
@@ -328,7 +410,10 @@ export const PickupTab: React.FC = () => {
                             </div>
                         </div>
 
-                        <label className="flex items-center gap-2 mt-2"><input type="checkbox" checked={editingPickup?.enabled ?? true} onChange={e => setEditingPickup({ ...editingPickup, enabled: e.target.checked })} /><span className="text-sm">Aktivní</span></label>
+                        <label className="flex items-center gap-2 mt-2">
+                            <input type="checkbox" checked={editingPickup?.enabled ?? true} onChange={e => setEditingPickup({ ...editingPickup, enabled: e.target.checked })} />
+                            <span className="text-sm">Aktivní</span>
+                        </label>
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsPickupModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>
                             <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">Uložit</button>

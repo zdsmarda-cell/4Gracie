@@ -103,6 +103,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'validation.phone_format': 'Telefon musí obsahovat min. 9 číslic a volitelně +',
     'validation.name_length': 'Jméno musí mít alespoň 3 znaky',
     'validation.password_length': 'Heslo musí mít alespoň 4 znaky',
+    'validation.zip_format': 'PSČ musí obsahovat přesně 5 číslic',
+    'validation.street_required': 'Vyplňte ulici a č.p.',
+    'validation.city_required': 'Vyplňte město',
     
     'discount.code': 'Slevový kód',
     'discount.apply': 'Uplatnit',
@@ -291,6 +294,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'validation.phone_format': 'Phone must have at least 9 digits',
     'validation.name_length': 'Name must be at least 3 chars',
     'validation.password_length': 'Password must be at least 4 chars',
+    'validation.zip_format': 'ZIP must be exactly 5 digits',
+    'validation.street_required': 'Street is required',
+    'validation.city_required': 'City is required',
 
     'discount.code': 'Discount Code',
     'discount.apply': 'Apply',
@@ -479,6 +485,9 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'validation.phone_format': 'Telefon mindestens 9 Ziffern',
     'validation.name_length': 'Name mindestens 3 Zeichen',
     'validation.password_length': 'Passwort mindestens 4 Zeichen',
+    'validation.zip_format': 'PLZ muss genau 5 Ziffern haben',
+    'validation.street_required': 'Straße erforderlich',
+    'validation.city_required': 'Stadt erforderlich',
 
     'discount.code': 'Rabattcode',
     'discount.apply': 'Anwenden',

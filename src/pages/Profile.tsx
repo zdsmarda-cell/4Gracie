@@ -1,9 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Navigate } from 'react-router-dom';
-import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock } from 'lucide-react';
+import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon } from 'lucide-react';
 import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMethod, ProductCategory } from '../types';
+import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Profile: React.FC = () => {
   const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo } = useStore();
@@ -11,6 +12,7 @@ export const Profile: React.FC = () => {
   const [editingAddr, setEditingAddr] = useState<Partial<Address> | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [qrModalOrder, setQrModalOrder] = useState<Order | null>(null);
+  const [addressError, setAddressError] = useState<string | null>(null);
   
   // Order Editing State
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
@@ -44,6 +46,19 @@ export const Profile: React.FC = () => {
 
   const myOrders = orders.filter(o => o.userId === user.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+  // Derived state for Calendar validation in Modal
+  const derivedRegion = useMemo(() => {
+      if (!editingOrder || editingOrder.deliveryType !== DeliveryType.DELIVERY || !editingOrder.deliveryAddress) return undefined;
+      const zipMatch = editingOrder.deliveryAddress.match(/\d{3}\s?\d{2}/);
+      return zipMatch ? getDeliveryRegion(zipMatch[0]) : undefined;
+  }, [editingOrder?.deliveryAddress, editingOrder?.deliveryType]);
+
+  const derivedPickupLocation = useMemo(() => {
+      if (!editingOrder || editingOrder.deliveryType !== DeliveryType.PICKUP || !editingOrder.pickupLocationId) return undefined;
+      return settings.pickupLocations?.find(l => l.id === editingOrder.pickupLocationId);
+  }, [editingOrder?.pickupLocationId, editingOrder?.deliveryType, settings.pickupLocations]);
+
+
   const validatePhone = (phone: string) => /^[+]?[0-9]{9,}$/.test(phone.replace(/\s/g, ''));
   const validateName = (name: string) => name.trim().length >= 3;
 
@@ -68,7 +83,21 @@ export const Profile: React.FC = () => {
 
   const saveAddress = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modalType || !editingAddr?.street) return;
+    setAddressError(null);
+    if (!modalType || !editingAddr) return;
+
+    // Validation
+    if (!editingAddr.name || editingAddr.name.trim().length < 3) { setAddressError(t('validation.name_length')); return; }
+    if (!editingAddr.street || editingAddr.street.trim().length < 1) { setAddressError(t('validation.street_required')); return; }
+    if (!editingAddr.city || editingAddr.city.trim().length < 1) { setAddressError(t('validation.city_required')); return; }
+    if (!editingAddr.zip || !editingAddr.zip.replace(/\s/g, '').match(/^\d{5}$/)) { setAddressError(t('validation.zip_format')); return; }
+    
+    // Check phone for all address types
+    if (!editingAddr.phone || !/^[+]?[0-9]{9,}$/.test(editingAddr.phone.replace(/\s/g, ''))) { 
+        setAddressError(t('validation.phone_format')); 
+        return; 
+    }
+
     const newAddr = { ...editingAddr, id: editingAddr.id || Date.now().toString() } as Address;
     const key = modalType === 'billing' ? 'billingAddresses' : 'deliveryAddresses';
     const updated = editingAddr.id ? user[key].map(a => a.id === editingAddr.id ? newAddr : a) : [...user[key], newAddr];
@@ -190,18 +219,6 @@ export const Profile: React.FC = () => {
     }
   };
 
-  const handleSelectBillingAddress = (addrId: string) => {
-    setSelectedBillingAddrId(addrId);
-    if (!addrId) return;
-    const addr = user.billingAddresses.find(a => a.id === addrId);
-    if (addr) {
-        setEditingOrder(prev => prev ? {
-            ...prev,
-            billingAddress: `${addr.name}, ${addr.street}, ${addr.city}${addr.ic ? `, IČ: ${addr.ic}` : ''}${addr.dic ? `, DIČ: ${addr.dic}` : ''}`
-        } : null);
-    }
-  };
-
   const handleChangePassword = (e: React.FormEvent) => {
     e.preventDefault();
     setPassMsg(null);
@@ -244,8 +261,7 @@ export const Profile: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto px-4 py-12">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Orders Column */}
+        {/* ... Orders Column (unchanged) ... */}
         <div className="lg:col-span-2 space-y-8">
           <h2 className="text-2xl font-serif font-bold">Historie objednávek</h2>
           <div className="space-y-4">
@@ -508,20 +524,49 @@ export const Profile: React.FC = () => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
           <form onSubmit={saveAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold">{editingAddr?.id ? 'Upravit adresu' : 'Nová adresa'}</h2>
-            <input placeholder="Jméno / Firma" className="w-full border rounded-lg p-3 text-sm" required value={editingAddr?.name || ''} onChange={e => setEditingAddr({...editingAddr, name: e.target.value})} />
-            <input placeholder="Ulice a č.p." className="w-full border rounded-lg p-3 text-sm" required value={editingAddr?.street || ''} onChange={e => setEditingAddr({...editingAddr, street: e.target.value})} />
-            <div className="grid grid-cols-2 gap-4">
-              <input placeholder="Město" className="border rounded-lg p-3 text-sm" required value={editingAddr?.city || ''} onChange={e => setEditingAddr({...editingAddr, city: e.target.value})} />
-              <input placeholder="PSČ" className="border rounded-lg p-3 text-sm" required value={editingAddr?.zip || ''} onChange={e => setEditingAddr({...editingAddr, zip: e.target.value})} />
+            
+            {addressError && (
+                <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-xs font-bold flex items-center">
+                    <AlertCircle size={16} className="mr-2 flex-shrink-0"/> {addressError}
+                </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Jméno / Firma</label>
+              <input placeholder={t('common.name')} className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.name || ''} onChange={e => setEditingAddr({...editingAddr, name: e.target.value})} />
             </div>
             
-            {/* Added Phone Field */}
-            <input placeholder="Kontaktní telefon" className="w-full border rounded-lg p-3 text-sm" required={modalType === 'delivery'} value={editingAddr?.phone || ''} onChange={e => setEditingAddr({...editingAddr, phone: e.target.value})} />
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ulice a č.p.</label>
+              <input placeholder={t('common.street')} className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.street || ''} onChange={e => setEditingAddr({...editingAddr, street: e.target.value})} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.city')}</label>
+                <input placeholder={t('common.city')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.city || ''} onChange={e => setEditingAddr({...editingAddr, city: e.target.value})} />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.zip')}</label>
+                <input placeholder={t('common.zip')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.zip || ''} onChange={e => setEditingAddr({...editingAddr, zip: e.target.value})} />
+              </div>
+            </div>
+            
+            <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.phone')}</label>
+                <input placeholder="+420..." className="w-full border rounded-lg p-3 text-sm" value={editingAddr?.phone || ''} onChange={e => setEditingAddr({...editingAddr, phone: e.target.value})} />
+            </div>
 
             {modalType === 'billing' && (
                <div className="grid grid-cols-2 gap-4">
-                 <input placeholder="IČ (volitelné)" className="border rounded-lg p-3 text-sm" value={editingAddr?.ic || ''} onChange={e => setEditingAddr({...editingAddr, ic: e.target.value})} />
-                 <input placeholder="DIČ (volitelné)" className="border rounded-lg p-3 text-sm" value={editingAddr?.dic || ''} onChange={e => setEditingAddr({...editingAddr, dic: e.target.value})} />
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.ic')}</label>
+                    <input placeholder={t('common.ic')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.ic || ''} onChange={e => setEditingAddr({...editingAddr, ic: e.target.value})} />
+                 </div>
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('common.dic')}</label>
+                    <input placeholder={t('common.dic')} className="border rounded-lg p-3 text-sm w-full" value={editingAddr?.dic || ''} onChange={e => setEditingAddr({...editingAddr, dic: e.target.value})} />
+                 </div>
                </div>
             )}
             <div className="flex gap-2 pt-4"><button type="button" onClick={() => setModalType(null)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-xs uppercase">Zrušit</button><button type="submit" className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-xs uppercase shadow-lg">Uložit</button></div>
@@ -582,8 +627,23 @@ export const Profile: React.FC = () => {
                  <div className="space-y-4">
                     <h3 className="font-bold text-gray-400 uppercase text-xs tracking-widest border-b pb-2">Nastavení</h3>
                     <div className="p-4 bg-gray-50 rounded-2xl space-y-3">
-                       <div className="grid grid-cols-2 gap-2">
-                         <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.date')}</label><input type="date" className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryDate} onChange={e => setEditingOrder({...editingOrder, deliveryDate: e.target.value})}/></div>
+                        {/* Custom Calendar Implementation */}
+                        <div>
+                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.date')}</label>
+                            <CustomCalendar 
+                                cart={editingOrder.items}
+                                checkAvailability={checkAvailability}
+                                onSelect={(date) => setEditingOrder({ ...editingOrder, deliveryDate: date })}
+                                selectedDate={editingOrder.deliveryDate}
+                                region={derivedRegion}
+                                getRegionInfo={getRegionInfoForDate}
+                                pickupLocation={derivedPickupLocation}
+                                getPickupInfo={getPickupPointInfo}
+                                excludeOrderId={editingOrder.id}
+                            />
+                        </div>
+
+                       <div className="grid grid-cols-1 gap-2">
                          <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.delivery')}</label><select className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryType} onChange={e => setEditingOrder({...editingOrder, deliveryType: e.target.value as DeliveryType})}><option value={DeliveryType.PICKUP}>{t('checkout.pickup')}</option><option value={DeliveryType.DELIVERY}>{t('admin.delivery')}</option></select></div>
                        </div>
 
@@ -646,6 +706,7 @@ export const Profile: React.FC = () => {
                       <table className="min-w-full divide-y">
                         <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
                           <tr>
+                            <th className="px-3 py-2 text-left w-12">Foto</th>
                             <th className="px-3 py-2 text-left">Název</th>
                             <th className="px-3 py-2 text-center">Ks</th>
                             <th className="px-3 py-2 text-right">Cena</th>
@@ -655,6 +716,13 @@ export const Profile: React.FC = () => {
                         <tbody className="divide-y text-xs">
                           {editingOrder.items.map(item => (
                             <tr key={item.id}>
+                              <td className="px-3 py-2">
+                                  {item.images && item.images[0] ? (
+                                      <img src={item.images[0]} alt={item.name} className="w-8 h-8 rounded object-cover" />
+                                  ) : (
+                                      <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={12}/></div>
+                                  )}
+                              </td>
                               <td className="px-3 py-2 font-bold">{item.name}</td>
                               <td className="px-3 py-2 text-center">
                                 <div className="flex items-center justify-center space-x-1">
@@ -673,7 +741,7 @@ export const Profile: React.FC = () => {
                     </div>
                     <div className="bg-gray-50 p-4 rounded-xl flex justify-between items-center">
                       <span className="font-bold text-sm">Celkem (odhad):</span>
-                      <span className="font-bold text-lg text-accent">{editingOrder.items.reduce((sum, i) => sum + i.price * i.quantity, 0) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0)} Kč</span>
+                      <span className="font-bold text-lg text-accent">{Math.max(0, editingOrder.items.reduce((sum, i) => sum + i.price * i.quantity, 0) - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0))} Kč</span>
                     </div>
                  </div>
                </div>
@@ -694,7 +762,14 @@ export const Profile: React.FC = () => {
             <div className="overflow-y-auto divide-y flex-grow">
               {products.filter(p => p.visibility.online).map(p => (
                 <div key={p.id} className="flex justify-between items-center py-2">
-                  <div><span className="font-bold text-sm">{p.name}</span><br/><span className="text-xs text-gray-400">{p.price} Kč / {p.unit}</span></div>
+                  <div className="flex items-center gap-3">
+                      {p.images && p.images[0] ? (
+                          <img src={p.images[0]} alt={p.name} className="w-10 h-10 rounded object-cover"/>
+                      ) : (
+                          <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-300"/></div>
+                      )}
+                      <div><span className="font-bold text-sm">{p.name}</span><br/><span className="text-xs text-gray-400">{p.price} Kč / {p.unit}</span></div>
+                  </div>
                   <button onClick={() => { handleAddProductToOrder(p); setIsAddProductModalOpen(false); }} className="bg-accent text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-yellow-600 transition">Přidat</button>
                 </div>
               ))}

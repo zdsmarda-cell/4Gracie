@@ -2,11 +2,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { 
-    Category, PackagingType, DayConfig, 
+    Product, Category, DiscountCode, PackagingType, DayConfig, 
+    DeliveryRegion, PickupLocation, RegionException, PaymentMethodConfig,
+    OrderStatus, User, DiscountType, Order, DeliveryType
 } from '../types';
+import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
-    Check
+    Download, Upload, FileText, Check, X, User as UserIcon, 
+    Ban, ImageIcon, Store, Truck, AlertTriangle
 } from 'lucide-react';
 
 import { OrdersTab } from './admin/OrdersTab';
@@ -15,17 +19,106 @@ import { ProductsTab } from './admin/ProductsTab';
 import { DiscountsTab } from './admin/DiscountsTab';
 import { DeliveryTab, PickupTab } from './admin/LogisticsTabs';
 
+// --- Shared Components for Admin ---
+
+const DeleteConfirmationModal: React.FC<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    onClose: () => void;
+}> = ({ isOpen, title, message, onConfirm, onClose }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
+                <div className="flex flex-col items-center text-center">
+                    <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mb-4 text-red-600">
+                        <Trash2 size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
+                    <p className="text-sm text-gray-500 mb-6">{message}</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={onClose} className="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-sm hover:bg-gray-200 transition">Zrušit</button>
+                        <button onClick={onConfirm} className="flex-1 py-2 bg-red-600 text-white rounded-lg font-bold text-sm hover:bg-red-700 transition">Smazat</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const ValidationAlertModal: React.FC<{
+    isOpen: boolean;
+    message: string;
+    onClose: () => void;
+}> = ({ isOpen, message, onClose }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                <div className="flex flex-col items-center text-center">
+                    <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mb-4 text-orange-600">
+                        <AlertTriangle size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900 mb-2">Nelze provést akci</h3>
+                    <p className="text-sm text-gray-500 mb-6">{message}</p>
+                    <button onClick={onClose} className="w-full py-2 bg-primary text-white rounded-lg font-bold text-sm hover:bg-gray-800 transition">Rozumím</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const PaymentMethodModal: React.FC<{
+    isOpen: boolean;
+    method: Partial<PaymentMethodConfig>;
+    onClose: () => void;
+    onSave: (m: PaymentMethodConfig) => void;
+}> = ({ isOpen, method, onClose, onSave }) => {
+    const [formData, setFormData] = useState(method);
+    
+    useEffect(() => { setFormData(method); }, [method]);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
+            <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
+                <h3 className="font-bold text-lg mb-4">Upravit platební metodu</h3>
+                <div className="space-y-3">
+                    <div>
+                        <label className="text-xs font-bold text-gray-400 block mb-1">Název</label>
+                        <input className="w-full border rounded p-2" value={formData.label || ''} onChange={e => setFormData({...formData, label: e.target.value})} />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-400 block mb-1">Popis</label>
+                        <textarea className="w-full border rounded p-2 h-24" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} />
+                    </div>
+                    <label className="flex items-center gap-2">
+                        <input type="checkbox" checked={formData.enabled} onChange={e => setFormData({...formData, enabled: e.target.checked})} />
+                        <span className="text-sm">Aktivní</span>
+                    </label>
+                </div>
+                <div className="flex gap-2 mt-6">
+                    <button onClick={onClose} className="flex-1 py-2 bg-gray-100 rounded font-bold text-sm">Zrušit</button>
+                    <button onClick={() => onSave(formData as PaymentMethodConfig)} className="flex-1 py-2 bg-primary text-white rounded font-bold text-sm">Uložit</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export const Admin: React.FC = () => {
     const { 
-        dataSource, setDataSource, orders, products, dayConfigs, settings, 
-        t, updateSettings, 
-        updateDayConfig, removeDayConfig,
-        formatDate, removeDiacritics, getDailyLoad 
+        dataSource, setDataSource, t, products, dayConfigs, settings, 
+        updateSettings, updateDayConfig, removeDayConfig,
+        formatDate, removeDiacritics, getDailyLoad, orders
     } = useStore();
 
     const [activeTab, setActiveTab] = useState('orders');
     
-    // States for inline tabs (Categories, Packaging, Capacities)
+    // Modal States
     const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
     
@@ -34,34 +127,52 @@ export const Admin: React.FC = () => {
     
     const [isDayConfigModalOpen, setIsDayConfigModalOpen] = useState(false);
     const [editingDayConfig, setEditingDayConfig] = useState<Partial<DayConfig> | null>(null);
-    
+
+    const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+    const [editingPayment, setEditingPayment] = useState<Partial<PaymentMethodConfig> | null>(null);
+
+    // Alert & Confirm States
+    const [validationMessage, setValidationMessage] = useState<string | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<{type: string, id: string, name: string} | null>(null);
+
     const [showLoadHistory, setShowLoadHistory] = useState(false);
-    const [confirmDelete, setConfirmDelete] = useState<{type: string, id: string, name?: string} | null>(null);
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     
     const loadDates = useMemo(() => {
         const dates = new Set<string>();
-        orders.forEach(o => dates.add(o.deliveryDate));
+        
+        // Add dates from orders
+        orders.forEach(o => {
+            if (o.deliveryDate) dates.add(o.deliveryDate);
+        });
+
+        // Add dates from exceptions
         dayConfigs.forEach(c => dates.add(c.date));
+        
         const today = new Date().toISOString().split('T')[0];
         if (!showLoadHistory) {
              return Array.from(dates).filter(d => d >= today).sort();
         }
         return Array.from(dates).sort().reverse();
-    }, [orders, dayConfigs, showLoadHistory]);
+    }, [dayConfigs, orders, showLoadHistory]);
 
     const getDayCapacityLimit = (date: string, catId: string) => {
         const config = dayConfigs.find(d => d.date === date);
         return config?.capacityOverrides?.[catId] ?? settings.defaultCapacities[catId] ?? 0;
     };
 
-    // --- Handlers for inline tabs ---
-    const handleCategoryDeleteCheck = (cat: Category) => {
-        const hasProducts = products.some(p => p.category === cat.id && !p.visibility.online);
-        if (hasProducts) { alert('Kategorie obsahuje produkty. Nelze smazat.'); return; }
-        const newCats = settings.categories.filter(c => c.id !== cat.id);
-        updateSettings({...settings, categories: newCats});
+    // --- HANDLERS ---
+
+    // Category Handlers
+    const handleCategoryDeleteRequest = (cat: Category) => {
+        const productsInCategory = products.filter(p => p.category === cat.id);
+        
+        if (productsInCategory.length > 0) {
+             setValidationMessage(`Kategorii "${cat.name}" nelze smazat, protože obsahuje ${productsInCategory.length} produktů. Nejprve produkty přesuňte nebo smažte.`);
+             return;
+        }
+        setDeleteTarget({ type: 'category', id: cat.id, name: cat.name });
     };
 
     const saveCategory = async (e: React.FormEvent) => {
@@ -69,10 +180,15 @@ export const Admin: React.FC = () => {
         if (!editingCategory) return;
         const newCats = [...settings.categories];
         const cat = { ...editingCategory } as Category;
+        
         if (!cat.id) {
             cat.id = removeDiacritics(cat.name).toLowerCase().replace(/\s+/g, '-');
-            if (newCats.some(c => c.id === cat.id)) { alert('Kategorie s tímto ID již existuje.'); return; }
+            if (newCats.some(c => c.id === cat.id)) {
+                alert('Kategorie s tímto ID již existuje.');
+                return;
+            }
         }
+        
         if (newCats.some(c => c.id === cat.id)) {
             const index = newCats.findIndex(c => c.id === cat.id);
             newCats[index] = cat;
@@ -83,6 +199,7 @@ export const Admin: React.FC = () => {
         setIsCategoryModalOpen(false);
     };
 
+    // Packaging Handlers
     const savePackaging = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingPackaging) return;
@@ -97,6 +214,14 @@ export const Admin: React.FC = () => {
         setIsPackagingModalOpen(false);
     };
 
+    // Payment Handlers
+    const savePaymentMethod = async (method: PaymentMethodConfig) => {
+        const newMethods = settings.paymentMethods.map(m => m.id === method.id ? method : m);
+        await updateSettings({ ...settings, paymentMethods: newMethods });
+        setIsPaymentModalOpen(false);
+    };
+
+    // Day Config Handlers
     const saveDayConfig = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingDayConfig) return;
@@ -110,27 +235,30 @@ export const Admin: React.FC = () => {
         alert('Nastavení uloženo.');
     };
 
-    useEffect(() => {
-        if (confirmDelete) {
-            if (confirm(`Opravdu smazat ${confirmDelete.name || 'položku'}?`)) {
-                if (confirmDelete.type === 'packaging') {
-                    const newPkg = settings.packaging.types.filter(p => p.id !== confirmDelete.id);
-                    updateSettings({...settings, packaging: {...settings.packaging, types: newPkg}});
-                }
-                if (confirmDelete.type === 'exception') {
-                    removeDayConfig(confirmDelete.id);
-                }
-            }
-            setConfirmDelete(null);
+    // Unified Delete Confirm Handler
+    const handleConfirmDelete = async () => {
+        if (!deleteTarget) return;
+
+        if (deleteTarget.type === 'category') {
+            const newCats = settings.categories.filter(c => c.id !== deleteTarget.id);
+            await updateSettings({...settings, categories: newCats});
         }
-    }, [confirmDelete]);
+        if (deleteTarget.type === 'packaging') {
+            const newPkg = settings.packaging.types.filter(p => p.id !== deleteTarget.id);
+            await updateSettings({...settings, packaging: {...settings.packaging, types: newPkg}});
+        }
+        if (deleteTarget.type === 'exception') {
+            await removeDayConfig(deleteTarget.id);
+        }
+
+        setDeleteTarget(null);
+    };
 
     return (
         <div className="max-w-7xl mx-auto px-4 py-8">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                 <h1 className="text-3xl font-serif font-bold text-gray-800 tracking-tight">{t('admin.dashboard')}</h1>
                 <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl shadow-sm overflow-x-auto">
-                {/* Note: 'backup' is removed from this list */}
                 {(['orders', 'users', 'load', 'products', 'categories', 'delivery', 'pickup', 'capacities', 'discounts', 'packaging', 'operator', 'payments', 'db'] as const).map(tab => (
                     <button 
                     key={tab}
@@ -143,44 +271,29 @@ export const Admin: React.FC = () => {
                 </div>
             </div>
 
-            {/* --- SEPARATE COMPONENTS --- */}
+            {/* --- ALERTS & MODALS --- */}
+            <DeleteConfirmationModal 
+                isOpen={!!deleteTarget}
+                title={`Smazat ${deleteTarget?.name}?`}
+                message="Tato akce je nevratná a položka bude trvale odstraněna."
+                onConfirm={handleConfirmDelete}
+                onClose={() => setDeleteTarget(null)}
+            />
+
+            <ValidationAlertModal 
+                isOpen={!!validationMessage}
+                message={validationMessage || ''}
+                onClose={() => setValidationMessage(null)}
+            />
+
+            {/* --- TABS --- */}
+
             {activeTab === 'orders' && <OrdersTab />}
             {activeTab === 'users' && <UsersTab />}
             {activeTab === 'products' && <ProductsTab />}
             {activeTab === 'discounts' && <DiscountsTab />}
             {activeTab === 'delivery' && <DeliveryTab />}
             {activeTab === 'pickup' && <PickupTab />}
-
-            {/* --- INLINE TABS (Categories, Load, Packaging, Operator, Capacities, Payments, DB) --- */}
-
-            {activeTab === 'db' && (
-                <div className="animate-fade-in space-y-8">
-                <div className="bg-white p-8 rounded-2xl border shadow-sm max-w-2xl mx-auto text-center">
-                    <h2 className="text-2xl font-bold mb-6 flex items-center justify-center gap-2">
-                        <Database className="text-accent" /> Databázové připojení
-                    </h2>
-                    <div className="grid grid-cols-2 gap-4">
-                        <button 
-                            onClick={() => { if (dataSource !== 'api') setDataSource('local'); }}
-                            disabled={dataSource === 'api'}
-                            className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'local' ? 'border-accent bg-yellow-50/50' : dataSource === 'api' ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed' : 'border-gray-200 hover:bg-gray-50'}`}
-                        >
-                            <div className={`p-4 rounded-full ${dataSource === 'local' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-400'}`}><HardDrive size={32} /></div>
-                            <div><h3 className="font-bold text-lg">Interní paměť</h3></div>
-                            {dataSource === 'local' && <Check className="text-green-500" />}
-                        </button>
-                        <button 
-                            onClick={() => setDataSource('api')}
-                            className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'api' ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
-                        >
-                            <div className={`p-4 rounded-full ${dataSource === 'api' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-400'}`}><Server size={32} /></div>
-                            <div><h3 className="font-bold text-lg">MariaDB</h3></div>
-                            {dataSource === 'api' && <Check className="text-green-500" />}
-                        </button>
-                    </div>
-                </div>
-                </div>
-            )}
 
             {activeTab === 'categories' && (
             <div className="animate-fade-in space-y-4">
@@ -211,7 +324,7 @@ export const Admin: React.FC = () => {
                                     </td>
                                     <td className="px-6 py-4 text-right flex justify-end gap-2">
                                         <button onClick={() => { setEditingCategory(cat); setIsCategoryModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                        <button onClick={() => handleCategoryDeleteCheck(cat)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                        <button onClick={() => handleCategoryDeleteRequest(cat)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
                                     </td>
                                 </tr>
                             ))}
@@ -222,6 +335,70 @@ export const Admin: React.FC = () => {
                     )}
                 </div>
             </div>
+            )}
+
+            {activeTab === 'packaging' && (
+                <div className="animate-fade-in space-y-6">
+                <div className="bg-white p-6 rounded-2xl border shadow-sm">
+                    <h3 className="font-bold mb-4">{t('admin.settings')}</h3>
+                    <div className="flex items-center gap-4">
+                    <label className="text-sm text-gray-600">{t('admin.pkg_limit')} (Kč):</label>
+                    <input type="number" className="border rounded p-2 w-32" value={settings.packaging.freeFrom} onChange={e => updateSettings({...settings, packaging: {...settings.packaging, freeFrom: Number(e.target.value)}})} />
+                    <button onClick={() => updateSettings(settings)} className="text-xs bg-primary text-white px-3 py-2 rounded font-bold">Uložit limit</button>
+                    </div>
+                </div>
+                
+                <div className="bg-white p-6 rounded-2xl border shadow-sm">
+                    <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold">{t('admin.packaging')}</h3>
+                    <button onClick={() => { setEditingPackaging({}); setIsPackagingModalOpen(true); }} className="bg-white border hover:bg-gray-50 px-3 py-1 rounded text-xs font-bold flex items-center"><Plus size={14} className="mr-1"/> {t('admin.pkg_new')}</button>
+                    </div>
+                    <div className="space-y-2">
+                    {settings.packaging.types.map(p => (
+                        <div key={p.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border">
+                        <div>
+                            <span className="font-bold text-sm block">{p.name}</span>
+                            <span className="text-xs text-gray-500">{p.volume} ml</span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <span className="font-bold text-sm">{p.price} Kč</span>
+                            <button onClick={() => { setEditingPackaging(p); setIsPackagingModalOpen(true); }} className="text-gray-400 hover:text-primary"><Edit size={16}/></button>
+                            <button onClick={() => setDeleteTarget({type: 'packaging', id: p.id, name: p.name})} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>
+                        </div>
+                        </div>
+                    ))}
+                    </div>
+                </div>
+                </div>
+            )}
+
+            {activeTab === 'payments' && (
+                <div className="animate-fade-in max-w-2xl">
+                <div className="bg-white p-6 rounded-2xl border shadow-sm">
+                    <h2 className="text-xl font-bold mb-6">{t('admin.payment_methods')}</h2>
+                    <div className="space-y-4">
+                    {settings.paymentMethods.map((pm, idx) => (
+                        <div key={pm.id} className="flex items-center justify-between p-4 border rounded-xl bg-gray-50">
+                        <div className="flex-1 mr-4">
+                            <div className="flex items-center gap-2 mb-1">
+                                <h4 className="font-bold">{pm.label}</h4>
+                                <button onClick={() => { setEditingPayment(pm); setIsPaymentModalOpen(true); }} className="text-gray-400 hover:text-primary"><Edit size={14} /></button>
+                            </div>
+                            <p className="text-xs text-gray-500">{pm.description}</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" className="sr-only peer" checked={pm.enabled} onChange={e => {
+                                const newMethods = [...settings.paymentMethods];
+                                newMethods[idx].enabled = e.target.checked;
+                                updateSettings({...settings, paymentMethods: newMethods});
+                            }} />
+                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        </label>
+                        </div>
+                    ))}
+                    </div>
+                </div>
+                </div>
             )}
 
             {activeTab === 'load' && (
@@ -295,33 +472,36 @@ export const Admin: React.FC = () => {
                 </div>
             )}
 
-            {activeTab === 'packaging' && (
-                <div className="animate-fade-in space-y-6">
+            {activeTab === 'capacities' && (
+                <div className="animate-fade-in space-y-8">
                 <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                    <h3 className="font-bold mb-4">{t('admin.settings')}</h3>
-                    <div className="flex items-center gap-4">
-                    <label className="text-sm text-gray-600">{t('admin.pkg_limit')} (Kč):</label>
-                    <input type="number" className="border rounded p-2 w-32" value={settings.packaging.freeFrom} onChange={e => updateSettings({...settings, packaging: {...settings.packaging, freeFrom: Number(e.target.value)}})} />
-                    <button onClick={() => updateSettings(settings)} className="text-xs bg-primary text-white px-3 py-2 rounded font-bold">Uložit limit</button>
+                    <h3 className="font-bold mb-4">{t('admin.global_limits')}</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {sortedCategories.map(cat => (
+                        <div key={cat.id}>
+                        <label className="text-xs font-bold text-gray-400 block mb-1">{cat.name}</label>
+                        <input type="number" className="w-full border rounded p-2" value={settings.defaultCapacities[cat.id]} onChange={e => updateSettings({...settings, defaultCapacities: {...settings.defaultCapacities, [cat.id]: Number(e.target.value)}})} />
+                        </div>
+                    ))}
                     </div>
+                    <button onClick={() => updateSettings(settings)} className="mt-4 bg-primary text-white px-4 py-2 rounded text-xs font-bold">Uložit globální limity</button>
                 </div>
-                
+
                 <div className="bg-white p-6 rounded-2xl border shadow-sm">
                     <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold">{t('admin.packaging')}</h3>
-                    <button onClick={() => { setEditingPackaging({}); setIsPackagingModalOpen(true); }} className="bg-white border hover:bg-gray-50 px-3 py-1 rounded text-xs font-bold flex items-center"><Plus size={14} className="mr-1"/> {t('admin.pkg_new')}</button>
+                    <h3 className="font-bold">{t('admin.exceptions')}</h3>
+                    <button onClick={() => { setEditingDayConfig({ date: '', isOpen: false }); setIsDayConfigModalOpen(true); }} className="bg-white border hover:bg-gray-50 px-3 py-1 rounded text-xs font-bold flex items-center"><Plus size={14} className="mr-1"/> {t('admin.exception_add')}</button>
                     </div>
                     <div className="space-y-2">
-                    {settings.packaging.types.map(p => (
-                        <div key={p.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border">
+                    {dayConfigs.map((c, idx) => (
+                        <div key={idx} className={`flex justify-between items-center p-3 rounded-lg border ${c.isOpen ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
                         <div>
-                            <span className="font-bold text-sm block">{p.name}</span>
-                            <span className="text-xs text-gray-500">{p.volume} ml</span>
+                            <span className="font-mono font-bold block">{formatDate(c.date)}</span>
+                            <span className={`text-xs font-bold ${c.isOpen ? 'text-blue-600' : 'text-red-600'}`}>{c.isOpen ? t('admin.exception_open') : t('admin.exception_closed')}</span>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <span className="font-bold text-sm">{p.price} Kč</span>
-                            <button onClick={() => { setEditingPackaging(p); setIsPackagingModalOpen(true); }} className="text-gray-400 hover:text-primary"><Edit size={16}/></button>
-                            <button onClick={() => setConfirmDelete({type: 'packaging', id: p.id, name: p.name})} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>
+                        <div className="flex gap-2">
+                            <button onClick={() => { setEditingDayConfig(c); setIsDayConfigModalOpen(true); }} className="p-1 hover:bg-white rounded"><Edit size={16}/></button>
+                            <button onClick={() => setDeleteTarget({type: 'exception', id: c.date, name: formatDate(c.date)})} className="p-1 hover:bg-white rounded text-red-500"><Trash2 size={16}/></button>
                         </div>
                         </div>
                     ))}
@@ -359,72 +539,37 @@ export const Admin: React.FC = () => {
                 </div>
             )}
 
-            {activeTab === 'capacities' && (
+            {activeTab === 'db' && (
                 <div className="animate-fade-in space-y-8">
-                <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                    <h3 className="font-bold mb-4">{t('admin.global_limits')}</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {sortedCategories.map(cat => (
-                        <div key={cat.id}>
-                        <label className="text-xs font-bold text-gray-400 block mb-1">{cat.name}</label>
-                        <input type="number" className="w-full border rounded p-2" value={settings.defaultCapacities[cat.id]} onChange={e => updateSettings({...settings, defaultCapacities: {...settings.defaultCapacities, [cat.id]: Number(e.target.value)}})} />
-                        </div>
-                    ))}
-                    </div>
-                    <button onClick={() => updateSettings(settings)} className="mt-4 bg-primary text-white px-4 py-2 rounded text-xs font-bold">Uložit globální limity</button>
-                </div>
-
-                <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                    <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold">{t('admin.exceptions')}</h3>
-                    <button onClick={() => { setEditingDayConfig({ date: '', isOpen: false }); setIsDayConfigModalOpen(true); }} className="bg-white border hover:bg-gray-50 px-3 py-1 rounded text-xs font-bold flex items-center"><Plus size={14} className="mr-1"/> {t('admin.exception_add')}</button>
-                    </div>
-                    <div className="space-y-2">
-                    {dayConfigs.map((c, idx) => (
-                        <div key={idx} className={`flex justify-between items-center p-3 rounded-lg border ${c.isOpen ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
-                        <div>
-                            <span className="font-mono font-bold block">{formatDate(c.date)}</span>
-                            <span className={`text-xs font-bold ${c.isOpen ? 'text-blue-600' : 'text-red-600'}`}>{c.isOpen ? t('admin.exception_open') : t('admin.exception_closed')}</span>
-                        </div>
-                        <div className="flex gap-2">
-                            <button onClick={() => { setEditingDayConfig(c); setIsDayConfigModalOpen(true); }} className="p-1 hover:bg-white rounded"><Edit size={16}/></button>
-                            <button onClick={() => setConfirmDelete({type: 'exception', id: c.date})} className="p-1 hover:bg-white rounded text-red-500"><Trash2 size={16}/></button>
-                        </div>
-                        </div>
-                    ))}
+                <div className="bg-white p-8 rounded-2xl border shadow-sm max-w-2xl mx-auto text-center">
+                    <h2 className="text-2xl font-bold mb-6 flex items-center justify-center gap-2">
+                        <Database className="text-accent" /> Databázové připojení
+                    </h2>
+                    <div className="grid grid-cols-2 gap-4">
+                        <button 
+                            onClick={() => { if (dataSource !== 'api') setDataSource('local'); }}
+                            disabled={dataSource === 'api'}
+                            className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'local' ? 'border-accent bg-yellow-50/50' : dataSource === 'api' ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed' : 'border-gray-200 hover:bg-gray-50'}`}
+                        >
+                            <div className={`p-4 rounded-full ${dataSource === 'local' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-400'}`}><HardDrive size={32} /></div>
+                            <div><h3 className="font-bold text-lg">Interní paměť</h3></div>
+                            {dataSource === 'local' && <Check className="text-green-500" />}
+                        </button>
+                        <button 
+                            onClick={() => setDataSource('api')}
+                            className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'api' ? 'border-blue-500 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                        >
+                            <div className={`p-4 rounded-full ${dataSource === 'api' ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-400'}`}><Server size={32} /></div>
+                            <div><h3 className="font-bold text-lg">MariaDB</h3></div>
+                            {dataSource === 'api' && <Check className="text-green-500" />}
+                        </button>
                     </div>
                 </div>
                 </div>
             )}
 
-            {activeTab === 'payments' && (
-                <div className="animate-fade-in max-w-2xl">
-                <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                    <h2 className="text-xl font-bold mb-6">{t('admin.payment_methods')}</h2>
-                    <div className="space-y-4">
-                    {settings.paymentMethods.map((pm, idx) => (
-                        <div key={pm.id} className="flex items-center justify-between p-4 border rounded-xl bg-gray-50">
-                        <div>
-                            <h4 className="font-bold">{pm.label}</h4>
-                            <p className="text-xs text-gray-500">{pm.description}</p>
-                        </div>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" className="sr-only peer" checked={pm.enabled} onChange={e => {
-                                const newMethods = [...settings.paymentMethods];
-                                newMethods[idx].enabled = e.target.checked;
-                                updateSettings({...settings, paymentMethods: newMethods});
-                            }} />
-                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                        </label>
-                        </div>
-                    ))}
-                    </div>
-                </div>
-                </div>
-            )}
-
-            {/* --- MODALS --- */}
-
+            {/* --- Modals for Editing --- */}
+            
             {isCategoryModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
                     <form onSubmit={saveCategory} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
@@ -515,6 +660,15 @@ export const Admin: React.FC = () => {
                         </div>
                     </form>
                 </div>
+            )}
+
+            {isPaymentModalOpen && editingPayment && (
+                <PaymentMethodModal
+                    isOpen={isPaymentModalOpen}
+                    method={editingPayment}
+                    onClose={() => setIsPaymentModalOpen(false)}
+                    onSave={savePaymentMethod}
+                />
             )}
 
         </div>

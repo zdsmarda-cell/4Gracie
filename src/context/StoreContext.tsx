@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation } from '../types';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, DeliveryType } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
@@ -166,6 +166,18 @@ const calculateCzIban = (accountString: string): string => {
   return `CZ${checkDigitsStr}${bban}`;
 };
 
+// Helper for fetching Fonts/Images
+const fetchAsBase64 = async (url: string): Promise<string> => {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+};
+
 const loadFromStorage = <T,>(key: string, fallback: T): T => {
   try {
     const item = localStorage.getItem(key);
@@ -211,6 +223,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
+  // ... (API calls and useEffects omitted for brevity as they are unchanged) ...
   const setDataSource = (mode: DataSourceMode) => {
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
@@ -291,7 +304,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               setProducts(data.products || []);
               setOrders(data.orders || []);
               if (data.settings) {
-                 // Ensure new properties exist if loaded from older DB version
                  const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
                  if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
                  if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
@@ -307,7 +319,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
           
           const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
-          // Patch loaded settings with defaults if categories missing (local storage migration)
           if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
           if (!loadedSettings.pickupLocations) loadedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
           
@@ -493,7 +504,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
     if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
-    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
     
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', newUser);
@@ -840,7 +851,315 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
   
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
-  const printInvoice = async (o: Order) => { const doc = new jsPDF(); doc.text(`Faktura ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
+  
+  const printInvoice = async (o: Order) => {
+      showNotify("Generuji fakturu...", "success");
+      
+      const doc = new jsPDF();
+      
+      // --- FONT LOADING (CZ SUPPORT) ---
+      try {
+          const fontUrl = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf';
+          const fontBase64 = await fetchAsBase64(fontUrl);
+          // Split base64 prefix
+          const pureBase64 = fontBase64.split(',')[1];
+          doc.addFileToVFS("Roboto-Regular.ttf", pureBase64);
+          doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+          // CRITICAL: Set this font and NEVER switch to "bold" string alias if bold font is not loaded
+          doc.setFont("Roboto", "normal"); 
+      } catch (e) {
+          console.error("Failed to load font:", e);
+          // Fallback to standard font (diacritics will fail)
+          showNotify("Nepodařilo se načíst český font. Faktura může mít poškozené znaky.", "error");
+      }
+
+      // --- LOGIC: IS VAT PAYER? ---
+      // Check if Supplier has DIC filled in settings or snapshot
+      const supplierDic = o.companyDetailsSnapshot?.dic || settings.companyDetails.dic;
+      const isVatPayer = !!supplierDic && supplierDic.trim().length > 0;
+
+      const pageWidth = doc.internal.pageSize.width;
+      const rightMargin = pageWidth - 10;
+      let y = 20;
+
+      // --- HEADER ---
+      doc.setFontSize(18);
+      // NOTE: Using "normal" font with larger size instead of "bold" to preserve diacritics
+      doc.setFont("Roboto", "normal"); 
+      doc.text(`FAKTURA - DAŇOVÝ DOKLAD č. ${o.id}`, 10, y);
+      
+      doc.setFontSize(10);
+      doc.setFont("Roboto", "normal");
+      y += 10;
+      doc.text(`Datum vystavení: ${formatDate(o.createdAt)}`, 10, y);
+      y += 5;
+      
+      if (isVatPayer) {
+          doc.text(`Datum zdan. plnění: ${formatDate(o.deliveryDate)}`, 10, y);
+          y += 5;
+      }
+      
+      // Variable Symbol
+      const vs = o.id.replace(/\D/g, '') || '0';
+      doc.text(`Var. symbol: ${vs}`, 10, y);
+      y += 5;
+      
+      // --- SUPPLIER & CUSTOMER ---
+      const ySection = y + 10;
+      
+      // SUPPLIER (Left)
+      doc.setFontSize(12);
+      doc.setFont("Roboto", "normal"); // Keep normal for consistency
+      doc.text('DODAVATEL:', 10, ySection);
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(10);
+      let ySup = ySection + 5;
+      const comp = o.companyDetailsSnapshot || settings.companyDetails;
+      
+      doc.text(comp.name || '', 10, ySup); ySup += 5;
+      doc.text(comp.street || '', 10, ySup); ySup += 5;
+      doc.text(`${comp.zip || ''} ${comp.city || ''}`, 10, ySup); ySup += 5;
+      doc.text(`IČ: ${comp.ic || ''}`, 10, ySup); ySup += 5;
+      if (comp.dic) { doc.text(`DIČ: ${comp.dic}`, 10, ySup); ySup += 5; }
+      doc.text(`Účet: ${comp.bankAccount || ''}`, 10, ySup); ySup += 5;
+      
+      // CUSTOMER (Right)
+      doc.setFontSize(12);
+      doc.setFont("Roboto", "normal");
+      doc.text('ODBĚRATEL:', 110, ySection);
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(10);
+      let yCust = ySection + 5;
+      
+      doc.text(o.userName || 'Zákazník', 110, yCust); yCust += 5;
+      
+      const addressLines = (o.billingAddress || '').split(/,|\n/).map(s => s.trim());
+      addressLines.forEach(line => {
+          if(line) { doc.text(line, 110, yCust); yCust += 5; }
+      });
+
+      // --- PAYMENT METHOD ---
+      y = Math.max(ySup, yCust) + 10;
+      doc.text(`Způsob úhrady: ${o.paymentMethod.toUpperCase()}`, 10, y);
+      y += 10;
+
+      // --- ITEMS TABLE ---
+      doc.line(10, y, pageWidth - 10, y);
+      y += 5;
+      doc.setFont("Roboto", "normal"); // Ensure font is set
+      
+      if (isVatPayer) {
+          // Columns: Položka | Ks | Cena/j bez DPH | DPH% | DPH | Celkem s DPH
+          doc.text('Položka', 10, y);
+          doc.text('Ks', 90, y);
+          doc.text('Cena/j bez DPH', 105, y);
+          doc.text('DPH', 140, y);
+          doc.text('Celkem', 170, y);
+      } else {
+          // Columns: Položka | Ks | Cena/j | Celkem
+          doc.text('Položka', 10, y);
+          doc.text('Ks', 120, y);
+          doc.text('Cena/j', 140, y);
+          doc.text('Celkem', 170, y);
+      }
+      
+      doc.setFont("Roboto", "normal");
+      y += 3;
+      doc.line(10, y, pageWidth - 10, y);
+      y += 7;
+
+      // VAT Calculation Buckets
+      const vatSummary: Record<number, { base: number, tax: number, total: number }> = {};
+      let maxVatRate = 0; // Track max rate found for fees
+      
+      const addToVat = (rate: number, priceTotalWithVat: number) => {
+          if (!vatSummary[rate]) vatSummary[rate] = { base: 0, tax: 0, total: 0 };
+          
+          // Reverse calculation from Price With VAT
+          // Base = Total / (1 + rate/100)
+          const base = priceTotalWithVat / (1 + rate / 100);
+          const tax = priceTotalWithVat - base;
+          
+          vatSummary[rate].base += base;
+          vatSummary[rate].tax += tax;
+          vatSummary[rate].total += priceTotalWithVat;
+      };
+
+      // Loop items
+      o.items.forEach(item => {
+          let name = item.name;
+          if (name.length > 35) name = name.substring(0, 32) + '...';
+          
+          const itemTotal = item.price * item.quantity;
+          
+          if (isVatPayer) {
+              // Determine VAT Rate
+              const rate = o.deliveryType === DeliveryType.DELIVERY || o.deliveryType === DeliveryType.PICKUP 
+                  ? (item.vatRateTakeaway || 15) // Fallback 15% standard food
+                  : (item.vatRateInner || 12);
+              
+              if (rate > maxVatRate) maxVatRate = rate;
+
+              const pricePerUnitWithVat = item.price;
+              const pricePerUnitBase = pricePerUnitWithVat / (1 + rate / 100);
+              
+              doc.text(name, 10, y);
+              doc.text(item.quantity.toString(), 90, y);
+              doc.text(pricePerUnitBase.toFixed(2), 105, y);
+              doc.text(`${rate}%`, 140, y);
+              doc.text(itemTotal.toFixed(2), 170, y);
+              
+              addToVat(rate, itemTotal);
+          } else {
+              doc.text(name, 10, y);
+              doc.text(item.quantity.toString(), 120, y);
+              doc.text(item.price.toString(), 140, y);
+              doc.text(itemTotal.toString(), 170, y);
+          }
+          y += 7;
+      });
+
+      // Default max VAT if no items (fallback)
+      if (maxVatRate === 0) maxVatRate = 21;
+
+      // Fees (Packaging, Delivery) -> Dynamic Rate based on highest item rate
+      const feesVatRate = maxVatRate; 
+      
+      if (o.packagingFee > 0) {
+          doc.text('Balné', 10, y);
+          doc.text('1', isVatPayer ? 90 : 120, y);
+          
+          if (isVatPayer) {
+              const base = o.packagingFee / (1 + feesVatRate/100);
+              doc.text(base.toFixed(2), 105, y);
+              doc.text(`${feesVatRate}%`, 140, y);
+              doc.text(o.packagingFee.toString(), 170, y);
+              addToVat(feesVatRate, o.packagingFee);
+          } else {
+              doc.text(o.packagingFee.toString(), 140, y);
+              doc.text(o.packagingFee.toString(), 170, y);
+          }
+          y += 7;
+      }
+      
+      if (o.deliveryFee > 0) {
+          doc.text('Doprava', 10, y);
+          doc.text('1', isVatPayer ? 90 : 120, y);
+          
+          if (isVatPayer) {
+              const base = o.deliveryFee / (1 + feesVatRate/100);
+              doc.text(base.toFixed(2), 105, y);
+              doc.text(`${feesVatRate}%`, 140, y);
+              doc.text(o.deliveryFee.toString(), 170, y);
+              addToVat(feesVatRate, o.deliveryFee);
+          } else {
+              doc.text(o.deliveryFee.toString(), 140, y);
+              doc.text(o.deliveryFee.toString(), 170, y);
+          }
+          y += 7;
+      }
+
+      // Discounts
+      if (o.appliedDiscounts && o.appliedDiscounts.length > 0) {
+          o.appliedDiscounts.forEach(d => {
+              doc.setTextColor(200, 0, 0); // Red
+              doc.text(`Sleva (${d.code})`, 10, y);
+              
+              const negativeAmount = -d.amount;
+              if (isVatPayer) {
+                  // Discount usually reduces the base proportionally, simplifying here to specific rate or proportional
+                  // For invoice simplicity, we apply discount as a negative item with 0% or blended.
+                  // BETTER: Just show negative total.
+                  doc.text(negativeAmount.toString(), 170, y);
+                  // Note: Correct VAT handling of discounts is complex (pro-rate). 
+                  // Here we subtract from TOTAL mainly.
+              } else {
+                  doc.text(negativeAmount.toString(), 170, y);
+              }
+              doc.setTextColor(0, 0, 0);
+              y += 7;
+          });
+      }
+
+      doc.line(10, y, pageWidth - 10, y);
+      y += 10;
+
+      // --- RECAPITULATION (VAT Payer Only) ---
+      if (isVatPayer) {
+          const discountSum = o.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0;
+          
+          doc.setFontSize(9);
+          doc.text('Rekapitulace DPH (v Kč):', 10, y);
+          y += 5;
+          doc.setFont("Roboto", "normal");
+          doc.text('Sazba', 10, y);
+          doc.text('Základ', 40, y);
+          doc.text('Daň', 70, y);
+          doc.text('Celkem', 100, y);
+          doc.setFont("Roboto", "normal");
+          y += 5;
+
+          let totalBase = 0;
+          let totalTax = 0;
+
+          Object.keys(vatSummary).forEach(rKey => {
+              const r = Number(rKey);
+              const data = vatSummary[r];
+              doc.text(`${r}%`, 10, y);
+              doc.text(data.base.toFixed(2), 40, y);
+              doc.text(data.tax.toFixed(2), 70, y);
+              doc.text(data.total.toFixed(2), 100, y);
+              
+              totalBase += data.base;
+              totalTax += data.tax;
+              y += 5;
+          });
+          
+          doc.line(10, y, 130, y);
+          y += 5;
+          doc.setFont("Roboto", "normal");
+          doc.text('Součet', 10, y);
+          doc.text(totalBase.toFixed(2), 40, y);
+          doc.text(totalTax.toFixed(2), 70, y);
+          doc.setFont("Roboto", "normal");
+          y += 15;
+      }
+
+      // --- TOTAL & QR ---
+      const discountSum = o.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0;
+      const finalTotal = Math.max(0, o.totalPrice - discountSum) + o.packagingFee + (o.deliveryFee || 0);
+
+      doc.setFontSize(14);
+      doc.setFont("Roboto", "normal");
+      // Fixed alignment using right margin
+      doc.text(`CELKEM K ÚHRADĚ: ${finalTotal.toFixed(2)} Kč`, rightMargin, y, { align: 'right' });
+      
+      // QR Code Generation & Embedding
+      try {
+          const iban = calculateCzIban(settings.companyDetails.bankAccount).replace(/\s/g,'');
+          const bic = settings.companyDetails.bic ? `+${settings.companyDetails.bic}` : '';
+          const acc = `ACC:${iban}${bic}`;
+          const msg = removeDiacritics(`Objednavka ${o.id}`);
+          const qrString = `SPD*1.0*${acc}*AM:${finalTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
+          
+          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrString)}`;
+          const qrBase64 = await fetchAsBase64(qrUrl);
+          
+          // Add QR image (x, y, w, h)
+          doc.addImage(qrBase64, 'PNG', 150, y + 5, 40, 40);
+          doc.setFontSize(8);
+          doc.setFont("Roboto", "normal");
+          doc.text('QR Platba', 160, y + 48);
+          
+      } catch (err) {
+          console.error("QR Code generation failed for PDF:", err);
+      }
+
+      // Save
+      doc.save(`faktura_${o.id}.pdf`);
+      showNotify("Faktura stažena.", "success");
+  };
+  
   const generateCzIban = calculateCzIban;
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-400">Načítám data...</div>;

@@ -17,6 +17,7 @@ export const AuthModal: React.FC = () => {
 
   if (!isAuthModalOpen) return null;
 
+  // Strict regex patterns
   const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const validatePhone = (phone: string) => /^[+]?[0-9]{9,}$/.test(phone.replace(/\s/g, ''));
   const validateName = (name: string) => name.trim().length >= 3;
@@ -47,6 +48,10 @@ export const AuthModal: React.FC = () => {
       }
       if (!validatePhone(phone)) {
         setError(t('validation.phone_format'));
+        return;
+      }
+      if (password.length < 4) {
+        setError(t('validation.password_length'));
         return;
       }
 
