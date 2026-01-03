@@ -342,10 +342,31 @@ export const Admin: React.FC = () => {
     const [validationMessage, setValidationMessage] = useState<string | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<{type: string, id: string, name: string} | null>(null);
 
+    // LOAD HISTORY STATES
     const [showLoadHistory, setShowLoadHistory] = useState(false);
+    const [historyYear, setHistoryYear] = useState(new Date().getFullYear());
+    const [historyMonth, setHistoryMonth] = useState(new Date().getMonth()); // 0-11
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     
+    // Determine min year from orders for the year selector
+    const minOrderYear = useMemo(() => {
+        if (orders.length === 0) return new Date().getFullYear();
+        const years = orders.map(o => new Date(o.deliveryDate).getFullYear()).filter(y => !isNaN(y));
+        return years.length > 0 ? Math.min(...years) : new Date().getFullYear();
+    }, [orders]);
+
+    const currentYear = new Date().getFullYear();
+    const yearsRange = useMemo(() => {
+        const years = [];
+        for (let y = currentYear; y >= minOrderYear; y--) {
+            years.push(y);
+        }
+        return years;
+    }, [minOrderYear, currentYear]);
+
+    const monthNames = ["Leden", "Únor", "Březen", "Duben", "Květen", "Červen", "Červenec", "Srpen", "Září", "Říjen", "Listopad", "Prosinec"];
+
     const loadDates = useMemo(() => {
         const dates = new Set<string>();
         
@@ -358,11 +379,27 @@ export const Admin: React.FC = () => {
         dayConfigs.forEach(c => dates.add(c.date));
         
         const today = new Date().toISOString().split('T')[0];
+        const uniqueDates = Array.from(dates);
+
         if (!showLoadHistory) {
-             return Array.from(dates).filter(d => d >= today).sort();
+             return uniqueDates.filter(d => d >= today).sort();
         }
-        return Array.from(dates).sort().reverse();
-    }, [dayConfigs, orders, showLoadHistory]);
+        
+        // History Logic: Filter by selected Month and Year AND must be in the past
+        return uniqueDates.filter(d => {
+            const dateObj = new Date(d);
+            if (isNaN(dateObj.getTime())) return false; // Invalid date check
+            
+            // Check matching month/year (Handling JS Month 0-11)
+            // Note: Parse string manually to avoid timezone shift "2023-01-01" -> "2023", "01"
+            const [yStr, mStr] = d.split('-');
+            const y = parseInt(yStr);
+            const m = parseInt(mStr) - 1; // 0-based
+
+            return y === historyYear && m === historyMonth && d < today;
+        }).sort().reverse();
+
+    }, [dayConfigs, orders, showLoadHistory, historyYear, historyMonth]);
 
     const getDayCapacityLimit = (date: string, catId: string) => {
         const config = dayConfigs.find(d => d.date === date);
@@ -650,9 +687,29 @@ export const Admin: React.FC = () => {
                 <div className="animate-fade-in space-y-4">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-bold text-primary">{t('admin.load')}</h2>
-                    <button onClick={() => setShowLoadHistory(!showLoadHistory)} className="text-xs bg-white border px-3 py-1 rounded hover:bg-gray-50">
-                    {showLoadHistory ? t('admin.view_current') : t('admin.view_history')}
-                    </button>
+                    <div className="flex items-center gap-4">
+                        {showLoadHistory && (
+                            <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-lg border">
+                                <select 
+                                    className="text-xs border-r bg-transparent px-2 font-bold focus:outline-none"
+                                    value={historyMonth}
+                                    onChange={e => setHistoryMonth(Number(e.target.value))}
+                                >
+                                    {monthNames.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                                </select>
+                                <select 
+                                    className="text-xs bg-transparent px-2 font-bold focus:outline-none"
+                                    value={historyYear}
+                                    onChange={e => setHistoryYear(Number(e.target.value))}
+                                >
+                                    {yearsRange.map(y => <option key={y} value={y}>{y}</option>)}
+                                </select>
+                            </div>
+                        )}
+                        <button onClick={() => setShowLoadHistory(!showLoadHistory)} className="text-xs bg-white border px-3 py-1 rounded hover:bg-gray-50">
+                            {showLoadHistory ? t('admin.view_current') : t('admin.view_history')}
+                        </button>
+                    </div>
                 </div>
                 
                 <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto">
