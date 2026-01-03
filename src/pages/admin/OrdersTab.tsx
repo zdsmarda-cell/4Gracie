@@ -5,12 +5,34 @@ import { Order, OrderStatus, DeliveryType, Language, Product } from '../../types
 import { FileText, Save, X, AlertCircle, Plus, Minus, Trash2, CheckCircle, Search, Tag, CreditCard, ImageIcon, QrCode } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
-export const OrdersTab: React.FC = () => {
+interface OrdersTabProps {
+    initialDate?: string | null;
+    onClearInitialDate?: () => void;
+}
+
+export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitialDate }) => {
     const { orders, allUsers, t, updateOrder, updateOrderStatus, formatDate, settings, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, checkAvailability, products, calculatePackagingFee, validateDiscount, printInvoice, generateCzIban, removeDiacritics } = useStore();
     const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
     const [notifyCustomer, setNotifyCustomer] = useState(false);
     const [orderFilters, setOrderFilters] = useState({ id: '', dateFrom: '', dateTo: '', customer: '', status: '', ic: '' });
     
+    // Handle Initial Date from Props (Navigation from Load Tab)
+    useEffect(() => {
+        if (initialDate) {
+            setOrderFilters(prev => ({
+                ...prev,
+                dateFrom: initialDate,
+                dateTo: initialDate,
+                id: '',
+                customer: '',
+                status: '',
+                ic: ''
+            }));
+            // Call callback to clear parent state so it doesn't re-trigger unnecessarily
+            if (onClearInitialDate) onClearInitialDate();
+        }
+    }, [initialDate, onClearInitialDate]);
+
     // Modal State
     const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
     const [editingOrder, setEditingOrder] = useState<Order | null>(null);

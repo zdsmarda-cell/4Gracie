@@ -118,6 +118,9 @@ export const Admin: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState('orders');
     
+    // Cross-tab filter state
+    const [ordersTabFilterDate, setOrdersTabFilterDate] = useState<string | null>(null);
+
     // Modal States
     const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
@@ -288,7 +291,13 @@ export const Admin: React.FC = () => {
 
             {/* --- TABS --- */}
 
-            {activeTab === 'orders' && <OrdersTab />}
+            {activeTab === 'orders' && (
+                <OrdersTab 
+                    initialDate={ordersTabFilterDate} 
+                    onClearInitialDate={() => setOrdersTabFilterDate(null)} 
+                />
+            )}
+            
             {activeTab === 'users' && <UsersTab />}
             {activeTab === 'products' && <ProductsTab />}
             {activeTab === 'discounts' && <DiscountsTab />}
@@ -416,6 +425,7 @@ export const Admin: React.FC = () => {
                         <tr>
                         <th className="px-6 py-4 text-left min-w-[120px]">Datum</th>
                         <th className="px-6 py-4 text-left w-32">Stav</th>
+                        <th className="px-6 py-4 text-center">Objednávky</th>
                         {sortedCategories.map(cat => (
                             <th key={cat.id} className="px-6 py-4 text-left min-w-[150px]">{cat.name}</th>
                         ))}
@@ -426,6 +436,7 @@ export const Admin: React.FC = () => {
                         const load = getDailyLoad(date);
                         const dayConfig = dayConfigs.find(d => d.date === date);
                         const isClosed = dayConfig && !dayConfig.isOpen;
+                        const activeOrderCount = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED).length;
                         
                         return (
                             <tr key={date} className={`hover:bg-gray-50 ${isClosed ? 'bg-red-50' : ''}`}>
@@ -437,6 +448,22 @@ export const Admin: React.FC = () => {
                                 <span className="text-red-600 font-bold uppercase text-[10px]">{t('admin.exception_closed')}</span> 
                                 : <span className="text-green-600 font-bold uppercase text-[10px]">Otevřeno</span>
                                 }
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                                {activeOrderCount > 0 ? (
+                                    <button 
+                                        onClick={() => {
+                                            setOrdersTabFilterDate(date);
+                                            setActiveTab('orders');
+                                        }}
+                                        className="text-blue-600 font-bold hover:underline bg-blue-50 px-2 py-1 rounded transition hover:bg-blue-100"
+                                        title="Zobrazit objednávky pro tento den"
+                                    >
+                                        {activeOrderCount}
+                                    </button>
+                                ) : (
+                                    <span className="text-gray-400 font-medium">0</span>
+                                )}
                             </td>
                             {sortedCategories.map(cat => {
                                 const limit = getDayCapacityLimit(date, cat.id);

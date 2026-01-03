@@ -11,6 +11,7 @@ import { Admin } from './pages/Admin';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Terms } from './pages/Terms';
+import { Contacts } from './pages/Contacts';
 import { X, Info, Truck, AlertCircle, CheckCircle, Loader2, Store } from 'lucide-react';
 
 // Login Overlay Mock (for demo purposes) - Updated to use AuthModal trigger for consistency
@@ -240,6 +241,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   
   const hasActiveDelivery = settings.deliveryRegions.some(r => r.enabled);
   const hasActivePickup = settings.pickupLocations?.some(l => l.enabled);
+  const currentYear = new Date().getFullYear();
 
   return (
     <div className="min-h-screen flex flex-col font-sans">
@@ -255,8 +257,11 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       <footer className="bg-primary text-gray-400 py-8 text-center text-sm">
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex flex-col items-center md:items-start gap-1">
-            <p>&copy; 2023 4Gracie Catering. All rights reserved.</p>
-            <Link to="/terms" className="text-accent hover:text-white transition font-bold text-xs underline">Všeobecné obchodní podmínky</Link>
+            <p>&copy; {currentYear} 4Gracie</p>
+            <div className="flex gap-4">
+                <Link to="/contacts" className="text-accent hover:text-white transition underline text-xs font-bold">Kontakty</Link>
+                <Link to="/terms" className="text-accent hover:text-white transition underline text-xs font-bold">VOP</Link>
+            </div>
           </div>
           <div className="flex gap-4">
               {hasActiveDelivery && (
@@ -295,6 +300,7 @@ const App: React.FC = () => {
             <Route path="/admin" element={<Admin />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/terms" element={<Terms />} />
+            <Route path="/contacts" element={<Contacts />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Layout>
