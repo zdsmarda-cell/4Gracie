@@ -10,7 +10,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import nodemailer from 'nodemailer';
 import { jsPDF } from 'jspdf';
-import { GoogleGenAI } from "@google/genai";
 
 // --- POLYFILLS FOR NODE.JS ENVIRONMENT ---
 if (typeof global.btoa === 'undefined') {
@@ -735,6 +734,16 @@ app.post('/api/admin/translate', async (req, res) => {
     }
 
     try {
+        // Dynamic import to prevent crash if package is missing
+        let GoogleGenAI;
+        try {
+            const module = await import("@google/genai");
+            GoogleGenAI = module.GoogleGenAI;
+        } catch (e) {
+            console.error("GoogleGenAI package not found. Please run 'npm install @google/genai'");
+            return res.status(500).json({ error: "Missing dependency: @google/genai" });
+        }
+
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const prompt = `Translate the following JSON object values into English (en) and German (de). Return ONLY valid JSON in format { "translations": { "en": {...}, "de": {...} } }. Source: ${JSON.stringify(sourceData)}`;
         
@@ -743,7 +752,8 @@ app.post('/api/admin/translate', async (req, res) => {
             contents: prompt
         });
         
-        const text = response.response.text();
+        // Correct usage of text property from GenerateContentResponse
+        const text = response.text; 
         const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
         const json = JSON.parse(cleanText);
         res.json(json);
