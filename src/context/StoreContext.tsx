@@ -225,13 +225,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return text;
   }, [language]);
 
-  const tData = (obj: any, field: string): string => {
+  const tData = useCallback((obj: any, field: string): string => {
     if (!obj) return '';
     if (language !== Language.CS && obj.translations && obj.translations[language] && obj.translations[language][field]) {
         return obj.translations[language][field];
     }
     return obj[field] || '';
-  };
+  }, [language]);
 
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -278,7 +278,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
     
-    // Only set pending if it's a write operation or explicit check needed
+    // Only set pending if it's a write operation
     const isWrite = method !== 'GET';
     if (isWrite) setIsOperationPending(true);
     
@@ -307,7 +307,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
-          // If 304, fetch might return opaque/empty body sometimes if browser handles cache?
+          // If 304, browser serves from cache, no body usually
           if (res.status === 304) {
              return { success: true, notModified: true }; 
           }
@@ -333,7 +333,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [getFullApiUrl, showNotify]);
 
-  const uploadImage = async (base64: string, name?: string): Promise<string> => {
+  const uploadImage = useCallback(async (base64: string, name?: string): Promise<string> => {
       if (dataSource === 'local') {
           return base64;
       }
@@ -353,24 +353,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       showNotify('Nahrání obrázku na server selhalo, uložen lokálně (Base64).', 'error');
       return base64;
-  };
+  }, [dataSource, apiCall, getFullApiUrl, showNotify]);
 
   const fetchData = useCallback(async (silent = false) => {
       if (!silent) setIsLoading(true);
       try {
         if (dataSource === 'api') {
-          // Optimization: If silent refresh, we might not want to clear states first to avoid flickering
-          if (!silent) {
-              setAllUsers([]);
-              setProducts([]);
-              setOrders([]); 
-              setDiscountCodes([]);
-              setDayConfigs([]);
-              setSettings(EMPTY_SETTINGS);
-          }
-          
           const data = await apiCall('/api/bootstrap', 'GET');
-          if (data) {
+          if (data && !data.notModified) {
+              // Only update state if data is present and actually loaded
+              // If we do explicit setOrders etc here, it triggers re-renders. 
+              // We must do it only if data changed or is fresh.
+              
               if (data.users) setAllUsers(data.users);
               if (data.products) setProducts(data.products);
               if (data.orders) setOrders(data.orders);
@@ -410,8 +404,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [dataSource, apiCall, showNotify]);
 
+  // Initial load
   useEffect(() => {
-    fetchData(false); // Initial load is blocking
+    fetchData(false);
   }, [fetchData]);
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
@@ -461,7 +456,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // --- HELPER FUNCTIONS MOVED UP FOR DEPENDENCY RESOLUTION ---
 
-  const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
+  const calculateDiscountAmount = useCallback((code: string, currentCart: CartItem[]): ValidateDiscountResult => {
     const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
     if (!dc) return { success: false, error: t('discount.invalid') };
     if (!dc.enabled) return { success: false, error: 'Tento kód je již neaktivní.' };
@@ -482,7 +477,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dc.type === DiscountType.PERCENTAGE) calculatedAmount = Math.floor(applicableTotal * (dc.value / 100));
     else calculatedAmount = Math.min(dc.value, applicableTotal);
     return { success: true, discount: dc, amount: calculatedAmount };
-  };
+  }, [discountCodes, orders, t]);
 
   // --- CORE USER FUNCTIONS MOVED UP ---
 
@@ -558,7 +553,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setAppliedDiscounts(updatedDiscounts);
       if (removedCodes.length > 0) showNotify(`Slevový kupon ${removedCodes.join(', ')} byl odebrán.`, 'error');
     }
-  }, [cart]);
+  }, [cart, calculateDiscountAmount, appliedDiscounts, showNotify]);
 
   // --- DEPENDENT FUNCTIONS ---
 
@@ -1138,6 +1133,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   const generateCzIban = calculateCzIban;
 
+  // Memoize the refreshData wrapper
+  const refreshData = useCallback((silent = true) => {
+      return fetchData(silent);
+  }, [fetchData]);
+
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-400">Načítám data...</div>;
 
   return (
@@ -1155,7 +1155,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       getFullApiUrl,
       isPreviewEnvironment,
-      refreshData: (silent = true) => fetchData(silent)
+      refreshData // Now stable
     }}>
       {children}
     </StoreContext.Provider>
