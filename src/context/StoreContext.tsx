@@ -400,7 +400,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
     setCartBump(true);
     setTimeout(() => setCartBump(false), 300);
-    showNotify(t('notification.added_to_cart', { name: product.name }));
+    // Notification Removed as requested
   };
 
   const removeFromCart = (id: string) => {
@@ -591,7 +591,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const searchOrders = async (filters: any): Promise<OrdersSearchResult> => {
+  // Wrapped in useCallback to prevent infinite loop in Admin OrdersTab
+  const searchOrders = useCallback(async (filters: any): Promise<OrdersSearchResult> => {
       if (dataSource === 'api') {
           const queryString = new URLSearchParams(filters as any).toString();
           const res = await apiCall(`/api/orders?${queryString}`, 'GET');
@@ -600,6 +601,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
           return { orders: [], total: 0, page: 1, pages: 1 };
       } else {
+          // Logic for local filtering (relying on 'orders' state)
           let filtered = orders.filter(o => {
               if (filters.id && !o.id.includes(filters.id)) return false;
               if (filters.userId && o.userId !== filters.userId) return false;
@@ -619,7 +621,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               pages: Math.ceil(filtered.length / limit)
           };
       }
-  };
+  }, [dataSource, orders, apiCall]); // Dependencies for local filtering + api call
 
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
@@ -690,14 +692,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const searchUsers = async (filter: {search?: string}): Promise<User[]> => {
+  // Wrapped in useCallback to prevent infinite loop in Admin UsersTab
+  const searchUsers = useCallback(async (filter: {search?: string}): Promise<User[]> => {
       if (dataSource === 'api') {
           const res = await apiCall(`/api/users?search=${filter.search || ''}`, 'GET');
           return res?.users || [];
       }
       const term = (filter.search || '').toLowerCase();
       return allUsers.filter(u => u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term));
-  };
+  }, [dataSource, allUsers, apiCall]);
 
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
       const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };

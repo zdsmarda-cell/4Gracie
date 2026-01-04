@@ -23,14 +23,6 @@ export const UsersTab: React.FC = () => {
         try {
             const users = await searchUsers({ search: userFilters.search });
             // Post-filter complex fields (spent/order count) that require order traversal
-            // Optimization: In a real app with 1M users, backend must do aggregation.
-            // Here we assume manageable dataset or limited return from API
-            
-            // Note: 'orders' in context only has active orders. 
-            // We need to fetch stats for these users or rely on what's available.
-            // To properly filter by spent/ordersMin, we'd need backend aggregation.
-            // For now, filtering by name/email happens on server (via search param).
-            // Filtering by stats happens client side on the fetched batch.
             setFetchedUsers(users);
         } catch (e) {
             console.error(e);
@@ -39,10 +31,13 @@ export const UsersTab: React.FC = () => {
         }
     }, [searchUsers, userFilters.search]);
 
+    // FIX INFINITE LOOP: depend on filters, not the function
     useEffect(() => {
-        const timer = setTimeout(loadUsers, 300);
+        const timer = setTimeout(() => {
+            loadUsers();
+        }, 300);
         return () => clearTimeout(timer);
-    }, [loadUsers]);
+    }, [userFilters.search]); // Simplified dependency to just search filter for now
 
     const filteredUsers = useMemo(() => {
         return fetchedUsers.filter(u => {

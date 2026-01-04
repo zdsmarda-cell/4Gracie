@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Order, OrderStatus, DeliveryType, Product, Address, User } from '../../types';
+import { Order, OrderStatus, DeliveryType, Product, Address, User, Language } from '../../types';
 import { FileText, X, AlertCircle, Plus, Minus, Trash2, Search, ImageIcon, QrCode, Mail, FileCheck, ChevronDown, Save, AlertTriangle } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
@@ -80,11 +80,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         }
     }, [searchOrders, orderFilters, currentPage, limit]);
 
-    // Initial Load & Filter Change
+    // FIX INFINITE LOOP: Remove loadOrders from dependencies, depend on primitives
     useEffect(() => {
-        const timer = setTimeout(loadOrders, 300);
-        return () => clearTimeout(timer);
-    }, [loadOrders]);
+        loadOrders();
+    }, [currentPage, limit, orderFilters]); // Removed 'loadOrders' dependency
 
     // Reset page on filter change
     useEffect(() => {
@@ -686,6 +685,16 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                         </div>
                                     </div>
 
+                                   <div>
+                                     <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('admin.comm_lang')}</label>
+                                     <select className="w-full border rounded p-2 text-sm" value={editingOrder.language || Language.CS} onChange={e => setEditingOrder({...editingOrder, language: e.target.value as Language})}>
+                                       {Object.values(Language).map((lang) => (
+                                            <option key={lang} value={lang}>
+                                                {lang.toUpperCase()}
+                                            </option>
+                                        ))}
+                                     </select>
+                                   </div>
                                 </div>
                             </div>
                             <div className="space-y-4">
