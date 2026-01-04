@@ -55,10 +55,10 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Global headers
+// Global headers - Be careful not to block images
 app.use((req, res, next) => {
-    // Check if path starts with /uploads but handle the parameter logic later
-    if (!req.path.startsWith('/uploads')) {
+    // Only disable caching for API endpoints, allow it for uploads
+    if (req.path.startsWith('/api')) {
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     }
     next();
@@ -75,47 +75,45 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursi
 
 console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 
-// FIXED: Express 5 specific wildcard handling for manual file serving
-// We use a manual handler to ensure complete control over path resolution and headers
-app.get('/uploads/*', (req, res) => {
+// FIXED: Use REGEX routing to bypass Express 5 "path-to-regexp" syntax errors.
+// Matches any path starting with /uploads/ and captures the rest in params[0]
+app.get(/^\/uploads\/(.+)$/, (req, res) => {
     try {
-        // In Express 5, the wildcard '*' is captured in req.params[0]
         const relativePath = req.params[0];
         
+        // Prevent directory traversal
         if (!relativePath || relativePath.includes('..')) {
             return res.status(403).send('Access Denied');
         }
 
-        // Decode URI component to handle spaces and special chars in filenames
-        const safePath = decodeURIComponent(relativePath);
-        const fullPath = path.join(UPLOAD_ROOT, safePath);
+        const fullPath = path.join(UPLOAD_ROOT, relativePath);
 
-        // Security check: ensure the resolved path is still within UPLOAD_ROOT
+        // Verify the file is actually inside our upload root
         if (!fullPath.startsWith(UPLOAD_ROOT)) {
             return res.status(403).send('Access Denied');
         }
 
         if (fs.existsSync(fullPath)) {
-            // Check if it is a directory
-            const stats = fs.statSync(fullPath);
-            if (stats.isDirectory()) {
-                return res.status(403).send('Directory listing denied');
+            // Check if directory
+            if (fs.statSync(fullPath).isDirectory()) {
+                return res.status(403).send('Access Denied');
             }
             
-            // Send file with absolute path
+            // Explicitly use absolute path with root option disabled (since we provide absolute path)
+            // or just provide the absolute path string.
             res.sendFile(fullPath, (err) => {
                 if (err) {
                     console.error(`❌ Error sending file ${fullPath}:`, err);
-                    if (!res.headersSent) res.status(500).send('Error serving file');
+                    if (!res.headersSent) res.status(500).end(); 
                 }
             });
         } else {
-            console.warn(`⚠️ File not found: ${fullPath}`);
+            console.warn(`⚠️ 404 Not Found: ${fullPath}`);
             res.status(404).send('File not found');
         }
     } catch (error) {
         console.error('Server error serving file:', error);
-        res.status(500).send('Internal Server Error');
+        if (!res.headersSent) res.status(500).send('Internal Server Error');
     }
 });
 
