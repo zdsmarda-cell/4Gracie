@@ -77,34 +77,11 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
     }
 }
 
-// Explicitly serve uploads using res.sendFile for robustness
-// FIXED: Use Regex object routing to bypass Express 5 string parser issues.
-// Matches /uploads/ followed by any character sequence (captured in group 0)
-app.get(/^\/uploads\/(.+)$/, (req, res) => {
-    try {
-        // In regex routes, capture groups are mapped to req.params[0], req.params[1], etc.
-        const relativePath = req.params[0];
-        
-        if (!relativePath || relativePath.includes('..')) {
-            return res.status(403).send('Access Denied');
-        }
-        
-        const fullPath = path.join(UPLOAD_ROOT, relativePath);
+console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 
-        if (!fullPath.startsWith(UPLOAD_ROOT)) {
-            return res.status(403).send('Access Denied');
-        }
-
-        if (fs.existsSync(fullPath)) {
-            res.sendFile(fullPath);
-        } else {
-            res.status(404).send('File not found');
-        }
-    } catch (error) {
-        console.error('Error serving file:', error);
-        res.status(500).send('Internal Server Error');
-    }
-});
+// FIXED: Use express.static instead of manual routing.
+// This automatically handles MIME types, Content-Length, and prevents empty responses.
+app.use('/uploads', express.static(UPLOAD_ROOT));
 
 // --- DATABASE CONNECTION ---
 let pool = null;

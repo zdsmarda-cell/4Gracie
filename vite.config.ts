@@ -23,6 +23,11 @@ export default defineConfig({
         target: 'http://localhost:3000', 
         changeOrigin: true,
         secure: false, // Allow self-signed certs if needed
+      },
+      '/uploads': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        secure: false,
       }
     }
   },
