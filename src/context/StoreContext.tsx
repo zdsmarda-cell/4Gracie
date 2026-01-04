@@ -340,6 +340,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
               // removed showNotify for silent refresh
+          } else {
+              // API returned null/undefined (e.g. error caught in apiCall)
+              // Explicitly notify user about connection failure in production
+              showNotify('Nepodařilo se načíst data ze serveru. Zkontrolujte připojení.', 'error', false);
           }
         } else {
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));

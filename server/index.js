@@ -290,6 +290,15 @@ const withDb = (handler) => async (req, res) => {
 
 // --- API ENDPOINTS ---
 
+app.get('/api/health', async (req, res) => {
+    const db = await getDb();
+    if (db) {
+        res.json({ status: 'ok', database: 'connected' });
+    } else {
+        res.status(500).json({ status: 'error', database: 'disconnected' });
+    }
+});
+
 app.get('/api/bootstrap', withDb(async (req, res, db) => {
     const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
     const products = prodRows.map(row => ({
