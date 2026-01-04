@@ -45,6 +45,11 @@ interface RegionDateInfo {
   reason?: string;
 }
 
+interface DailyLoadResult {
+    load: Record<string, number>;
+    usedProductIds: Set<string>;
+}
+
 export type DataSourceMode = 'local' | 'api';
 
 interface GlobalNotification {
@@ -118,7 +123,7 @@ interface StoreContextType {
   
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
-  getDailyLoad: (date: string, excludeOrderId?: string) => Record<string, number>;
+  getDailyLoad: (date: string, excludeOrderId?: string) => DailyLoadResult;
   getDeliveryRegion: (zip: string) => DeliveryRegion | undefined;
   getRegionInfoForDate: (region: DeliveryRegion, date: string) => RegionDateInfo;
   getPickupPointInfo: (location: PickupLocation, date: string) => RegionDateInfo; 
@@ -329,10 +334,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (dataSource === 'api') {
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data) {
-              // We DO NOT fetch users here anymore. 
-              // Users are fetched on-demand in the Admin UsersTab via searchUsers.
               setAllUsers([]); 
-              
               setProducts(data.products || []);
               setOrders(data.orders || []);
               if (data.settings) {
@@ -400,7 +402,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
     setCartBump(true);
     setTimeout(() => setCartBump(false), 300);
-    // Notification Removed as requested
   };
 
   const removeFromCart = (id: string) => {
@@ -556,8 +557,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
        if (res && res.success) {
           setOrders(prev => prev.map(o => {
             if (ids.includes(o.id)) {
-              // If status becomes delivered, assume server updated finalInvoiceDate
-              // To be safe, we might need to re-fetch or optimistically update
               const updatedOrder = { 
                   ...o, 
                   status, 
@@ -591,7 +590,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // Wrapped in useCallback to prevent infinite loop in Admin OrdersTab
   const searchOrders = useCallback(async (filters: any): Promise<OrdersSearchResult> => {
       if (dataSource === 'api') {
           const queryString = new URLSearchParams(filters as any).toString();
@@ -601,7 +599,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
           return { orders: [], total: 0, page: 1, pages: 1 };
       } else {
-          // Logic for local filtering (relying on 'orders' state)
           let filtered = orders.filter(o => {
               if (filters.id && !o.id.includes(filters.id)) return false;
               if (filters.userId && o.userId !== filters.userId) return false;
@@ -621,7 +618,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               pages: Math.ceil(filtered.length / limit)
           };
       }
-  }, [dataSource, orders, apiCall]); // Dependencies for local filtering + api call
+  }, [dataSource, orders, apiCall]); 
 
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
@@ -692,7 +689,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // Wrapped in useCallback to prevent infinite loop in Admin UsersTab
   const searchUsers = useCallback(async (filter: {search?: string}): Promise<User[]> => {
       if (dataSource === 'api') {
           const res = await apiCall(`/api/users?search=${filter.search || ''}`, 'GET');
@@ -839,12 +835,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const getDailyLoad = (date: string, excludeOrderId?: string) => {
+  const getDailyLoad = (date: string, excludeOrderId?: string): DailyLoadResult => {
     const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
     const load: Record<string, number> = {};
     (settings.categories || []).forEach(cat => load[cat.id] = 0);
     Object.values(ProductCategory).forEach(c => { if (load[c] === undefined) load[c] = 0; });
     const usedProductIds = new Set<string>();
+    
     relevantOrders.forEach(order => {
       if (!order.items) return;
       order.items.forEach(item => {
@@ -852,14 +849,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const itemWorkload = Number(productDef?.workload) || Number(item.workload) || 0;
         const itemOverhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
         const cat = item.category || productDef?.category;
+        
         if (cat) {
              if (load[cat] === undefined) load[cat] = 0;
              load[cat] += itemWorkload * item.quantity;
-             if (!usedProductIds.has(String(item.id))) { load[cat] += itemOverhead; usedProductIds.add(String(item.id)); }
+             if (!usedProductIds.has(String(item.id))) { 
+                 load[cat] += itemOverhead; 
+                 usedProductIds.add(String(item.id)); 
+             }
         }
       });
     });
-    return load;
+    return { load, usedProductIds };
   };
 
   const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
@@ -873,16 +874,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const config = dayConfigs.find(d => d.date === date);
     if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
     
-    const load = getDailyLoad(date, excludeOrderId);
+    const { load, usedProductIds } = getDailyLoad(date, excludeOrderId);
+    
     items.forEach(item => {
        const productDef = products.find(p => String(p.id) === String(item.id));
        const workload = Number(productDef?.workload) || Number(item.workload) || 0;
        const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
+       
        if (load[item.category] !== undefined) {
           load[item.category] += workload * item.quantity;
-          load[item.category] += overhead;
+          // Only add overhead if this product hasn't been counted for this day yet
+          if (!usedProductIds.has(String(item.id))) {
+              load[item.category] += overhead;
+              usedProductIds.add(String(item.id));
+          }
        }
     });
+    
     let anyExceeds = false;
     const catsToCheck = new Set([...Array.from(categoriesInCart), ...settings.categories.map(c => c.id)]);
     for (const cat of catsToCheck) {

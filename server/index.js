@@ -10,6 +10,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import nodemailer from 'nodemailer';
 import { jsPDF } from 'jspdf';
+import { GoogleGenAI } from "@google/genai";
 
 // --- POLYFILLS FOR NODE.JS ENVIRONMENT ---
 if (typeof global.btoa === 'undefined') {
@@ -702,6 +703,32 @@ initDb();
 
 // --- API ENDPOINTS ---
 
+app.post('/api/admin/translate', async (req, res) => {
+    const { sourceData } = req.body;
+    if (!sourceData) return res.status(400).json({ error: 'Missing sourceData' });
+    if (!process.env.API_KEY) {
+        return res.json({ translations: { en: {}, de: {} } }); // Graceful fallback if no key
+    }
+
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const prompt = `Translate the following JSON object values into English (en) and German (de). Return ONLY valid JSON in format { "translations": { "en": {...}, "de": {...} } }. Source: ${JSON.stringify(sourceData)}`;
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt
+        });
+        
+        const text = response.response.text();
+        const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const json = JSON.parse(cleanText);
+        res.json(json);
+    } catch (e) {
+        console.error("Translation API Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/health', async (req, res) => {
     const db = await getDb();
     if (db) {
@@ -1071,30 +1098,33 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
     res.json({ success: true });
 }));
 
-// OTHER ADMIN ENDPOINTS
+// OTHER ADMIN ENDPOINTS - LOAD STATISTICS
 app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: "Missing date" });
     const targetDate = formatToMysqlDate(date); 
     
     // Updated SQL Queries to robustly handle category and unit missing in relational columns by falling back to JSON data
+    // FIX: Group overhead by product first, then sum up for category to avoid double counting per order item row
     
     const summaryQuery = `
         SELECT 
             t.category, 
-            SUM(t.total_item_workload) as total_workload, 
-            SUM(t.overhead) as total_overhead, 
-            COUNT(DISTINCT t.order_id) as order_count 
+            SUM(t.product_total_workload) as total_workload, 
+            SUM(t.product_overhead) as total_overhead, 
+            SUM(t.order_count) as order_count 
         FROM (
             SELECT 
-                o.id as order_id, 
-                COALESCE(p.category, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.category')), oi.category, 'unknown') as category, 
-                (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload, 
-                COALESCE(p.workload_overhead, oi.workload_overhead, 0) as overhead 
+                COALESCE(p.category, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.category')), oi.category, 'unknown') as category,
+                oi.product_id,
+                SUM(oi.quantity * COALESCE(p.workload, oi.workload, 0)) as product_total_workload, 
+                MAX(COALESCE(p.workload_overhead, oi.workload_overhead, 0)) as product_overhead,
+                COUNT(DISTINCT order_id) as order_count
             FROM order_items oi 
             JOIN orders o ON o.id = oi.order_id 
             LEFT JOIN products p ON oi.product_id = p.id 
             WHERE o.delivery_date = ? AND o.status != 'cancelled'
+            GROUP BY category, oi.product_id
         ) t 
         GROUP BY t.category
     `;
@@ -1106,7 +1136,8 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
             t.name, 
             t.unit, 
             SUM(t.quantity) as total_quantity, 
-            SUM(t.total_item_workload) as product_workload 
+            SUM(t.item_total_workload) as product_workload,
+            MAX(t.overhead) as unit_overhead
         FROM (
             SELECT 
                 COALESCE(p.category, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.category')), oi.category, 'unknown') as category, 
@@ -1114,7 +1145,8 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
                 COALESCE(p.name, oi.name) as name, 
                 COALESCE(p.unit, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.unit')), oi.unit) as unit, 
                 oi.quantity, 
-                (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload 
+                (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as item_total_workload,
+                COALESCE(p.workload_overhead, oi.workload_overhead, 0) as overhead
             FROM order_items oi 
             JOIN orders o ON o.id = oi.order_id 
             LEFT JOIN products p ON oi.product_id = p.id 

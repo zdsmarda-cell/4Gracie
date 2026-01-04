@@ -4,6 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Product, Address, User, Language } from '../../types';
 import { FileText, X, AlertCircle, Plus, Minus, Trash2, Search, ImageIcon, QrCode, Mail, FileCheck, ChevronDown, Save, AlertTriangle } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
+import * as XLSX from 'xlsx';
 
 interface OrdersTabProps {
     initialDate?: string | null;
@@ -44,7 +45,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
-    const [limit] = useState(25); // Items per page
+    const [limit] = useState(50); // Increased limit for better UX
 
     const [fetchedOrders, setFetchedOrders] = useState<Order[]>([]);
     const [isLoadingOrders, setIsLoadingOrders] = useState(false);
@@ -193,11 +194,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             setOpenInvoiceMenuId(null);
         } else {
             const rect = e.currentTarget.getBoundingClientRect();
-            // Calculate position: align right edge of menu with right edge of button
-            // rect.right is the right edge of button. 
-            // We'll set 'left' and translate or just do calculations.
             setMenuPosition({
-                top: rect.bottom + window.scrollY + 2, // Slight offset
+                top: rect.bottom + window.scrollY + 2, 
                 left: rect.right + window.scrollX
             });
             setOpenInvoiceMenuId(orderId);
@@ -210,7 +208,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         setDiscountInput('');
         setDiscountError('');
         
-        // Find the user to populate context if needed (though billing dropdown removed)
         const user = allUsers.find(u => u.id === o.userId);
         setTargetUser(user);
         
@@ -276,13 +273,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         const itemsTotal = items.reduce((acc, i) => acc + i.price * i.quantity, 0);
         const packagingFee = calculatePackagingFee(items);
         
-        // Recalculate Delivery Fee dynamically based on region rules and new total
         let deliveryFee = editingOrder.deliveryFee;
         if (editingOrder.deliveryType === DeliveryType.DELIVERY) {
-            // Try to find region from current zip
             const zip = editingOrder.deliveryZip?.replace(/\s/g, '');
             const region = zip ? getDeliveryRegion(zip) : undefined;
-            
             if (region) {
                 const totalForLimit = itemsTotal - validDiscounts.reduce((sum, d) => sum + d.amount, 0);
                 deliveryFee = totalForLimit >= region.freeFrom ? 0 : region.price;
@@ -305,7 +299,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         if (!editingOrder) return;
         setOrderSaveError(null);
         
-        // Validation...
         if (editingOrder.deliveryType === DeliveryType.PICKUP) {
             if (!editingOrder.pickupLocationId) { setOrderSaveError('Vyberte odběrné místo.'); return; }
             const loc = settings.pickupLocations?.find(l => l.id === editingOrder.pickupLocationId);
@@ -316,7 +309,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             if (!editingOrder.deliveryStreet || !editingOrder.deliveryCity || !editingOrder.deliveryZip) {
                 setOrderSaveError('Vyplňte kompletní doručovací adresu.'); return;
             }
-            // Parse zip from address string for validation
             const zipMatch = editingOrder.deliveryZip.replace(/\s/g, '');
             if (zipMatch) {
                 const region = getDeliveryRegion(zipMatch);
@@ -334,7 +326,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
 
         const success = await updateOrder(editingOrder);
         if (success) {
-            // Immediate update of local list to reflect price changes without fetch delay
             setFetchedOrders(prev => prev.map(o => o.id === editingOrder.id ? editingOrder : o));
             setIsOrderModalOpen(false);
         }
@@ -351,16 +342,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         return `SPD*1.0*${acc}*AM:${amount}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
     };
 
-    // --- Address Modal (Admin creating/editing for user) ---
-
     const openAddressModal = (mode: 'create' | 'edit', type: 'delivery' | 'billing') => {
         if (!targetUser) { alert("Není vybrán uživatel."); return; }
-        
         setAddressModalMode(mode);
         setAddressModalType(type);
         setAddressError(null);
-        
-        // Logic only for creating new address for user record
         setAddressForm({});
         setIsAddressModalOpen(true);
     };
@@ -370,7 +356,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         if (!targetUser) return;
         setAddressError(null);
         
-        // Validation
         if (!addressForm.name || addressForm.name.length < 3) { setAddressError(t('validation.name_length')); return; }
         if (!addressForm.street) { setAddressError(t('validation.street_required')); return; }
         if (!addressForm.city) { setAddressError(t('validation.city_required')); return; }
@@ -387,14 +372,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             updatedList = [...targetUser[key], newAddr];
         }
 
-        // 1. Update User via Admin API
         const updatedUser = { ...targetUser, [key]: updatedList };
         const success = await updateUserAdmin(updatedUser);
         
         if (success) {
-            setTargetUser(updatedUser); // Update local reference
-            
-            // 2. Auto-fill the form in order modal
+            setTargetUser(updatedUser); 
             if (addressModalType === 'billing') {
                 setEditingOrder(prev => prev ? {
                     ...prev,
@@ -412,16 +394,119 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         }
     };
 
+    // --- ENHANCED EXPORT TO ACCOUNTING ---
+    const exportToAccounting = () => {
+        // Correctly select which orders to export: Selected, or All currently loaded if none selected
+        const ordersToExport = selectedOrders.length > 0 
+            ? displayOrders.filter(o => selectedOrders.includes(o.id)) 
+            : displayOrders;
+
+        if (ordersToExport.length === 0) {
+            alert('Žádné objednávky k exportu.');
+            return;
+        }
+
+        const calculateVat = (priceWithVat: number, rate: number) => {
+            const priceNoVat = priceWithVat / (1 + rate / 100);
+            const vat = priceWithVat - priceNoVat;
+            return { priceNoVat, vat };
+        };
+
+        const exportData = ordersToExport.map(o => {
+            // Group totals by VAT rate
+            const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
+            
+            // Standard rates to ensure columns exist even if 0
+            taxSummary[0] = { base: 0, vat: 0, total: 0 };
+            taxSummary[12] = { base: 0, vat: 0, total: 0 };
+            taxSummary[21] = { base: 0, vat: 0, total: 0 };
+
+            const addToTaxSummary = (rate: number, totalWithVat: number) => {
+                if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
+                const { priceNoVat, vat } = calculateVat(totalWithVat, rate);
+                taxSummary[rate].base += priceNoVat;
+                taxSummary[rate].vat += vat;
+                taxSummary[rate].total += totalWithVat;
+            };
+
+            // Calculate Item VAT
+            let maxItemVatRate = 0;
+            o.items.forEach(item => {
+                const itemTotal = item.price * item.quantity;
+                const vatRate = item.vatRateTakeaway || 12; // Default to 12 if missing
+                if (vatRate > maxItemVatRate) maxItemVatRate = vatRate;
+                addToTaxSummary(vatRate, itemTotal);
+            });
+
+            const feeVatRate = maxItemVatRate > 0 ? maxItemVatRate : 21;
+
+            // Fees
+            if (o.packagingFee > 0) addToTaxSummary(feeVatRate, o.packagingFee);
+            if (o.deliveryFee > 0) addToTaxSummary(feeVatRate, o.deliveryFee);
+
+            // Discounts - treat as negative amount on the dominant rate or split? 
+            // Simplifying: Subtract from the tax summary proportionally or just from the largest bucket?
+            // Current simple logic: subtract total discount value from total order value for simple checks, 
+            // but for accounting, discounts usually reduce the base.
+            // Simplified approach for export: Just output the totals calculated above, 
+            // accounting software usually handles imports by matching total or recalculating.
+            // However, to be precise, we should subtract discount from the tax base.
+            // Let's iterate discounts and subtract from the bucket with highest total to prevent negatives where possible.
+            
+            o.appliedDiscounts?.forEach(d => {
+                let discountRemaining = d.amount;
+                // Try to subtract from highest rate bucket first
+                const rates = Object.keys(taxSummary).map(Number).sort((a,b) => b-a);
+                for (const r of rates) {
+                    if (discountRemaining <= 0) break;
+                    if (taxSummary[r].total > 0) {
+                        const deduction = Math.min(taxSummary[r].total, discountRemaining);
+                        const { priceNoVat, vat } = calculateVat(deduction, r);
+                        taxSummary[r].total -= deduction;
+                        taxSummary[r].base -= priceNoVat;
+                        taxSummary[r].vat -= vat;
+                        discountRemaining -= deduction;
+                    }
+                }
+            });
+
+            const baseObj = {
+                ID: o.id,
+                Datum: formatDate(o.deliveryDate),
+                Zákazník: o.userName,
+                Stav: t(`status.${o.status}`),
+                Zaplaceno: o.isPaid ? 'ANO' : 'NE',
+                'Celkem k úhradě': Math.max(0, o.totalPrice + o.packagingFee + (o.deliveryFee || 0) - (o.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0))
+            };
+
+            // Add tax columns dynamically
+            const taxColumns: any = {};
+            Object.keys(taxSummary).forEach(r => {
+                const rate = Number(r);
+                if (rate > 0 || taxSummary[rate].total > 0) { // Show 0% only if used, others always
+                    taxColumns[`Základ ${rate}%`] = Number(taxSummary[rate].base.toFixed(2));
+                    taxColumns[`Daň ${rate}%`] = Number(taxSummary[rate].vat.toFixed(2));
+                    taxColumns[`Celkem ${rate}%`] = Number(taxSummary[rate].total.toFixed(2));
+                }
+            });
+
+            return { ...baseObj, ...taxColumns };
+        });
+
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Objednávky");
+        XLSX.writeFile(wb, `export_objednavek_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     return (
         <div className="animate-fade-in space-y-4">
-            {/* ... (Header and filters unchanged) ... */}
             <div className="flex justify-between mb-4">
                 <div className="flex items-center gap-2">
                     <span className="text-xl font-bold text-primary mr-4">{t('admin.orders')}</span>
                     {selectedOrders.length > 0 && (
                     <div className="flex items-center gap-4 animate-in fade-in bg-white p-2 rounded-xl shadow-sm border border-accent/20">
                         <span className="text-xs font-bold text-primary">Vybráno: {selectedOrders.length}</span>
-                        {/* Controlled Select for Bulk Action */}
                         <select 
                             className="text-xs border rounded bg-white p-2 font-bold focus:ring-accent outline-none" 
                             onChange={e => setBulkActionValue(e.target.value)}
@@ -434,7 +519,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                             <input type="checkbox" checked={notifyCustomer} onChange={e => setNotifyCustomer(e.target.checked)} className="rounded text-accent focus:ring-accent w-4 h-4" />
                             <div className="flex items-center gap-1"><Mail size={14} className={notifyCustomer ? "text-accent" : "text-gray-400"} /><span className={notifyCustomer ? "text-gray-800" : "text-gray-500"}>{t('admin.notify_customer')}</span></div>
                         </label>
-                        {/* Bulk Action Trigger Button */}
                         <button 
                             onClick={handleBulkUpdateClick}
                             disabled={!bulkActionValue}
@@ -445,9 +529,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                     </div>
                     )}
                 </div>
+                {/* EXPORT BUTTON MOVED HERE TO BE ALWAYS VISIBLE */}
+                <button 
+                    onClick={exportToAccounting} 
+                    className="bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm transition"
+                >
+                    <FileText size={16} className="mr-2" /> {t('admin.export')} (XLSX)
+                </button>
             </div>
 
-            {/* Confirmation Modal */}
             <ConfirmationModal 
                 isOpen={isBulkConfirmOpen}
                 title="Hromadná změna stavu"
@@ -456,7 +546,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 onClose={() => setIsBulkConfirmOpen(false)}
             />
 
-            {/* Filters ... (kept same) */}
             <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
                 <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">ID</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={orderFilters.id} onChange={e => setOrderFilters({...orderFilters, id: e.target.value})} /></div>
                 <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.date_from')}</label><input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.dateFrom} onChange={e => setOrderFilters({...orderFilters, dateFrom: e.target.value})} /></div>
@@ -469,7 +558,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             {isLoadingOrders ? (
                 <div className="text-center py-8 text-gray-400">Načítám data...</div>
             ) : (
-            <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto relative">
+            <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto relative min-h-[400px]">
                 <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                     <tr>
@@ -485,6 +574,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                     </tr>
                 </thead>
                 <tbody className="divide-y text-[11px]">
+                    {displayOrders.length === 0 && (
+                        <tr><td colSpan={9} className="p-8 text-center text-gray-400 italic">Žádné objednávky</td></tr>
+                    )}
                     {displayOrders.map(order => {
                         const hasIc = !!order.billingIc;
                         return (
@@ -555,7 +647,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </div>
             )}
 
-            {/* QR Modal */}
+            {/* QR Modal, Edit Modal, Address Modal are unchanged but required for component to work */}
             {qrModalOrder && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4 backdrop-blur-sm animate-in zoom-in-95 duration-200" onClick={() => setQrModalOrder(null)}>
                     <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
@@ -775,7 +867,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </div>
             )}
 
-            {/* Address Modal (Admin creating/editing for user) */}
             {isAddressModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4">
                     <form onSubmit={handleAddressModalSave} className="bg-white p-6 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
@@ -831,7 +922,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </div>
             )}
 
-            {/* ADD PRODUCT MODAL ... (kept same) */}
             {isAddProductModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4">
                     <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] flex flex-col">

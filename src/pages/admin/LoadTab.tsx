@@ -98,14 +98,16 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 })
                 .finally(() => setIsLoadingDetails(false));
         } else {
-            // LOCAL MODE (Preview)
+            // LOCAL MODE (Preview) - Use existing logic but correct aggregation for overhead
             const relevantOrders = orders.filter(o => o.deliveryDate === selectedDate && o.status !== OrderStatus.CANCELLED);
             
             const summaryMap = new Map<string, ServerLoadSummary>();
             const detailsMap = new Map<string, ServerLoadDetail>();
+            const processedProductOverhead = new Map<string, Set<string>>(); // categoryId -> set of productIds already counted for overhead
 
             settings.categories.forEach(c => {
                 summaryMap.set(c.id, { category: c.id, total_workload: 0, total_overhead: 0, order_count: 0 });
+                processedProductOverhead.set(c.id, new Set());
             });
 
             relevantOrders.forEach(order => {
@@ -117,10 +119,18 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
 
                     if (!summaryMap.has(cat)) {
                         summaryMap.set(cat, { category: cat, total_workload: 0, total_overhead: 0, order_count: 0 });
+                        processedProductOverhead.set(cat, new Set());
                     }
                     const sum = summaryMap.get(cat)!;
                     sum.total_workload = Number(sum.total_workload) + workload;
-                    sum.total_overhead = Number(sum.total_overhead) + overhead; 
+                    
+                    // Correct Overhead Summation: Only once per product per day
+                    const catSet = processedProductOverhead.get(cat)!;
+                    if (!catSet.has(item.id)) {
+                        sum.total_overhead = Number(sum.total_overhead) + overhead;
+                        catSet.add(item.id);
+                    }
+
                     categoriesInOrder.add(cat);
 
                     const detailKey = `${item.id}_${cat}`; 
@@ -226,7 +236,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 </thead>
                 <tbody className="divide-y text-xs">
                     {loadDates.map(date => {
-                        const load = getDailyLoad(date);
+                        const { load } = getDailyLoad(date);
                         const dayConfig = dayConfigs.find(d => d.date === date);
                         const isClosed = dayConfig && !dayConfig.isOpen;
                         const ordersCount = getActiveOrdersCount(date);

@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { User } from '../../types';
 import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 export const UsersTab: React.FC = () => {
     const { searchUsers, orders, t, addUser, updateUserAdmin, searchOrders } = useStore();
@@ -55,17 +56,21 @@ export const UsersTab: React.FC = () => {
     }, [fetchedUsers, userFilters]);
 
     const handleUserExport = () => {
-        const csvContent = "data:text/csv;charset=utf-8," 
-            + ["ID,Name,Email,Phone,Role,Marketing,Status"].join(",") + "\n"
-            + filteredUsers.filter(u => selectedUserIds.includes(u.id)).map(u => {
-                return `${u.id},"${u.name}",${u.email},${u.phone},${u.role},${u.marketingConsent?'YES':'NO'},${u.isBlocked?'BLOCKED':'ACTIVE'}`;
-            }).join("\n");
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "users_export.csv");
-        document.body.appendChild(link);
-        link.click();
+        const usersToExport = filteredUsers.filter(u => selectedUserIds.includes(u.id));
+        const exportData = usersToExport.map(u => ({
+            ID: u.id,
+            Jméno: u.name,
+            Email: u.email,
+            Telefon: u.phone,
+            Role: u.role,
+            Marketing: u.marketingConsent ? 'ANO' : 'NE',
+            Stav: u.isBlocked ? 'BLOKOVÁN' : 'AKTIVNÍ'
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Uživatelé");
+        XLSX.writeFile(wb, "export_uzivatelu.xlsx");
     };
 
     const openUserModal = (u?: User) => {
@@ -123,7 +128,7 @@ export const UsersTab: React.FC = () => {
                 <div className="flex gap-2">
                     {selectedUserIds.length > 0 && (
                         <button onClick={handleUserExport} className="bg-white border border-green-500 text-green-600 px-4 py-2 rounded-lg text-xs font-bold flex items-center hover:bg-green-50">
-                            <Download size={16} className="mr-2"/> Exportovat vybrané ({selectedUserIds.length})
+                            <Download size={16} className="mr-2"/> Exportovat vybrané ({selectedUserIds.length}) XLSX
                         </button>
                     )}
                     <button onClick={() => openUserModal()} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.new_user')}</button>

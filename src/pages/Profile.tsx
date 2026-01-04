@@ -413,8 +413,8 @@ export const Profile: React.FC = () => {
                            {/* Proforma Button */}
                            <button onClick={() => printInvoice(o, 'proforma')} className="flex-1 py-2 border rounded-lg flex items-center justify-center gap-2 hover:bg-gray-50 text-sm font-bold"><FileText size={16}/> Záloha</button>
                            
-                           {/* Final Invoice Button - Only if delivered/final date exists */}
-                           {o.finalInvoiceDate && (
+                           {/* Final Invoice Button - Only if delivered AND final date exists */}
+                           {o.status === OrderStatus.DELIVERED && o.finalInvoiceDate && (
                                <button onClick={() => printInvoice(o, 'final')} className="flex-1 py-2 border border-green-200 bg-green-50 text-green-700 rounded-lg flex items-center justify-center gap-2 hover:bg-green-100 text-sm font-bold">
                                    <FileCheck size={16}/> Daň. doklad
                                </button>
