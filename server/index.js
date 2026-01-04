@@ -19,14 +19,13 @@ console.log(`[Debug] Script location: ${__dirname}`);
 console.log(`[Debug] CWD: ${process.cwd()}`);
 
 const pathsToCheck = [
-  path.resolve(__dirname, '..', '.env'), // 1. Priority: Project Root (one level up from server/)
-  path.resolve(process.cwd(), '.env'),   // 2. Priority: Where the script was called from
-  path.resolve(__dirname, '.env')        // 3. Priority: Inside server/ directory
+  path.resolve(__dirname, '..', '.env'), // 1. Priority: Project Root
+  path.resolve(process.cwd(), '.env'),   // 2. Priority: CWD
+  path.resolve(__dirname, '.env')        // 3. Priority: Server dir
 ];
 
 let envLoaded = false;
 for (const p of pathsToCheck) {
-  console.log(`[Debug] Checking for .env at: ${p}`);
   if (fs.existsSync(p)) {
     console.log(`✅ FOUND config file at: ${p}`);
     const result = dotenv.config({ path: p });
@@ -41,12 +40,7 @@ for (const p of pathsToCheck) {
 }
 
 if (!envLoaded) {
-    console.warn("⚠️ WARNING: No .env file found in standard locations. HTTPS and DB connections may fail.");
-} else {
-    // Log loaded critical vars (masked)
-    console.log(`[Debug] DB_HOST: ${process.env.DB_HOST || 'Not Set'}`);
-    console.log(`[Debug] SSL_KEY_PATH: ${process.env.SSL_KEY_PATH || 'Not Set'}`);
-    console.log(`[Debug] SSL_CERT_PATH: ${process.env.SSL_CERT_PATH || 'Not Set'}`);
+    console.warn("⚠️ WARNING: No .env file found. HTTPS and DB connections may fail.");
 }
 
 const app = express();
@@ -54,27 +48,16 @@ const PORT = process.env.PORT || 3000;
 
 // --- MIDDLEWARE ---
 app.use(cors());
-
 // Increase payload limit for Base64 images
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Debug middleware to log request sizes (optional)
-app.use((req, res, next) => {
-    if (req.path === '/api/admin/upload' || req.path === '/api/products') {
-        // console.log(`[${req.method}] ${req.path} - Payload size: ${req.headers['content-length']} bytes`);
-    }
-    next();
-});
-
 // --- STATIC FILES & UPLOAD CONFIG ---
-// Resolve uploads relative to project root (one level up from server/)
 const UPLOAD_ROOT = path.resolve(__dirname, '..', 'uploads');
 const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
 
 console.log(`📂 Upload Root configured at: ${UPLOAD_ROOT}`);
 
-// Ensure directories exist
 if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
     try {
         fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursive: true, mode: 0o777 });
@@ -84,7 +67,6 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
     }
 }
 
-// Serve static files from the project root 'uploads' folder
 app.use('/uploads', express.static(UPLOAD_ROOT));
 
 // --- EMAIL ---
@@ -104,7 +86,7 @@ if (process.env.SMTP_HOST) {
 
 // --- DATABASE CONNECTION ---
 let pool = null;
-let sqlDebugMode = false; // GLOBAL DEBUG FLAG
+let sqlDebugMode = false;
 
 const getDb = async () => {
   if (pool) return pool;
@@ -121,12 +103,11 @@ const getDb = async () => {
       dateStrings: true 
     });
 
-    // MONKEY PATCH POOL.QUERY for Debugging
     const originalQuery = pool.query;
     pool.query = function (sql, params) {
         if (sqlDebugMode) {
             const sqlString = typeof sql === 'string' ? sql : sql.sql;
-            console.log(`\x1b[36m[SQL]\x1b[0m ${sqlString}`, params && params.length > 0 ? params : '');
+            console.log(`\x1b[36m[SQL]\x1b[0m ${sqlString}`);
         }
         return originalQuery.apply(this, arguments);
     };
@@ -162,13 +143,12 @@ const parseJsonCol = (row, colName = 'data') => {
     return typeof row[colName] === 'string' ? JSON.parse(row[colName]) : (row[colName] || {});
 };
 
-// --- INITIALIZATION & SEEDING ---
+// --- INITIALIZATION ---
 const initDb = async () => {
     const db = await getDb();
     if (!db) return;
 
     try {
-        // Tables Initialization
         await db.query(`
             CREATE TABLE IF NOT EXISTS users (
                 id VARCHAR(50) PRIMARY KEY,
@@ -218,7 +198,6 @@ const initDb = async () => {
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
         `);
 
-        // UPDATED: Orders table with separated address columns and final_invoice_date
         await db.query(`
             CREATE TABLE IF NOT EXISTS orders (
                 id VARCHAR(50) PRIMARY KEY,
@@ -257,13 +236,8 @@ const initDb = async () => {
                 INDEX idx_user (user_id)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
         `);
-        
-        // Ensure column exists (migration for existing DBs)
-        try {
-            await db.query(`ALTER TABLE orders ADD COLUMN final_invoice_date TIMESTAMP NULL AFTER created_at`);
-        } catch (e) {
-            // Ignore if column already exists
-        }
+
+        try { await db.query(`ALTER TABLE orders ADD COLUMN final_invoice_date TIMESTAMP NULL AFTER created_at`); } catch(e) {}
 
         await db.query(`
             CREATE TABLE IF NOT EXISTS order_items (
@@ -287,7 +261,6 @@ const initDb = async () => {
         await db.query(`CREATE TABLE IF NOT EXISTS discounts (id VARCHAR(50) PRIMARY KEY, code VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         await db.query(`CREATE TABLE IF NOT EXISTS calendar_exceptions (date VARCHAR(20) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-        // Seed Admin
         const [admins] = await db.query('SELECT id FROM users WHERE email = ?', ['info@4gracie.cz']);
         if (admins.length === 0) {
             console.log("🌱 Seeding default admin...");
@@ -296,16 +269,6 @@ const initDb = async () => {
                 'INSERT INTO users (id, email, password_hash, role, name, phone) VALUES (?, ?, ?, ?, ?, ?)',
                 ['admin_seed', 'info@4gracie.cz', hash, 'admin', 'Hlavní Administrátor', '+420000000000']
             );
-        }
-
-        // Load Debug Setting
-        const [settings] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
-        if (settings.length > 0) {
-            const data = parseJsonCol(settings[0], 'data');
-            if (data.sqlDebug) {
-                sqlDebugMode = true;
-                console.log("🔧 SQL Debug enabled on startup.");
-            }
         }
 
         console.log("✅ Database initialized.");
@@ -327,19 +290,6 @@ const withDb = (handler) => async (req, res) => {
 
 // --- API ENDPOINTS ---
 
-// Helper mapping for Czech Statuses in Emails
-const STATUS_TRANSLATIONS = {
-    'created': 'Zadaná',
-    'confirmed': 'Potvrzená',
-    'preparing': 'Připravuje se',
-    'ready': 'Připravena',
-    'on_way': 'Na cestě',
-    'delivered': 'Doručena',
-    'not_picked_up': 'Nevyzvednuta',
-    'cancelled': 'Stornována'
-};
-
-// 1. BOOTSTRAP
 app.get('/api/bootstrap', withDb(async (req, res, db) => {
     const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
     const products = prodRows.map(row => ({
@@ -365,7 +315,6 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
     const today = new Date().toISOString().split('T')[0];
     const [activeOrders] = await db.query('SELECT full_json, final_invoice_date FROM orders WHERE delivery_date >= ? AND status != "cancelled"', [today]);
 
-    // Merge final_invoice_date from DB column into JSON for client
     const mergedOrders = activeOrders.map(r => {
         const json = parseJsonCol(r, 'full_json');
         if (r.final_invoice_date) json.finalInvoiceDate = r.final_invoice_date;
@@ -378,11 +327,10 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
         discountCodes: discounts.map(r => ({...parseJsonCol(r), id: r.id})),
         dayConfigs: calendar.map(r => ({...parseJsonCol(r), date: r.date})),
         orders: mergedOrders,
-        users: [] // Don't send all users in bootstrap for security/performance
+        users: []
     });
 }));
 
-// 2. PRODUCTS
 app.post('/api/products', withDb(async (req, res, db) => {
     const p = req.body;
     const fullJson = JSON.stringify(p);
@@ -410,30 +358,19 @@ app.delete('/api/products/:id', withDb(async (req, res, db) => {
     res.json({ success: true });
 }));
 
-// 3. USERS
 app.get('/api/users', withDb(async (req, res, db) => {
     const { search } = req.query;
     let query = 'SELECT * FROM users WHERE 1=1';
     const params = [];
-    
-    if (search) {
-        query += ' AND (email LIKE ? OR name LIKE ?)';
-        params.push(`%${search}%`, `%${search}%`);
-    }
+    if (search) { query += ' AND (email LIKE ? OR name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
     query += ' LIMIT 100';
-
     const [rows] = await db.query(query, params);
     const users = [];
     for (const row of rows) {
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [row.id]);
         users.push({
-            id: row.id,
-            email: row.email,
-            name: row.name,
-            phone: row.phone,
-            role: row.role,
-            isBlocked: Boolean(row.is_blocked),
-            marketingConsent: Boolean(row.marketing_consent),
+            id: row.id, email: row.email, name: row.name, phone: row.phone, role: row.role,
+            isBlocked: Boolean(row.is_blocked), marketingConsent: Boolean(row.marketing_consent),
             passwordHash: row.password_hash,
             deliveryAddresses: addrs.filter(a => a.type === 'delivery'),
             billingAddresses: addrs.filter(a => a.type === 'billing')
@@ -447,39 +384,16 @@ app.post('/api/users', withDb(async (req, res, db) => {
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
-        await conn.query(`
-            INSERT INTO users (id, email, password_hash, name, phone, role, is_blocked, marketing_consent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE 
-            email=?, password_hash=?, name=?, phone=?, role=?, is_blocked=?, marketing_consent=?
-        `, [
-            u.id, u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent,
-            u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent
-        ]);
-
+        await conn.query(`INSERT INTO users (id, email, password_hash, name, phone, role, is_blocked, marketing_consent) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE email=?, password_hash=?, name=?, phone=?, role=?, is_blocked=?, marketing_consent=?`, [u.id, u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent, u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent]);
         await conn.query('DELETE FROM user_addresses WHERE user_id = ?', [u.id]);
-        const addresses = [
-            ...(u.deliveryAddresses || []).map(a => ({...a, type: 'delivery'})),
-            ...(u.billingAddresses || []).map(a => ({...a, type: 'billing'}))
-        ];
-        
+        const addresses = [...(u.deliveryAddresses||[]).map(a => ({...a, type: 'delivery'})), ...(u.billingAddresses||[]).map(a => ({...a, type: 'billing'}))];
         if (addresses.length > 0) {
-            const values = addresses.map(a => [
-                a.id || Date.now() + Math.random(), u.id, a.type, a.name, a.street, a.city, a.zip, a.phone, a.ic || null, a.dic || null
-            ]);
-            await conn.query(
-                'INSERT INTO user_addresses (id, user_id, type, name, street, city, zip, phone, ic, dic) VALUES ?',
-                [values]
-            );
+            const values = addresses.map(a => [a.id || Date.now()+Math.random(), u.id, a.type, a.name, a.street, a.city, a.zip, a.phone, a.ic||null, a.dic||null]);
+            await conn.query('INSERT INTO user_addresses (id, user_id, type, name, street, city, zip, phone, ic, dic) VALUES ?', [values]);
         }
         await conn.commit();
         res.json({ success: true });
-    } catch (e) {
-        await conn.rollback();
-        throw e;
-    } finally {
-        conn.release();
-    }
+    } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 }));
 
 app.post('/api/auth/login', withDb(async (req, res, db) => {
@@ -488,46 +402,17 @@ app.post('/api/auth/login', withDb(async (req, res, db) => {
     if (rows.length > 0) {
         const u = rows[0];
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
-        const fullUser = {
-            id: u.id,
-            email: u.email,
-            name: u.name,
-            phone: u.phone,
-            role: u.role,
-            isBlocked: Boolean(u.is_blocked),
-            marketingConsent: Boolean(u.marketing_consent),
-            passwordHash: u.password_hash,
-            deliveryAddresses: addrs.filter(a => a.type === 'delivery'),
-            billingAddresses: addrs.filter(a => a.type === 'billing')
-        };
-        res.json({ success: true, user: fullUser });
-    } else {
-        res.json({ success: false, message: 'Uživatel nenalezen' });
-    }
+        res.json({ success: true, user: { id: u.id, email: u.email, name: u.name, phone: u.phone, role: u.role, isBlocked: Boolean(u.is_blocked), marketingConsent: Boolean(u.marketing_consent), passwordHash: u.password_hash, deliveryAddresses: addrs.filter(a => a.type === 'delivery'), billingAddresses: addrs.filter(a => a.type === 'billing') } });
+    } else { res.json({ success: false, message: 'Uživatel nenalezen' }); }
 }));
 
 app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
     const { email } = req.body;
     const [rows] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
-    if (rows.length === 0) {
-        return res.json({ success: true, message: 'Pokud účet existuje, email byl odeslán.' });
-    }
-    const token = Buffer.from(`${email}-${Date.now()}`).toString('base64');
-    
-    if (transporter) {
-        try {
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-            const host = req.get('host'); 
-            const appUrl = process.env.VITE_APP_URL || `${protocol}://${host}`;
-            const link = `${appUrl}/#/reset-password?token=${token}`;
-            
-            await transporter.sendMail({
-                from: process.env.SMTP_FROM || '"4Gracie" <info@4gracie.cz>',
-                to: email,
-                subject: 'Obnova hesla - 4Gracie',
-                html: `<p>Klikněte pro obnovu hesla:</p><a href="${link}">${link}</a>`
-            });
-        } catch (e) { console.error("Email error:", e); }
+    if (rows.length > 0 && transporter) {
+        const token = Buffer.from(`${email}-${Date.now()}`).toString('base64');
+        const link = `${process.env.VITE_APP_URL || 'https://eshop.4gracie.cz'}/#/reset-password?token=${token}`;
+        await transporter.sendMail({ from: process.env.SMTP_FROM, to: email, subject: 'Obnova hesla', html: `<a href="${link}">Resetovat heslo</a>` });
     }
     res.json({ success: true, message: 'Email odeslán.' });
 }));
@@ -537,82 +422,35 @@ app.post('/api/auth/reset-password-confirm', withDb(async (req, res, db) => {
     try {
         const decoded = Buffer.from(token, 'base64').toString('utf-8');
         const email = decoded.substring(0, decoded.lastIndexOf('-'));
-        const [result] = await db.query('UPDATE users SET password_hash = ? WHERE email = ?', [newPasswordHash, email]);
-        if (result.affectedRows > 0) res.json({ success: true, message: 'Heslo změněno.' });
-        else res.json({ success: false, message: 'Uživatel nenalezen.' });
-    } catch (e) { res.status(400).json({ success: false, message: 'Chyba.' }); }
+        await db.query('UPDATE users SET password_hash = ? WHERE email = ?', [newPasswordHash, email]);
+        res.json({ success: true, message: 'Heslo změněno.' });
+    } catch (e) { res.status(400).json({ success: false }); }
 }));
 
-// 4. ORDERS & STATS
 app.post('/api/orders', withDb(async (req, res, db) => {
     const o = req.body;
-    if (!o.id || !o.userId) return res.status(400).json({ error: "Missing fields" });
-
-    const dbOrder = { ...o };
-    delete dbOrder.vopPdf; 
-    const deliveryDate = formatToMysqlDate(dbOrder.deliveryDate);
-    const createdAt = formatToMysqlDateTime(dbOrder.createdAt);
-    // If status is delivered already (e.g. sync), ensure final date is set
-    const finalDate = (dbOrder.status === 'delivered' && dbOrder.finalInvoiceDate) 
-        ? formatToMysqlDateTime(dbOrder.finalInvoiceDate) 
-        : null;
-
+    const deliveryDate = formatToMysqlDate(o.deliveryDate);
+    const createdAt = formatToMysqlDateTime(o.createdAt);
+    const finalDate = (o.status === 'delivered' && o.finalInvoiceDate) ? formatToMysqlDateTime(o.finalInvoiceDate) : null;
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         await conn.query(`
-            INSERT INTO orders (
-                id, user_id, user_name, delivery_date, status, total_price, 
-                delivery_fee, packaging_fee, payment_method, is_paid, 
-                delivery_type, 
-                delivery_name, delivery_street, delivery_city, delivery_zip, delivery_phone,
-                billing_name, billing_street, billing_city, billing_zip, billing_ic, billing_dic,
-                note, pickup_location_id, language, created_at, final_invoice_date, full_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE 
-                status=?, total_price=?, delivery_date=?, user_name=?, 
-                is_paid=?, delivery_type=?, delivery_name=?, delivery_street=?, 
-                delivery_city=?, delivery_zip=?, delivery_phone=?, 
-                billing_name=?, billing_street=?, billing_city=?, billing_zip=?, 
-                billing_ic=?, billing_dic=?, final_invoice_date=?, full_json=?
+            INSERT INTO orders (id, user_id, user_name, delivery_date, status, total_price, delivery_fee, packaging_fee, payment_method, is_paid, delivery_type, delivery_name, delivery_street, delivery_city, delivery_zip, delivery_phone, billing_name, billing_street, billing_city, billing_zip, billing_ic, billing_dic, note, pickup_location_id, language, created_at, final_invoice_date, full_json) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE status=?, total_price=?, delivery_date=?, user_name=?, is_paid=?, delivery_type=?, delivery_name=?, delivery_street=?, delivery_city=?, delivery_zip=?, delivery_phone=?, billing_name=?, billing_street=?, billing_city=?, billing_zip=?, billing_ic=?, billing_dic=?, final_invoice_date=?, full_json=?
         `, [
-            dbOrder.id, dbOrder.userId, dbOrder.userName, deliveryDate, dbOrder.status, dbOrder.totalPrice,
-            dbOrder.deliveryFee, dbOrder.packagingFee, dbOrder.paymentMethod, dbOrder.isPaid,
-            dbOrder.deliveryType, 
-            dbOrder.deliveryName, dbOrder.deliveryStreet, dbOrder.deliveryCity, dbOrder.deliveryZip, dbOrder.deliveryPhone,
-            dbOrder.billingName, dbOrder.billingStreet, dbOrder.billingCity, dbOrder.billingZip, dbOrder.billingIc, dbOrder.billingDic,
-            dbOrder.note, dbOrder.pickupLocationId, dbOrder.language, createdAt, finalDate, JSON.stringify(dbOrder),
-            
-            dbOrder.status, dbOrder.totalPrice, deliveryDate, dbOrder.userName,
-            dbOrder.isPaid, dbOrder.deliveryType,
-            dbOrder.deliveryName, dbOrder.deliveryStreet, dbOrder.deliveryCity, dbOrder.deliveryZip, dbOrder.deliveryPhone,
-            dbOrder.billingName, dbOrder.billingStreet, dbOrder.billingCity, dbOrder.billingZip, dbOrder.billingIc, dbOrder.billingDic,
-            finalDate,
-            JSON.stringify(dbOrder)
+            o.id, o.userId, o.userName, deliveryDate, o.status, o.totalPrice, o.deliveryFee, o.packagingFee, o.paymentMethod, o.isPaid, o.deliveryType, o.deliveryName, o.deliveryStreet, o.deliveryCity, o.deliveryZip, o.deliveryPhone, o.billingName, o.billingStreet, o.billingCity, o.billingZip, o.billingIc, o.billingDic, o.note, o.pickupLocationId, o.language, createdAt, finalDate, JSON.stringify(o),
+            o.status, o.totalPrice, deliveryDate, o.userName, o.isPaid, o.deliveryType, o.deliveryName, o.deliveryStreet, o.deliveryCity, o.deliveryZip, o.deliveryPhone, o.billingName, o.billingStreet, o.billingCity, o.billingZip, o.billingIc, o.billingDic, finalDate, JSON.stringify(o)
         ]);
-
-        await conn.query('DELETE FROM order_items WHERE order_id = ?', [dbOrder.id]);
-        if (dbOrder.items && dbOrder.items.length > 0) {
-            const itemValues = dbOrder.items.map(i => [
-                dbOrder.id, i.id, i.name, i.quantity, i.price, i.category, i.unit, 
-                i.workload || 0, i.workloadOverhead || 0
-            ]);
-            await conn.query(`
-                INSERT INTO order_items (
-                    order_id, product_id, name, quantity, price, category, unit, 
-                    workload, workload_overhead
-                ) VALUES ?
-            `, [itemValues]);
+        await conn.query('DELETE FROM order_items WHERE order_id = ?', [o.id]);
+        if (o.items && o.items.length > 0) {
+            const itemValues = o.items.map(i => [o.id, i.id, i.name, i.quantity, i.price, i.category, i.unit, i.workload||0, i.workloadOverhead||0]);
+            await conn.query('INSERT INTO order_items (order_id, product_id, name, quantity, price, category, unit, workload, workload_overhead) VALUES ?', [itemValues]);
         }
         await conn.commit();
-
-        res.json({ success: true, id: dbOrder.id });
-    } catch (e) {
-        await conn.rollback();
-        throw e;
-    } finally {
-        conn.release();
-    }
+        res.json({ success: true });
+    } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 }));
 
 app.get('/api/orders', withDb(async (req, res, db) => {
@@ -620,159 +458,60 @@ app.get('/api/orders', withDb(async (req, res, db) => {
     const offset = (Number(page) - 1) * Number(limit);
     let query = 'SELECT full_json, final_invoice_date FROM orders WHERE 1=1';
     const params = [];
-
     if (id) { query += ' AND id LIKE ?'; params.push(`%${id}%`); }
     if (userId) { query += ' AND user_id = ?'; params.push(userId); }
     if (dateFrom) { query += ' AND delivery_date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND delivery_date <= ?'; params.push(dateTo); }
     if (status) { query += ' AND status = ?'; params.push(status); }
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
-
     const [cnt] = await db.query(query.replace('SELECT full_json, final_invoice_date', 'SELECT COUNT(*) as t'), params);
-    
     query += ' ORDER BY delivery_date DESC, created_at DESC LIMIT ? OFFSET ?';
     params.push(Number(limit), Number(offset));
-    
     const [rows] = await db.query(query, params);
-    res.json({ 
-        success: true, 
-        orders: rows.map(r => {
-            const json = parseJsonCol(r, 'full_json');
-            // Merge actual DB column back into JSON if missing/outdated
-            if (r.final_invoice_date) json.finalInvoiceDate = r.final_invoice_date;
-            return json;
-        }), 
-        total: cnt[0].t, 
-        page: Number(page), 
-        pages: Math.ceil(cnt[0].t / Number(limit)) 
-    });
+    res.json({ success: true, orders: rows.map(r => { const j = parseJsonCol(r, 'full_json'); if(r.final_invoice_date) j.finalInvoiceDate = r.final_invoice_date; return j; }), total: cnt[0].t, page: Number(page), pages: Math.ceil(cnt[0].t / Number(limit)) });
 }));
 
 app.put('/api/orders/status', withDb(async (req, res, db) => {
     const { ids, status, notifyCustomer } = req.body;
-    if (!ids || ids.length === 0) return res.status(400).json({ error: "No IDs provided" });
-
     const placeholders = ids.map(() => '?').join(',');
+    let sql = `UPDATE orders SET status=?, full_json=JSON_SET(full_json, '$.status', ?)`;
+    if (status === 'delivered') sql += `, final_invoice_date = IF(final_invoice_date IS NULL, NOW(), final_invoice_date), full_json = JSON_SET(full_json, '$.finalInvoiceDate', DATE_FORMAT(IF(final_invoice_date IS NULL, NOW(), final_invoice_date), '%Y-%m-%dT%H:%i:%s.000Z'))`;
+    sql += ` WHERE id IN (${placeholders})`;
+    await db.query(sql, [status, status, ...ids]);
     
-    // Logic: If status becomes 'delivered', set final_invoice_date to NOW() if it is currently NULL.
-    // Also update JSON to reflect this date.
-    let updateSql = `UPDATE orders SET status=?, full_json=JSON_SET(full_json, '$.status', ?)`;
-    const params = [status, status];
-
-    if (status === 'delivered') {
-        // Only set date if not already set. 
-        // We also need to sync this date into the JSON blob so subsequent GETs have it inside the object structure immediately.
-        // Complex SQL to inject date into JSON: JSON_SET(json, '$.finalInvoiceDate', DATE_FORMAT(NOW(), ...))
-        // Since we update multiple rows, using SQL logic is better than fetching-updating-saving in loop.
-        updateSql += `, 
-            final_invoice_date = IF(final_invoice_date IS NULL, NOW(), final_invoice_date),
-            full_json = JSON_SET(full_json, '$.finalInvoiceDate', DATE_FORMAT(IF(final_invoice_date IS NULL, NOW(), final_invoice_date), '%Y-%m-%dT%H:%i:%s.000Z'))
-        `;
-    }
-
-    updateSql += ` WHERE id IN (${placeholders})`;
-    params.push(...ids);
-
-    await db.query(updateSql, params);
-
     if (notifyCustomer && transporter) {
-        try {
-            const query = `SELECT o.id, o.full_json, u.email FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.id IN (${placeholders})`;
-            const [ordersToNotify] = await db.query(query, ids);
-
-            for (const orderRow of ordersToNotify) {
-                const userEmail = orderRow.email;
-                if (!userEmail) continue;
-
-                const dbOrder = parseJsonCol(orderRow, 'full_json');
-                const translatedStatus = STATUS_TRANSLATIONS[status] || status;
-                
-                const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-                const host = req.get('host'); 
-                const appUrl = process.env.VITE_APP_URL || `${protocol}://${host}`;
-
-                const itemsHtml = (dbOrder.items || []).map(item => `
-                    <tr><td style="padding:10px;">${item.name}</td><td style="padding:10px;">${item.quantity} ${item.unit}</td><td style="padding:10px;">${item.price} Kč</td></tr>
-                `).join('');
-
-                await transporter.sendMail({
-                    from: process.env.SMTP_FROM || '"4Gracie" <info@4gracie.cz>',
-                    to: userEmail,
-                    subject: `Aktualizace objednávky #${dbOrder.id} - ${translatedStatus}`,
-                    html: `
-                        <h2>Změna stavu objednávky #${dbOrder.id}</h2>
-                        <p>Nový stav: <strong>${translatedStatus}</strong></p>
-                        <hr/>
-                        <table style="width:100%">${itemsHtml}</table>
-                        <p>Celkem: <strong>${dbOrder.totalPrice} Kč</strong></p>
-                        <p><a href="${appUrl}/#/profile">Zobrazit v profilu</a></p>
-                    `
-                });
+        const [rows] = await db.query(`SELECT full_json, u.email FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.id IN (${placeholders})`, ids);
+        for (const row of rows) {
+            if (row.email) {
+                const o = parseJsonCol(row, 'full_json');
+                await transporter.sendMail({ from: process.env.SMTP_FROM, to: row.email, subject: `Změna stavu #${o.id}`, html: `<p>Objednávka #${o.id} je nyní: ${status}</p>` });
             }
-        } catch (e) { console.error("Email error:", e); }
+        }
     }
     res.json({ success: true });
 }));
 
-// STATS LOAD (Derived Table Fix)
 app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
-    if (!date) return res.status(400).json({ error: "Missing date parameter" });
+    if (!date) return res.status(400).json({ error: "Missing date" });
     const targetDate = formatToMysqlDate(date); 
-
-    const summaryQuery = `
-        SELECT t.category, SUM(t.total_item_workload) as total_workload, SUM(t.overhead) as total_overhead, COUNT(DISTINCT t.order_id) as order_count
-        FROM (
-            SELECT o.id as order_id, COALESCE(p.category, oi.category, 'unknown') as category,
-            (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload,
-            COALESCE(p.workload_overhead, oi.workload_overhead, 0) as overhead
-            FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON oi.product_id = p.id
-            WHERE o.delivery_date = ? AND o.status != 'cancelled'
-        ) t GROUP BY t.category
-    `;
-    const detailQuery = `
-        SELECT t.category, t.product_id, t.name, t.unit, SUM(t.quantity) as total_quantity, SUM(t.total_item_workload) as product_workload
-        FROM (
-            SELECT COALESCE(p.category, oi.category, 'unknown') as category, oi.product_id, COALESCE(p.name, oi.name) as name, COALESCE(p.unit, oi.unit) as unit, oi.quantity, (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload
-            FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON oi.product_id = p.id
-            WHERE o.delivery_date = ? AND o.status != 'cancelled'
-        ) t GROUP BY t.category, t.product_id, t.name, t.unit
-    `;
-    
-    try {
-        const [summary] = await db.query(summaryQuery, [targetDate]);
-        const [details] = await db.query(detailQuery, [targetDate]);
-        if (sqlDebugMode) console.log(`[Stats] Loaded for ${targetDate}`);
-        res.json({ success: true, summary, details });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    const summaryQuery = `SELECT t.category, SUM(t.total_item_workload) as total_workload, SUM(t.overhead) as total_overhead, COUNT(DISTINCT t.order_id) as order_count FROM (SELECT o.id as order_id, COALESCE(p.category, oi.category, 'unknown') as category, (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload, COALESCE(p.workload_overhead, oi.workload_overhead, 0) as overhead FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON oi.product_id = p.id WHERE o.delivery_date = ? AND o.status != 'cancelled') t GROUP BY t.category`;
+    const detailQuery = `SELECT t.category, t.product_id, t.name, t.unit, SUM(t.quantity) as total_quantity, SUM(t.total_item_workload) as product_workload FROM (SELECT COALESCE(p.category, oi.category, 'unknown') as category, oi.product_id, COALESCE(p.name, oi.name) as name, COALESCE(p.unit, oi.unit) as unit, oi.quantity, (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON oi.product_id = p.id WHERE o.delivery_date = ? AND o.status != 'cancelled') t GROUP BY t.category, t.product_id, t.name, t.unit`;
+    const [summary] = await db.query(summaryQuery, [targetDate]);
+    const [details] = await db.query(detailQuery, [targetDate]);
+    res.json({ success: true, summary, details });
 }));
 
-// OTHER ENDPOINTS
 app.post('/api/settings', withDb(async (req, res, db) => {
   if (req.body.sqlDebug !== undefined) sqlDebugMode = !!req.body.sqlDebug;
   await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(req.body), JSON.stringify(req.body)]);
   res.json({ success: true });
 }));
-app.post('/api/discounts', withDb(async (req, res, db) => {
-  const d = req.body;
-  await db.query('INSERT INTO discounts (id, code, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data=?', [d.id, d.code, JSON.stringify(d), JSON.stringify(d)]);
-  res.json({ success: true });
-}));
-app.delete('/api/discounts/:id', withDb(async (req, res, db) => {
-  await db.query('DELETE FROM discounts WHERE id=?', [req.params.id]);
-  res.json({ success: true });
-}));
-app.post('/api/calendar', withDb(async (req, res, db) => {
-  const c = req.body;
-  await db.query('INSERT INTO calendar_exceptions (date, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data=?', [c.date, JSON.stringify(c), JSON.stringify(c)]);
-  res.json({ success: true });
-}));
-app.delete('/api/calendar/:date', withDb(async (req, res, db) => {
-  await db.query('DELETE FROM calendar_exceptions WHERE date=?', [req.params.date]);
-  res.json({ success: true });
-}));
+app.post('/api/discounts', withDb(async (req, res, db) => { const d = req.body; await db.query('INSERT INTO discounts (id, code, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data=?', [d.id, d.code, JSON.stringify(d), JSON.stringify(d)]); res.json({ success: true }); }));
+app.delete('/api/discounts/:id', withDb(async (req, res, db) => { await db.query('DELETE FROM discounts WHERE id=?', [req.params.id]); res.json({ success: true }); }));
+app.post('/api/calendar', withDb(async (req, res, db) => { const c = req.body; await db.query('INSERT INTO calendar_exceptions (date, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data=?', [c.date, JSON.stringify(c), JSON.stringify(c)]); res.json({ success: true }); }));
+app.delete('/api/calendar/:date', withDb(async (req, res, db) => { await db.query('DELETE FROM calendar_exceptions WHERE date=?', [req.params.date]); res.json({ success: true }); }));
 
-// --- IMAGE UPLOAD ---
 app.post('/api/admin/upload', async (req, res) => {
     const { image, name } = req.body;
     if (!image) return res.status(400).json({ error: 'No image' });
@@ -788,7 +527,6 @@ app.post('/api/admin/upload', async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'Save failed', details: err.message }); }
 });
 
-// --- SERVER START ---
 const startServer = async () => {
   const sslKeyPath = process.env.SSL_KEY_PATH;
   const sslCertPath = process.env.SSL_CERT_PATH; 
@@ -797,13 +535,7 @@ const startServer = async () => {
           const httpsOptions = { key: fs.readFileSync(sslKeyPath), cert: fs.readFileSync(sslCertPath) };
           https.createServer(httpsOptions, app).listen(PORT, () => console.log(`🚀 Secure Server on port ${PORT}`));
           return;
-      } catch (e) { 
-          console.error("❌ HTTPS Fail:", e.message); 
-      }
-  } else {
-      if (sslKeyPath || sslCertPath) {
-          console.warn("⚠️ SSL Paths defined but files not found. Falling back to HTTP.");
-      }
+      } catch (e) { console.error("❌ HTTPS Fail:", e.message); }
   }
   http.createServer(app).listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 };

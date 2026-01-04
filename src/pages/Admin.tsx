@@ -103,11 +103,19 @@ export const Admin: React.FC = () => {
                     <h2 className="text-2xl font-bold mb-6 flex items-center justify-center gap-2">
                         <Database className="text-accent" /> Databázové připojení
                     </h2>
+                    
+                    {/* PRODUCTION ALERT */}
+                    {!isPreviewEnvironment && (
+                        <div className="bg-blue-50 text-blue-700 p-4 rounded-xl mb-6 text-sm font-bold border border-blue-200">
+                            Aplikace běží v produkčním režimu. Připojení k DB je vynuceno.
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-2 gap-4">
                         <button 
-                            onClick={() => { if (dataSource !== 'api') setDataSource('local'); }}
-                            disabled={dataSource === 'api'}
-                            className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'local' ? 'border-accent bg-yellow-50/50' : dataSource === 'api' ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed' : 'border-gray-200 hover:bg-gray-50'}`}
+                            onClick={() => { if (isPreviewEnvironment && dataSource !== 'api') setDataSource('local'); }}
+                            disabled={!isPreviewEnvironment || dataSource === 'api'}
+                            className={`p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-4 ${dataSource === 'local' ? 'border-accent bg-yellow-50/50' : (!isPreviewEnvironment || dataSource === 'api') ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed' : 'border-gray-200 hover:bg-gray-50'}`}
                         >
                             <div className={`p-4 rounded-full ${dataSource === 'local' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-400'}`}><HardDrive size={32} /></div>
                             <div><h3 className="font-bold text-lg">Interní paměť</h3></div>

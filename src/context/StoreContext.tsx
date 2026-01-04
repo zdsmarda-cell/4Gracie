@@ -198,7 +198,12 @@ const INITIAL_USERS: User[] = [
 ];
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // @ts-ignore
+  const env = (import.meta as any).env;
+  const isProduction = env?.PROD ?? false;
+
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
+    if (isProduction) return 'api';
     return (localStorage.getItem('app_data_source') as DataSourceMode) || 'local';
   });
   
@@ -236,13 +241,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
   const setDataSource = (mode: DataSourceMode) => {
+    if (isProduction && mode === 'local') return; // Enforce in prod
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
   };
 
   const isPreviewEnvironment = useMemo(() => {
-      return true;
-  }, []);
+      return !isProduction; // Only show debug controls in dev
+  }, [isProduction]);
 
   const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
     setGlobalNotification({ message, type, autoClose });
@@ -251,8 +257,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const getFullApiUrl = useCallback((endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env;
-    if (env.DEV) return endpoint; 
-    let baseUrl = env.VITE_API_URL;
+    if (env?.DEV) return endpoint; 
+    let baseUrl = env?.VITE_API_URL;
     if (!baseUrl) {
        baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
     }
@@ -274,7 +280,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
 
     try {
-      const url = getFullApiUrl(endpoint);
+      // Prevent 304 caching loops by appending timestamp to GET requests
+      let url = getFullApiUrl(endpoint);
+      if (method === 'GET') {
+          const separator = url.includes('?') ? '&' : '?';
+          url = `${url}${separator}_t=${Date.now()}`;
+      }
+
       const res: any = await Promise.race([
         fetch(url, {
           method,
@@ -1190,7 +1202,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   return (
     <StoreContext.Provider value={{
-      dataSource, setDataSource, isPreviewEnvironment: true,
+      dataSource, setDataSource, isPreviewEnvironment,
       isLoading, isOperationPending,
       language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, cartBump,
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser, searchUsers,
