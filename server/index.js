@@ -65,23 +65,59 @@ app.use((req, res, next) => {
 });
 
 // --- STATIC FILES & UPLOAD CONFIG ---
+// Resolve upload root relative to this file (server/index.js) -> up one level -> uploads
 const UPLOAD_ROOT = path.resolve(__dirname, '..', 'uploads');
 const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
 
-if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
-    try {
-        fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursive: true, mode: 0o777 });
-        console.log(`✅ Created upload directory: ${UPLOAD_IMAGES_DIR}`);
-    } catch (e) {
-        console.error(`❌ Failed to create upload directory: ${e.message}`);
-    }
-}
+// Ensure directories exist
+if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
+if (!fs.existsSync(UPLOAD_IMAGES_DIR)) fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursive: true });
 
 console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 
-// FIXED: Use express.static instead of manual routing.
-// This automatically handles MIME types, Content-Length, and prevents empty responses.
-app.use('/uploads', express.static(UPLOAD_ROOT));
+// FIXED: Express 5 specific wildcard handling for manual file serving
+// We use a manual handler to ensure complete control over path resolution and headers
+app.get('/uploads/*', (req, res) => {
+    try {
+        // In Express 5, the wildcard '*' is captured in req.params[0]
+        const relativePath = req.params[0];
+        
+        if (!relativePath || relativePath.includes('..')) {
+            return res.status(403).send('Access Denied');
+        }
+
+        // Decode URI component to handle spaces and special chars in filenames
+        const safePath = decodeURIComponent(relativePath);
+        const fullPath = path.join(UPLOAD_ROOT, safePath);
+
+        // Security check: ensure the resolved path is still within UPLOAD_ROOT
+        if (!fullPath.startsWith(UPLOAD_ROOT)) {
+            return res.status(403).send('Access Denied');
+        }
+
+        if (fs.existsSync(fullPath)) {
+            // Check if it is a directory
+            const stats = fs.statSync(fullPath);
+            if (stats.isDirectory()) {
+                return res.status(403).send('Directory listing denied');
+            }
+            
+            // Send file with absolute path
+            res.sendFile(fullPath, (err) => {
+                if (err) {
+                    console.error(`❌ Error sending file ${fullPath}:`, err);
+                    if (!res.headersSent) res.status(500).send('Error serving file');
+                }
+            });
+        } else {
+            console.warn(`⚠️ File not found: ${fullPath}`);
+            res.status(404).send('File not found');
+        }
+    } catch (error) {
+        console.error('Server error serving file:', error);
+        res.status(500).send('Internal Server Error');
+    }
+});
 
 // --- DATABASE CONNECTION ---
 let pool = null;
@@ -465,7 +501,15 @@ app.post('/api/admin/upload', async (req, res) => {
     const buffer = Buffer.from(matches[2], 'base64');
     const fileName = `${Date.now()}_${(name||'img').replace(/[^a-z0-9]/gi,'_')}.${ext}`;
     const fullPath = path.join(UPLOAD_IMAGES_DIR, fileName);
-    try { fs.writeFileSync(fullPath, buffer); res.json({ success: true, url: `/uploads/images/${fileName}` }); } catch (err) { res.status(500).json({ error: 'Save failed' }); }
+    
+    try { 
+        fs.writeFileSync(fullPath, buffer);
+        console.log(`✅ Image saved: ${fullPath} (${buffer.length} bytes)`);
+        res.json({ success: true, url: `/uploads/images/${fileName}` }); 
+    } catch (err) { 
+        console.error("❌ Save failed:", err);
+        res.status(500).json({ error: 'Save failed' }); 
+    }
 });
 
 // SETTINGS & OTHER
