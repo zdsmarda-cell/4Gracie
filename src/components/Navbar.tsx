@@ -60,7 +60,7 @@ export const Navbar: React.FC = () => {
                    <User size={20} className="mr-1" />
                    <span className="text-sm font-medium">{user.name}</span>
                  </Link>
-                 <button onClick={logout} className="text-xs text-gray-500 underline">Log out</button>
+                 <button onClick={() => { logout(); navigate('/'); }} className="text-xs text-gray-500 underline">Log out</button>
                </div>
             ) : (
               <button onClick={openAuthModal} className="text-gray-700 hover:text-accent font-medium">

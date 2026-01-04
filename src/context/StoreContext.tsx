@@ -597,7 +597,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const logout = () => { 
       setUser(null); 
       localStorage.removeItem('session_user'); 
-      window.location.hash = '/'; // Compatible with HashRouter, safe for preview mode
+      // Removed redirect to prevent issues on ResetPassword page
   };
 
   const register = (name: string, email: string, phone: string, password?: string) => {
