@@ -9,19 +9,19 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import nodemailer from 'nodemailer';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- CONFIG LOADING ---
 console.log("--- 4Gracie Server Init ---");
-console.log(`[Debug] Script location: ${__dirname}`);
-console.log(`[Debug] CWD: ${process.cwd()}`);
 
 const pathsToCheck = [
-  path.resolve(__dirname, '..', '.env'), // 1. Priority: Project Root
-  path.resolve(process.cwd(), '.env'),   // 2. Priority: CWD
-  path.resolve(__dirname, '.env')        // 3. Priority: Server dir
+  path.resolve(__dirname, '..', '.env'),
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(__dirname, '.env')
 ];
 
 let envLoaded = false;
@@ -39,20 +39,14 @@ for (const p of pathsToCheck) {
   }
 }
 
-if (!envLoaded) {
-    console.warn("⚠️ WARNING: No .env file found. HTTPS and DB connections may fail.");
-}
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // --- MIDDLEWARE ---
 app.use(cors());
-// Increase payload limit for Base64 images
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Ensure no caching for API
 app.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     next();
@@ -62,12 +56,9 @@ app.use((req, res, next) => {
 const UPLOAD_ROOT = path.resolve(__dirname, '..', 'uploads');
 const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
 
-console.log(`📂 Upload Root configured at: ${UPLOAD_ROOT}`);
-
 if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
     try {
         fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursive: true, mode: 0o777 });
-        console.log(`✅ Created upload directories.`);
     } catch (e) {
         console.error(`❌ Failed to create upload directory: ${e.message}`);
     }
@@ -75,7 +66,7 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
 
 app.use('/uploads', express.static(UPLOAD_ROOT));
 
-// --- EMAIL ---
+// --- EMAIL CONFIG ---
 let transporter = null;
 if (process.env.SMTP_HOST) {
     transporter = nodemailer.createTransport({
@@ -108,20 +99,20 @@ const getDb = async () => {
       queueLimit: 0,
       dateStrings: true 
     });
-
-    const originalQuery = pool.query;
-    pool.query = function (sql, params) {
-        if (sqlDebugMode) {
-            const sqlString = typeof sql === 'string' ? sql : sql.sql;
-            console.log(`\x1b[36m[SQL]\x1b[0m ${sqlString}`);
-        }
-        return originalQuery.apply(this, arguments);
-    };
-
     return pool;
   } catch (err) {
     console.error(`❌ DB Connection Failed: ${err.message}`);
     return null;
+  }
+};
+
+const withDb = (handler) => async (req, res) => {
+  const db = await getDb();
+  if (db) {
+    try { await handler(req, res, db); } 
+    catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
+  } else {
+    res.status(500).json({ error: 'DB Connection Failed' });
   }
 };
 
@@ -147,6 +138,294 @@ const formatToMysqlDate = (dateString) => {
 
 const parseJsonCol = (row, colName = 'data') => {
     return typeof row[colName] === 'string' ? JSON.parse(row[colName]) : (row[colName] || {});
+};
+
+// --- PDF GENERATION HELPERS ---
+
+// Cache fonts to avoid fetching on every request
+let regularFontBase64 = null;
+let boldFontBase64 = null;
+
+const loadFonts = async () => {
+    if (regularFontBase64 && boldFontBase64) return;
+    try {
+        const fetchFont = async (url) => {
+            const response = await fetch(url);
+            const arrayBuffer = await response.arrayBuffer();
+            return Buffer.from(arrayBuffer).toString('base64');
+        };
+        regularFontBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
+        boldFontBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
+    } catch (e) {
+        console.error("Failed to load fonts for PDF generation:", e);
+    }
+};
+
+const removeDiacritics = (str) => {
+  if (!str) return "";
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+};
+
+const calculateCzIban = (accountString) => {
+  if (!accountString) return '';
+  const cleanStr = accountString.replace(/\s/g, '');
+  const [accountPart, bankCode] = cleanStr.split('/');
+  if (!accountPart || !bankCode || bankCode.length !== 4) return '';
+  let prefix = '';
+  let number = accountPart;
+  if (accountPart.includes('-')) { [prefix, number] = accountPart.split('-'); }
+  const paddedPrefix = prefix.padStart(6, '0');
+  const paddedNumber = number.padStart(10, '0');
+  const paddedBank = bankCode.padStart(4, '0');
+  const bban = paddedBank + paddedPrefix + paddedNumber;
+  const numericStr = bban + '123500';
+  const remainder = BigInt(numericStr) % 97n;
+  const checkDigitsVal = 98n - remainder;
+  const checkDigitsStr = checkDigitsVal.toString().padStart(2, '0');
+  return `CZ${checkDigitsStr}${bban}`;
+};
+
+const generateVopPdf = async () => {
+    await loadFonts();
+    const doc = new jsPDF();
+    if (regularFontBase64) {
+        doc.addFileToVFS("Roboto-Regular.ttf", regularFontBase64);
+        doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+        doc.setFont("Roboto");
+    }
+    
+    doc.setFontSize(16);
+    doc.text("Všeobecné obchodní podmínky (VOP)", 105, 20, { align: "center" });
+    
+    doc.setFontSize(10);
+    const text = `
+    1. ÚVODNÍ USTANOVENÍ
+    Tyto obchodní podmínky upravují vzájemná práva a povinnosti smluvních stran vzniklé v souvislosti nebo na základě kupní smlouvy uzavírané mezi prodávajícím (4Gracie s.r.o.) a kupujícím prostřednictvím internetového obchodu.
+
+    2. OBJEDNÁVKA A UZAVŘENÍ SMLOUVY
+    Odesláním objednávky kupující stvrzuje, že se seznámil s těmito obchodními podmínkami a že s nimi souhlasí. Objednávka je návrhem kupní smlouvy.
+
+    3. CENA A PLATEBNÍ PODMÍNKY
+    Ceny uvedené na e-shopu jsou konečné, včetně DPH. Platbu lze provést převodem, kartou on-line nebo hotově při převzetí.
+
+    4. DODACÍ PODMÍNKY
+    Zboží je doručováno dle zvoleného způsobu dopravy (osobní odběr, rozvoz). Termíny dodání jsou závazné po potvrzení objednávky.
+
+    5. ODSTOUPENÍ OD SMLOUVY
+    Kupující má právo odstoupit od smlouvy do 14 dnů od převzetí zboží, s výjimkou zboží podléhajícího rychlé zkáze (potraviny).
+
+    6. OCHRANA OSOBNÍCH ÚDAJŮ
+    Prodávající prohlašuje, že veškeré osobní údaje jsou důvěrné, budou použity pouze k uskutečnění plnění smlouvy s kupujícím a nebudou jinak zveřejněny.
+
+    Platné od 1.1.2025
+    `;
+    
+    const splitText = doc.splitTextToSize(text, 170);
+    doc.text(splitText, 15, 30);
+    
+    return doc.output('buffer');
+};
+
+const generateInvoicePdf = async (o, type = 'proforma', settings) => {
+    await loadFonts();
+    const doc = new jsPDF();
+    
+    if (regularFontBase64 && boldFontBase64) {
+        doc.addFileToVFS("Roboto-Regular.ttf", regularFontBase64);
+        doc.addFileToVFS("Roboto-Medium.ttf", boldFontBase64);
+        doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+        doc.addFont("Roboto-Medium.ttf", "Roboto", "bold");
+        doc.setFont("Roboto");
+    }
+
+    const comp = o.companyDetailsSnapshot || settings?.companyDetails || {};
+    const isVatPayer = !!comp.dic;
+    
+    const headerTitle = type === 'proforma' 
+        ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" 
+        : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
+
+    const dateToUse = type === 'final' 
+        ? (o.finalInvoiceDate || new Date().toISOString()) 
+        : o.createdAt;
+
+    // Header
+    doc.setFontSize(18);
+    doc.setFont("Roboto", "bold");
+    doc.text(headerTitle, 105, 20, { align: "center" });
+    
+    doc.setFontSize(10);
+    doc.setFont("Roboto", "normal");
+    doc.text(`Číslo dokladu: ${o.id}`, 105, 28, { align: "center" });
+    
+    const d = new Date(dateToUse);
+    const dateStr = d.toLocaleDateString('cs-CZ');
+    
+    doc.text(`Datum vystavení: ${dateStr}`, 105, 34, { align: "center" });
+    if (isVatPayer) doc.text(`Datum zdan. plnění: ${dateStr}`, 105, 39, { align: "center" });
+
+    // Supplier / Customer
+    doc.setFontSize(11);
+    doc.text("DODAVATEL:", 14, 50);
+    doc.setFontSize(10);
+    doc.text(comp.name || '', 14, 56);
+    doc.text(comp.street || '', 14, 61);
+    doc.text(`${comp.zip || ''} ${comp.city || ''}`, 14, 66);
+    doc.text(`IČ: ${comp.ic || ''}`, 14, 71);
+    if(comp.dic) doc.text(`DIČ: ${comp.dic}`, 14, 76);
+    
+    doc.setFontSize(11);
+    doc.text("ODBĚRATEL:", 120, 50);
+    doc.setFontSize(10);
+    
+    let yPos = 56;
+    doc.text(o.billingName || o.userName || 'Zákazník', 120, yPos); yPos += 5;
+    doc.text(o.billingStreet || '', 120, yPos); yPos += 5;
+    doc.text(`${o.billingZip || ''} ${o.billingCity || ''}`, 120, yPos); yPos += 5;
+    if (o.billingIc) { doc.text(`IČ: ${o.billingIc}`, 120, yPos); yPos += 5; }
+    if (o.billingDic) { doc.text(`DIČ: ${o.billingDic}`, 120, yPos); yPos += 5; }
+
+    // Table Header
+    let y = 100;
+    doc.line(14, y, 196, y);
+    y += 6;
+    doc.setFontSize(9);
+    
+    if (isVatPayer) {
+        doc.text("POLOŽKA", 14, y);
+        doc.text("KS", 90, y);
+        doc.text("CENA/KS", 105, y);
+        doc.text("DPH", 130, y);
+        doc.text("ZÁKLAD", 150, y);
+        doc.text("CELKEM", 180, y);
+    } else {
+        doc.text("POLOŽKA", 14, y);
+        doc.text("KS", 130, y);
+        doc.text("CENA/KS", 150, y);
+        doc.text("CELKEM", 180, y);
+    }
+    y += 3;
+    doc.line(14, y, 196, y);
+    y += 6;
+
+    // Items
+    const calculateVat = (priceWithVat, rate) => {
+        const priceNoVat = priceWithVat / (1 + rate / 100);
+        return { priceNoVat, vat: priceWithVat - priceNoVat };
+    };
+
+    let maxItemVatRate = 0;
+    
+    // Items
+    (o.items || []).forEach(item => {
+        const itemTotal = item.price * item.quantity;
+        const vatRate = item.vatRateTakeaway || 12; 
+        if (vatRate > maxItemVatRate) maxItemVatRate = vatRate;
+
+        if (isVatPayer) {
+            const { priceNoVat } = calculateVat(item.price, vatRate);
+            doc.text((item.name || '').substring(0, 35), 14, y);
+            doc.text(String(item.quantity), 90, y);
+            doc.text(priceNoVat.toFixed(2), 105, y);
+            doc.text(`${vatRate}%`, 130, y);
+            doc.text((priceNoVat * item.quantity).toFixed(2), 150, y);
+            doc.text(itemTotal.toFixed(2), 180, y);
+        } else {
+            doc.text((item.name || '').substring(0, 50), 14, y);
+            doc.text(String(item.quantity), 130, y);
+            doc.text(String(item.price), 150, y);
+            doc.text(String(itemTotal), 180, y);
+        }
+        y += 6;
+    });
+
+    const feeVatRate = maxItemVatRate > 0 ? maxItemVatRate : 21;
+
+    // Fees
+    if (o.packagingFee > 0) {
+        if (isVatPayer) {
+            const { priceNoVat } = calculateVat(o.packagingFee, feeVatRate);
+            doc.text("Balné", 14, y);
+            doc.text("1", 90, y);
+            doc.text(priceNoVat.toFixed(2), 105, y);
+            doc.text(`${feeVatRate}%`, 130, y);
+            doc.text(priceNoVat.toFixed(2), 150, y);
+            doc.text(o.packagingFee.toFixed(2), 180, y);
+        } else {
+            doc.text("Balné", 14, y);
+            doc.text("1", 130, y);
+            doc.text(String(o.packagingFee), 150, y);
+            doc.text(String(o.packagingFee), 180, y);
+        }
+        y += 6;
+    }
+
+    if (o.deliveryFee > 0) {
+        if (isVatPayer) {
+            const { priceNoVat } = calculateVat(o.deliveryFee, feeVatRate);
+            doc.text("Doprava", 14, y);
+            doc.text("1", 90, y);
+            doc.text(priceNoVat.toFixed(2), 105, y);
+            doc.text(`${feeVatRate}%`, 130, y);
+            doc.text(priceNoVat.toFixed(2), 150, y);
+            doc.text(o.deliveryFee.toFixed(2), 180, y);
+        } else {
+            doc.text("Doprava", 14, y);
+            doc.text("1", 130, y);
+            doc.text(String(o.deliveryFee), 150, y);
+            doc.text(String(o.deliveryFee), 180, y);
+        }
+        y += 6;
+    }
+
+    // Discounts
+    (o.appliedDiscounts || []).forEach(d => {
+        doc.text(`Sleva ${d.code}`, 14, y);
+        doc.text(`-${d.amount}`, 180, y);
+        y += 6;
+    });
+
+    doc.line(14, y, 196, y);
+    y += 10;
+
+    // Total
+    const discountSum = (o.appliedDiscounts || []).reduce((a,b)=>a+b.amount,0);
+    const total = Math.max(0, o.totalPrice + o.packagingFee + (o.deliveryFee || 0) - discountSum);
+
+    doc.setFontSize(14);
+    doc.setFont("Roboto", "bold");
+    doc.text(`CELKEM K ÚHRADĚ: ${total.toFixed(2)} Kč`, 196, y, { align: "right" });
+
+    // QR Code for Proforma
+    if (type === 'proforma') {
+        try {
+            const iban = calculateCzIban(comp.bankAccount || '').replace(/\s/g,'');
+            const bic = comp.bic ? `+${comp.bic}` : '';
+            const acc = `ACC:${iban}${bic}`;
+            const vs = String(o.id).replace(/\D/g,'') || '0';
+            const msg = removeDiacritics(`Objednavka ${o.id}`);
+            const qrString = `SPD*1.0*${acc}*AM:${total.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
+            
+            // Fetch QR
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrString)}`;
+            const qrRes = await fetch(qrUrl);
+            const qrBuffer = await qrRes.arrayBuffer();
+            const qrBase64 = Buffer.from(qrBuffer).toString('base64');
+            
+            doc.addImage(qrBase64, 'PNG', 150, y + 10, 40, 40);
+            doc.setFontSize(8);
+            doc.text("QR Platba", 170, y + 55, { align: "center" });
+        } catch (e) {
+            console.error("QR gen error", e);
+        }
+    } else {
+        // Final invoice footer
+        y += 10;
+        doc.setFontSize(12);
+        doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 105, y, { align: "center" });
+    }
+
+    return doc.output('buffer');
 };
 
 // --- INITIALIZATION ---
@@ -284,16 +563,6 @@ const initDb = async () => {
 };
 initDb();
 
-const withDb = (handler) => async (req, res) => {
-  const db = await getDb();
-  if (db) {
-    try { await handler(req, res, db); } 
-    catch (err) { console.error(err); res.status(500).json({ error: err.message }); }
-  } else {
-    res.status(500).json({ error: 'DB Connection Failed' });
-  }
-};
-
 // --- API ENDPOINTS ---
 
 app.get('/api/health', async (req, res) => {
@@ -352,6 +621,7 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
     }
 }));
 
+// PRODUCTS
 app.post('/api/products', withDb(async (req, res, db) => {
     const p = req.body;
     const fullJson = JSON.stringify(p);
@@ -379,6 +649,7 @@ app.delete('/api/products/:id', withDb(async (req, res, db) => {
     res.json({ success: true });
 }));
 
+// USERS
 app.get('/api/users', withDb(async (req, res, db) => {
     const { search } = req.query;
     let query = 'SELECT * FROM users WHERE 1=1';
@@ -413,10 +684,17 @@ app.post('/api/users', withDb(async (req, res, db) => {
             await conn.query('INSERT INTO user_addresses (id, user_id, type, name, street, city, zip, phone, ic, dic) VALUES ?', [values]);
         }
         await conn.commit();
+        
+        // Send welcome email logic if new user (simplified)
+        if (transporter) {
+             // Logic to detect if new user (omitted for brevity, can check affectedRows on insert)
+        }
+
         res.json({ success: true });
     } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 }));
 
+// AUTH
 app.post('/api/auth/login', withDb(async (req, res, db) => {
     const { email } = req.body;
     const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
@@ -448,12 +726,18 @@ app.post('/api/auth/reset-password-confirm', withDb(async (req, res, db) => {
     } catch (e) { res.status(400).json({ success: false }); }
 }));
 
+// ORDERS
 app.post('/api/orders', withDb(async (req, res, db) => {
     const o = req.body;
     const deliveryDate = formatToMysqlDate(o.deliveryDate);
     const createdAt = formatToMysqlDateTime(o.createdAt);
     const finalDate = (o.status === 'delivered' && o.finalInvoiceDate) ? formatToMysqlDateTime(o.finalInvoiceDate) : null;
     const conn = await db.getConnection();
+    
+    // Fetch settings for PDF generation
+    const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
+    const settings = settingsRows.length ? parseJsonCol(settingsRows[0]) : {};
+
     try {
         await conn.beginTransaction();
         await conn.query(`
@@ -464,12 +748,43 @@ app.post('/api/orders', withDb(async (req, res, db) => {
             o.id, o.userId, o.userName, deliveryDate, o.status, o.totalPrice, o.deliveryFee, o.packagingFee, o.paymentMethod, o.isPaid, o.deliveryType, o.deliveryName, o.deliveryStreet, o.deliveryCity, o.deliveryZip, o.deliveryPhone, o.billingName, o.billingStreet, o.billingCity, o.billingZip, o.billingIc, o.billingDic, o.note, o.pickupLocationId, o.language, createdAt, finalDate, JSON.stringify(o),
             o.status, o.totalPrice, deliveryDate, o.userName, o.isPaid, o.deliveryType, o.deliveryName, o.deliveryStreet, o.deliveryCity, o.deliveryZip, o.deliveryPhone, o.billingName, o.billingStreet, o.billingCity, o.billingZip, o.billingIc, o.billingDic, finalDate, JSON.stringify(o)
         ]);
+        
         await conn.query('DELETE FROM order_items WHERE order_id = ?', [o.id]);
         if (o.items && o.items.length > 0) {
             const itemValues = o.items.map(i => [o.id, i.id, i.name, i.quantity, i.price, i.category, i.unit, i.workload||0, i.workloadOverhead||0]);
             await conn.query('INSERT INTO order_items (order_id, product_id, name, quantity, price, category, unit, workload, workload_overhead) VALUES ?', [itemValues]);
         }
         await conn.commit();
+
+        // --- EMAIL NOTIFICATION FOR NEW ORDER ---
+        if (transporter && o.status === 'created') {
+            try {
+                // Get User Email
+                const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [o.userId]);
+                const userEmail = userRows[0]?.email;
+
+                if (userEmail) {
+                    const invoicePdf = await generateInvoicePdf(o, 'proforma', settings);
+                    const vopPdf = await generateVopPdf();
+
+                    await transporter.sendMail({
+                        from: process.env.SMTP_FROM,
+                        to: userEmail,
+                        subject: `Potvrzení objednávky #${o.id}`,
+                        html: `<p>Dobrý den,</p><p>děkujeme za Vaši objednávku číslo <strong>${o.id}</strong>.</p><p>V příloze naleznete zálohovou fakturu a obchodní podmínky.</p><p>S pozdravem,<br>4Gracie</p>`,
+                        attachments: [
+                            { filename: `zalohova_faktura_${o.id}.pdf`, content: invoicePdf },
+                            { filename: 'VOP_4Gracie.pdf', content: vopPdf }
+                        ]
+                    });
+                    console.log(`📧 Order created email sent to ${userEmail}`);
+                }
+            } catch (emailErr) {
+                console.error("Failed to send order creation email:", emailErr);
+                // Do not fail the request if email fails, but log it
+            }
+        }
+
         res.json({ success: true });
     } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 }));
@@ -494,24 +809,64 @@ app.get('/api/orders', withDb(async (req, res, db) => {
 
 app.put('/api/orders/status', withDb(async (req, res, db) => {
     const { ids, status, notifyCustomer } = req.body;
+    
+    // Fetch settings for PDF generation if needed
+    const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
+    const settings = settingsRows.length ? parseJsonCol(settingsRows[0]) : {};
+
     const placeholders = ids.map(() => '?').join(',');
     let sql = `UPDATE orders SET status=?, full_json=JSON_SET(full_json, '$.status', ?)`;
-    if (status === 'delivered') sql += `, final_invoice_date = IF(final_invoice_date IS NULL, NOW(), final_invoice_date), full_json = JSON_SET(full_json, '$.finalInvoiceDate', DATE_FORMAT(IF(final_invoice_date IS NULL, NOW(), final_invoice_date), '%Y-%m-%dT%H:%i:%s.000Z'))`;
+    
+    // If delivering, set finalInvoiceDate
+    if (status === 'delivered') {
+        sql += `, final_invoice_date = IF(final_invoice_date IS NULL, NOW(), final_invoice_date), full_json = JSON_SET(full_json, '$.finalInvoiceDate', DATE_FORMAT(IF(final_invoice_date IS NULL, NOW(), final_invoice_date), '%Y-%m-%dT%H:%i:%s.000Z'))`;
+    }
+    
     sql += ` WHERE id IN (${placeholders})`;
     await db.query(sql, [status, status, ...ids]);
     
+    // --- EMAIL NOTIFICATION FOR STATUS UPDATE ---
     if (notifyCustomer && transporter) {
-        const [rows] = await db.query(`SELECT full_json, u.email FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.id IN (${placeholders})`, ids);
+        // Fetch full order data to generate emails
+        const [rows] = await db.query(`SELECT full_json, final_invoice_date, u.email FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.id IN (${placeholders})`, ids);
+        
         for (const row of rows) {
             if (row.email) {
-                const o = parseJsonCol(row, 'full_json');
-                await transporter.sendMail({ from: process.env.SMTP_FROM, to: row.email, subject: `Změna stavu #${o.id}`, html: `<p>Objednávka #${o.id} je nyní: ${status}</p>` });
+                try {
+                    const o = parseJsonCol(row, 'full_json');
+                    // Ensure finalInvoiceDate is present in object if DB has it
+                    if (row.final_invoice_date) o.finalInvoiceDate = row.final_invoice_date;
+
+                    const attachments = [];
+                    let emailBody = `<p>Dobrý den,</p><p>stav Vaší objednávky <strong>#${o.id}</strong> byl změněn na: <strong>${status}</strong>.</p>`;
+
+                    // If delivered, generate Final Invoice
+                    if (status === 'delivered') {
+                        const finalInvoicePdf = await generateInvoicePdf(o, 'final', settings);
+                        attachments.push({ filename: `faktura_${o.id}.pdf`, content: finalInvoicePdf });
+                        emailBody += `<p>V příloze naleznete daňový doklad.</p>`;
+                    }
+
+                    emailBody += `<p>S pozdravem,<br>4Gracie</p>`;
+
+                    await transporter.sendMail({ 
+                        from: process.env.SMTP_FROM, 
+                        to: row.email, 
+                        subject: `Změna stavu objednávky #${o.id}`, 
+                        html: emailBody,
+                        attachments
+                    });
+                    console.log(`📧 Status update email sent to ${row.email} for order #${o.id}`);
+                } catch (emailErr) {
+                    console.error(`Failed to send status email for order ${row.id || '?'}:`, emailErr);
+                }
             }
         }
     }
     res.json({ success: true });
 }));
 
+// OTHER ADMIN ENDPOINTS
 app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: "Missing date" });
