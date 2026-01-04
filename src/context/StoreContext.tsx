@@ -347,7 +347,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return base64;
   };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
       setIsLoading(true);
       try {
         if (dataSource === 'api') {
@@ -395,11 +395,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       } finally {
         setIsLoading(false);
       }
-  };
+  }, [dataSource, apiCall, showNotify]);
 
   useEffect(() => {
     fetchData();
-  }, [dataSource]);
+  }, [fetchData]);
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
