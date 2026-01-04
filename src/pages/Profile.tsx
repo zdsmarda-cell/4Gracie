@@ -1,28 +1,38 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Navigate } from 'react-router-dom';
-import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon } from 'lucide-react';
+import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search } from 'lucide-react';
 import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMethod, ProductCategory } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Profile: React.FC = () => {
-  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo } = useStore();
+  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount } = useStore();
+  
+  // General Modal State
   const [modalType, setModalType] = useState<'billing' | 'delivery' | null>(null);
   const [editingAddr, setEditingAddr] = useState<Partial<Address> | null>(null);
+  
+  // Order List State
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [qrModalOrder, setQrModalOrder] = useState<Order | null>(null);
-  const [addressError, setAddressError] = useState<string | null>(null);
   
   // Order Editing State
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [isEditOrderModalOpen, setIsEditOrderModalOpen] = useState(false);
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
+  const [productSearch, setProductSearch] = useState('');
   
-  // Helpers for selector state
+  // Helpers for selector state in Order Edit
   const [selectedDeliveryAddrId, setSelectedDeliveryAddrId] = useState('');
   const [selectedBillingAddrId, setSelectedBillingAddrId] = useState('');
+  
+  // Address Modal within Order Edit context
+  const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
+  const [addressModalMode, setAddressModalMode] = useState<'create' | 'edit'>('create');
+  const [addressModalType, setAddressModalType] = useState<'delivery' | 'billing'>('delivery');
+  const [addressForm, setAddressForm] = useState<Partial<Address>>({});
+  const [addressError, setAddressError] = useState<string | null>(null);
 
   // Password Change State
   const [oldPass, setOldPass] = useState('');
@@ -81,23 +91,10 @@ export const Profile: React.FC = () => {
     }
   };
 
-  const saveAddress = (e: React.FormEvent) => {
+  // Generic Address Save (Profile Tab)
+  const saveProfileAddress = (e: React.FormEvent) => {
     e.preventDefault();
-    setAddressError(null);
     if (!modalType || !editingAddr) return;
-
-    // Validation
-    if (!editingAddr.name || editingAddr.name.trim().length < 3) { setAddressError(t('validation.name_length')); return; }
-    if (!editingAddr.street || editingAddr.street.trim().length < 1) { setAddressError(t('validation.street_required')); return; }
-    if (!editingAddr.city || editingAddr.city.trim().length < 1) { setAddressError(t('validation.city_required')); return; }
-    if (!editingAddr.zip || !editingAddr.zip.replace(/\s/g, '').match(/^\d{5}$/)) { setAddressError(t('validation.zip_format')); return; }
-    
-    // Check phone for all address types
-    if (!editingAddr.phone || !/^[+]?[0-9]{9,}$/.test(editingAddr.phone.replace(/\s/g, ''))) { 
-        setAddressError(t('validation.phone_format')); 
-        return; 
-    }
-
     const newAddr = { ...editingAddr, id: editingAddr.id || Date.now().toString() } as Address;
     const key = modalType === 'billing' ? 'billingAddresses' : 'deliveryAddresses';
     const updated = editingAddr.id ? user[key].map(a => a.id === editingAddr.id ? newAddr : a) : [...user[key], newAddr];
@@ -115,12 +112,53 @@ export const Profile: React.FC = () => {
     setExpandedOrderId(expandedOrderId === id ? null : id);
   };
 
+  // --- ORDER EDITING LOGIC ---
+
+  const recalculateOrderTotals = (items: any[], discounts: any[]) => {
+        if (!editingOrder) return;
+        
+        // 1. Validate Discounts against new items
+        let validDiscounts: any[] = [];
+        for(const d of discounts) {
+             const res = validateDiscount(d.code, items);
+             if(res.success && res.amount !== undefined) {
+                 validDiscounts.push({ code: d.code, amount: res.amount });
+             }
+        }
+
+        // 2. Calculate Items Total
+        const itemsTotal = items.reduce((acc, i) => acc + i.price * i.quantity, 0);
+        
+        // 3. Calculate Packaging
+        const packagingFee = calculatePackagingFee(items);
+        
+        // 4. Update Order State
+        setEditingOrder({ 
+            ...editingOrder, 
+            items, 
+            appliedDiscounts: validDiscounts,
+            totalPrice: itemsTotal,
+            packagingFee 
+        });
+  };
+
   const openEditOrderModal = (e: React.MouseEvent, order: Order) => {
     e.stopPropagation();
     setEditingOrder(JSON.parse(JSON.stringify(order))); // Deep copy
     setOrderSaveError(null);
     setSelectedDeliveryAddrId('');
     setSelectedBillingAddrId('');
+    
+    // Try to match current string addresses to IDs for selectors
+    if (order.deliveryType === DeliveryType.DELIVERY && order.deliveryAddress) {
+        const match = user.deliveryAddresses.find(a => order.deliveryAddress?.includes(a.street));
+        if (match) setSelectedDeliveryAddrId(match.id);
+    }
+    if (order.billingAddress) {
+        const match = user.billingAddresses.find(a => order.billingAddress?.includes(a.street));
+        if (match) setSelectedBillingAddrId(match.id);
+    }
+
     setIsEditOrderModalOpen(true);
   };
 
@@ -130,8 +168,8 @@ export const Profile: React.FC = () => {
       if (i.id === itemId) return { ...i, quantity: Math.max(0, i.quantity + delta) };
       return i;
     }).filter(i => i.quantity > 0);
-    const subtotal = updatedItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
-    setEditingOrder({ ...editingOrder, items: updatedItems, totalPrice: subtotal });
+    
+    recalculateOrderTotals(updatedItems, editingOrder.appliedDiscounts || []);
   };
 
   const handleAddProductToOrder = (p: Product) => {
@@ -143,11 +181,10 @@ export const Profile: React.FC = () => {
     } else {
       updatedItems = [...editingOrder.items, { ...p, quantity: 1 }];
     }
-    const subtotal = updatedItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
-    setEditingOrder({ ...editingOrder, items: updatedItems, totalPrice: subtotal });
+    recalculateOrderTotals(updatedItems, editingOrder.appliedDiscounts || []);
   };
 
-  const handleSaveOrder = () => {
+  const handleSaveOrder = async () => {
     if(!editingOrder) return;
     setOrderSaveError(null);
     
@@ -195,16 +232,9 @@ export const Profile: React.FC = () => {
        return;
     }
     
-    // Update fees logic (simplified)
-    const itemsTotal = editingOrder.items.reduce((acc, i) => acc + i.price * i.quantity, 0);
-    const packagingFee = itemsTotal >= settings.packaging.freeFrom ? 0 : 50;
-    
-    updateOrder({
-      ...editingOrder,
-      totalPrice: itemsTotal,
-      packagingFee
-    });
-    setIsEditOrderModalOpen(false);
+    const success = await updateOrder(editingOrder);
+    if (success) setIsEditOrderModalOpen(false);
+    else setOrderSaveError('Chyba při ukládání.');
   };
 
   const handleSelectDeliveryAddress = (addrId: string) => {
@@ -212,12 +242,89 @@ export const Profile: React.FC = () => {
     if (!addrId) return;
     const addr = user.deliveryAddresses.find(a => a.id === addrId);
     if (addr) {
+        const zip = addr.zip.replace(/\s/g, '');
+        const region = getDeliveryRegion(zip);
+        const deliveryFee = region ? (editingOrder && editingOrder.totalPrice >= region.freeFrom ? 0 : region.price) : 0;
+
         setEditingOrder(prev => prev ? {
             ...prev,
-            deliveryAddress: `${addr.name}\n${addr.street}\n${addr.city}\n${addr.zip}\nTel: ${addr.phone}`
+            deliveryAddress: `${addr.name}\n${addr.street}\n${addr.city}\n${addr.zip}\nTel: ${addr.phone}`,
+            deliveryFee
         } : null);
     }
   };
+
+  const handleSelectBillingAddress = (addrId: string) => {
+    setSelectedBillingAddrId(addrId);
+    if (!addrId) return;
+    const addr = user.billingAddresses.find(a => a.id === addrId);
+    if (addr) {
+        setEditingOrder(prev => prev ? {
+            ...prev,
+            billingAddress: `${addr.name}, ${addr.street}, ${addr.city}` + (addr.ic ? `, IČ: ${addr.ic}` : '')
+        } : null);
+    }
+  };
+
+  // --- ADDRESS MODAL WITHIN ORDER EDIT ---
+  
+  const openOrderAddressModal = (mode: 'create' | 'edit', type: 'delivery' | 'billing') => {
+      setAddressModalMode(mode);
+      setAddressModalType(type);
+      setAddressError(null);
+      
+      if (mode === 'edit') {
+          const id = type === 'delivery' ? selectedDeliveryAddrId : selectedBillingAddrId;
+          const list = type === 'delivery' ? user.deliveryAddresses : user.billingAddresses;
+          const existing = list.find(a => a.id === id);
+          if (!existing) {
+              alert('Nejdříve vyberte adresu k editaci.');
+              return;
+          }
+          setAddressForm({ ...existing });
+      } else {
+          setAddressForm({});
+      }
+      setIsAddressModalOpen(true);
+  };
+
+  const handleOrderAddressSave = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setAddressError(null);
+      
+      // Validation
+      if (!addressForm.name || addressForm.name.length < 3) { setAddressError(t('validation.name_length')); return; }
+      if (!addressForm.street) { setAddressError(t('validation.street_required')); return; }
+      if (!addressForm.city) { setAddressError(t('validation.city_required')); return; }
+      if (!addressForm.zip || !/^\d{5}$/.test(addressForm.zip.replace(/\s/g, ''))) { setAddressError(t('validation.zip_format')); return; }
+      if (!addressForm.phone) { setAddressError(t('validation.phone_format')); return; }
+
+      const newAddr = { ...addressForm, id: addressForm.id || Date.now().toString() } as Address;
+      const key = addressModalType === 'delivery' ? 'deliveryAddresses' : 'billingAddresses';
+      
+      let updatedList;
+      if (addressModalMode === 'edit') {
+          updatedList = user[key].map(a => a.id === newAddr.id ? newAddr : a);
+      } else {
+          updatedList = [...user[key], newAddr];
+      }
+
+      // 1. Update User Profile
+      await updateUser({ ...user, [key]: updatedList });
+
+      // 2. Select the address in the dropdown and update the text preview
+      if (addressModalType === 'delivery') {
+          setSelectedDeliveryAddrId(newAddr.id);
+          handleSelectDeliveryAddress(newAddr.id); // Triggers text update + fee calc
+      } else {
+          setSelectedBillingAddrId(newAddr.id);
+          handleSelectBillingAddress(newAddr.id);
+      }
+
+      setIsAddressModalOpen(false);
+  };
+
+  // --- PASSWORD & MISC ---
 
   const handleChangePassword = (e: React.FormEvent) => {
     e.preventDefault();
@@ -519,10 +626,10 @@ export const Profile: React.FC = () => {
 
       {/* --- MODALS --- */}
 
-      {/* Address Edit Modal */}
+      {/* Profile Address Edit Modal */}
       {modalType && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
-          <form onSubmit={saveAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+          <form onSubmit={saveProfileAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold">{editingAddr?.id ? 'Upravit adresu' : 'Nová adresa'}</h2>
             
             {addressError && (
@@ -670,27 +777,57 @@ export const Profile: React.FC = () => {
                         {/* Delivery Address Selector */}
                         {editingOrder.deliveryType === DeliveryType.DELIVERY && (
                             <>
-                                {user.deliveryAddresses.length > 0 && (
-                                    <div>
-                                        <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Vybrat z vašich adres</label>
-                                        <select 
-                                            className="w-full border rounded p-2 text-sm mb-2"
-                                            value={selectedDeliveryAddrId}
-                                            onChange={e => handleSelectDeliveryAddress(e.target.value)}
-                                        >
-                                            <option value="">-- Použít uloženou adresu --</option>
-                                            {user.deliveryAddresses.map(a => (
-                                                <option key={a.id} value={a.id}>{a.name}, {a.street}, {a.city}</option>
-                                            ))}
-                                        </select>
+                                <div>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className="text-[9px] font-bold text-gray-400 uppercase">Vybrat doručovací adresu</label>
+                                        <div className="flex gap-2">
+                                            {selectedDeliveryAddrId && (
+                                                <button onClick={() => openOrderAddressModal('edit', 'delivery')} className="text-[9px] font-bold text-blue-600 hover:underline">Editovat</button>
+                                            )}
+                                            <button onClick={() => openOrderAddressModal('create', 'delivery')} className="text-[9px] font-bold text-green-600 hover:underline">+ Nová</button>
+                                        </div>
                                     </div>
-                                )}
+                                    <select 
+                                        className="w-full border rounded p-2 text-sm mb-2"
+                                        value={selectedDeliveryAddrId}
+                                        onChange={e => handleSelectDeliveryAddress(e.target.value)}
+                                    >
+                                        <option value="">-- Vyberte adresu --</option>
+                                        {user.deliveryAddresses.map(a => (
+                                            <option key={a.id} value={a.id}>{a.name}, {a.street}, {a.city}</option>
+                                        ))}
+                                    </select>
+                                </div>
                                 <div>
                                     <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.street')} (Text)</label>
                                     <textarea className="w-full border rounded p-2 text-sm h-20" value={editingOrder.deliveryAddress || ''} onChange={e => setEditingOrder({...editingOrder, deliveryAddress: e.target.value})}/>
                                 </div>
                             </>
                         )}
+
+                        {/* Billing Address Selector */}
+                        <div className="border-t pt-2 mt-2">
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="text-[9px] font-bold text-gray-400 uppercase">Fakturační adresa</label>
+                                <div className="flex gap-2">
+                                    {selectedBillingAddrId && (
+                                        <button onClick={() => openOrderAddressModal('edit', 'billing')} className="text-[9px] font-bold text-blue-600 hover:underline">Editovat</button>
+                                    )}
+                                    <button onClick={() => openOrderAddressModal('create', 'billing')} className="text-[9px] font-bold text-green-600 hover:underline">+ Nová</button>
+                                </div>
+                            </div>
+                            <select 
+                                className="w-full border rounded p-2 text-sm mb-2"
+                                value={selectedBillingAddrId}
+                                onChange={e => handleSelectBillingAddress(e.target.value)}
+                            >
+                                <option value="">-- Vyberte adresu --</option>
+                                {user.billingAddresses.map(a => (
+                                    <option key={a.id} value={a.id}>{a.name}, {a.street}, {a.city}</option>
+                                ))}
+                            </select>
+                            <textarea className="w-full border rounded p-2 text-sm h-16" value={editingOrder.billingAddress || ''} onChange={e => setEditingOrder({...editingOrder, billingAddress: e.target.value})} placeholder="Fakturační adresa textově..."/>
+                        </div>
 
                        <div>
                          <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('admin.comm_lang')}</label>
@@ -739,9 +876,35 @@ export const Profile: React.FC = () => {
                       </table>
                       <button onClick={() => setIsAddProductModalOpen(true)} className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-xs font-bold text-gray-600 border-t">+ Přidat produkt</button>
                     </div>
-                    <div className="bg-gray-50 p-4 rounded-xl flex justify-between items-center">
-                      <span className="font-bold text-sm">Celkem (odhad):</span>
-                      <span className="font-bold text-lg text-accent">{Math.max(0, editingOrder.items.reduce((sum, i) => sum + i.price * i.quantity, 0) - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0))} Kč</span>
+                    
+                    {/* FEES SUMMARY */}
+                    <div className="bg-gray-50 p-4 rounded-xl space-y-2">
+                        <div className="flex justify-between text-xs text-gray-500">
+                            <span>Zboží:</span>
+                            <span>{editingOrder.totalPrice} Kč</span>
+                        </div>
+                        {editingOrder.appliedDiscounts?.map(d => (
+                            <div key={d.code} className="flex justify-between text-xs text-green-600">
+                                <span>Sleva ({d.code}):</span>
+                                <span>-{d.amount} Kč</span>
+                            </div>
+                        ))}
+                        {editingOrder.packagingFee > 0 && (
+                            <div className="flex justify-between text-xs text-gray-500">
+                                <span>Balné:</span>
+                                <span>{editingOrder.packagingFee} Kč</span>
+                            </div>
+                        )}
+                        {editingOrder.deliveryFee > 0 && (
+                            <div className="flex justify-between text-xs text-gray-500">
+                                <span>Doprava:</span>
+                                <span>{editingOrder.deliveryFee} Kč</span>
+                            </div>
+                        )}
+                        <div className="flex justify-between items-center pt-2 border-t border-gray-200 mt-2">
+                            <span className="font-bold text-sm">CELKEM:</span>
+                            <span className="font-bold text-lg text-accent">{Math.max(0, editingOrder.totalPrice - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0))} Kč</span>
+                        </div>
                     </div>
                  </div>
                </div>
@@ -754,14 +917,71 @@ export const Profile: React.FC = () => {
          </div>
       )}
 
+      {/* New Address Modal (Inside Order Edit) */}
+      {isAddressModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4">
+            <form onSubmit={handleOrderAddressSave} className="bg-white p-6 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+                <h3 className="text-lg font-bold">{addressModalMode === 'create' ? 'Nová adresa' : 'Upravit adresu'} ({addressModalType === 'delivery' ? 'Doručovací' : 'Fakturační'})</h3>
+                
+                {addressError && (
+                    <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-xs font-bold flex items-center">
+                        <AlertCircle size={16} className="mr-2 flex-shrink-0"/> {addressError}
+                    </div>
+                )}
+
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Jméno / Firma</label>
+                    <input className="w-full border rounded p-2 text-sm" value={addressForm.name || ''} onChange={e => setAddressForm({...addressForm, name: e.target.value})} />
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ulice a č.p.</label>
+                    <input className="w-full border rounded p-2 text-sm" value={addressForm.street || ''} onChange={e => setAddressForm({...addressForm, street: e.target.value})} />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Město</label>
+                        <input className="w-full border rounded p-2 text-sm" value={addressForm.city || ''} onChange={e => setAddressForm({...addressForm, city: e.target.value})} />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">PSČ</label>
+                        <input className="w-full border rounded p-2 text-sm" value={addressForm.zip || ''} onChange={e => setAddressForm({...addressForm, zip: e.target.value})} />
+                    </div>
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Telefon</label>
+                    <input className="w-full border rounded p-2 text-sm" value={addressForm.phone || ''} onChange={e => setAddressForm({...addressForm, phone: e.target.value})} />
+                </div>
+                
+                {addressModalType === 'billing' && (
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">IČ</label>
+                            <input className="w-full border rounded p-2 text-sm" value={addressForm.ic || ''} onChange={e => setAddressForm({...addressForm, ic: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">DIČ</label>
+                            <input className="w-full border rounded p-2 text-sm" value={addressForm.dic || ''} onChange={e => setAddressForm({...addressForm, dic: e.target.value})} />
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex gap-2 pt-4">
+                    <button type="button" onClick={() => setIsAddressModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded text-sm font-bold">Zrušit</button>
+                    <button type="submit" className="flex-1 py-2 bg-primary text-white rounded text-sm font-bold">Uložit</button>
+                </div>
+            </form>
+        </div>
+      )}
+
       {/* Add Product Modal (Reused for User) */}
       {isAddProductModalOpen && (
          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[250] p-4">
              <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] flex flex-col">
-            <h3 className="font-bold text-lg">{t('common.add_item')}</h3>
+            <div className="flex justify-between items-center"><h3 className="font-bold text-lg">{t('common.add_item')}</h3><button onClick={() => setIsAddProductModalOpen(false)} className="p-1 hover:bg-gray-100 rounded-full"><X size={20}/></button></div>
+            <div className="relative"><Search size={16} className="absolute left-3 top-3 text-gray-400"/><input className="w-full border rounded-lg pl-9 p-2 text-sm" placeholder="Hledat produkt..." value={productSearch} onChange={e => setProductSearch(e.target.value)} autoFocus/></div>
             <div className="overflow-y-auto divide-y flex-grow">
-              {products.filter(p => p.visibility.online).map(p => (
-                <div key={p.id} className="flex justify-between items-center py-2">
+              {products.filter(p => p.visibility.online && p.name.toLowerCase().includes(productSearch.toLowerCase())).map(p => (
+                <div key={p.id} className="flex justify-between items-center py-2 hover:bg-gray-50 px-2 rounded">
                   <div className="flex items-center gap-3">
                       {p.images && p.images[0] ? (
                           <img src={p.images[0]} alt={p.name} className="w-10 h-10 rounded object-cover"/>
@@ -774,7 +994,6 @@ export const Profile: React.FC = () => {
                 </div>
               ))}
             </div>
-            <button onClick={() => setIsAddProductModalOpen(false)} className="w-full bg-gray-100 py-2 rounded-lg font-bold text-sm">{t('admin.cancel')}</button>
           </div>
          </div>
       )}
