@@ -125,6 +125,7 @@ interface StoreContextType {
   getFullApiUrl: (endpoint: string) => string; 
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
+  refreshData: () => Promise<void>; // EXPOSED for manual refresh
   
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
@@ -990,35 +991,58 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   
   const printInvoice = async (o: Order) => { 
+      // 1. Prepare Doc
       const doc = new jsPDF();
+      
+      // 2. Load Font (Czech support)
+      // Fetching Roboto from a stable CDN to ensure Czech chars work
+      try {
+          const fontRes = await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
+          const fontBlob = await fontRes.blob();
+          const fontBase64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string); // Returns data:font/ttf;base64,...
+              reader.readAsDataURL(fontBlob);
+          });
+          
+          // Clean base64 string
+          const pureBase64 = fontBase64.split(',')[1];
+          doc.addFileToVFS("Roboto-Regular.ttf", pureBase64);
+          doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+          doc.setFont("Roboto");
+      } catch (e) {
+          console.warn("Nepodařilo se načíst font pro diakritiku, používám výchozí.", e);
+      }
+
       const comp = o.companyDetailsSnapshot || settings.companyDetails;
-      const safeText = (text: string) => removeDiacritics(text || '');
+      // We no longer strip diacritics, assuming font loaded
+      const tSafe = (txt: string) => txt || ''; 
 
       doc.setFontSize(22);
-      doc.text(safeText("FAKTURA - DANOVY DOKLAD"), 105, 20, { align: "center" });
+      doc.text(tSafe("FAKTURA - DAŇOVÝ DOKLAD"), 105, 20, { align: "center" });
       
       doc.setFontSize(10);
-      doc.text(safeText(`Cislo obj: ${o.id}`), 105, 28, { align: "center" });
-      doc.text(safeText(`Datum vystaveni: ${formatDate(new Date().toISOString())}`), 105, 34, { align: "center" });
+      doc.text(tSafe(`Číslo obj: ${o.id}`), 105, 28, { align: "center" });
+      doc.text(tSafe(`Datum vystavení: ${formatDate(new Date().toISOString())}`), 105, 34, { align: "center" });
 
       // Supplier
       doc.setFontSize(12);
-      doc.text(safeText("DODAVATEL:"), 14, 50);
+      doc.text(tSafe("DODAVATEL:"), 14, 50);
       doc.setFontSize(10);
-      doc.text(safeText(comp.name), 14, 56);
-      doc.text(safeText(comp.street), 14, 61);
-      doc.text(safeText(`${comp.zip} ${comp.city}`), 14, 66);
-      doc.text(safeText(`IC: ${comp.ic}`), 14, 71);
-      if(comp.dic) doc.text(safeText(`DIC: ${comp.dic}`), 14, 76);
+      doc.text(tSafe(comp.name), 14, 56);
+      doc.text(tSafe(comp.street), 14, 61);
+      doc.text(tSafe(`${comp.zip} ${comp.city}`), 14, 66);
+      doc.text(tSafe(`IČ: ${comp.ic}`), 14, 71);
+      if(comp.dic) doc.text(tSafe(`DIČ: ${comp.dic}`), 14, 76);
       
       // Customer
       doc.setFontSize(12);
-      doc.text(safeText("ODBERATEL:"), 120, 50);
+      doc.text(tSafe("ODBĚRATEL:"), 120, 50);
       doc.setFontSize(10);
       const billingLines = o.billingAddress ? o.billingAddress.split(',') : [];
-      doc.text(safeText(o.userName || 'Zakaznik'), 120, 56);
+      doc.text(tSafe(o.userName || 'Zákazník'), 120, 56);
       billingLines.forEach((line, i) => {
-          doc.text(safeText(line.trim()), 120, 61 + (i*5));
+          doc.text(tSafe(line.trim()), 120, 61 + (i*5));
       });
 
       // Items Table
@@ -1026,7 +1050,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       doc.line(14, y, 196, y);
       y += 6;
       doc.setFontSize(9);
-      doc.text("POLOZKA", 14, y);
+      doc.text("POLOŽKA", 14, y);
       doc.text("KS", 130, y);
       doc.text("CENA/KS", 150, y);
       doc.text("CELKEM", 180, y);
@@ -1035,7 +1059,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       y += 6;
 
       o.items.forEach(item => {
-          doc.text(safeText(item.name), 14, y);
+          doc.text(tSafe(item.name), 14, y);
           doc.text(item.quantity.toString(), 130, y);
           doc.text(item.price.toString(), 150, y);
           doc.text((item.price * item.quantity).toString(), 180, y);
@@ -1044,7 +1068,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       // Fees
       if (o.packagingFee > 0) {
-          doc.text("Balne", 14, y);
+          doc.text("Balné", 14, y);
           doc.text(o.packagingFee.toString(), 180, y);
           y += 6;
       }
@@ -1056,7 +1080,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       // Discounts
       o.appliedDiscounts?.forEach(d => {
-          doc.text(safeText(`Sleva ${d.code}`), 14, y);
+          doc.text(tSafe(`Sleva ${d.code}`), 14, y);
           doc.text(`-${d.amount}`, 180, y);
           y += 6;
       });
@@ -1065,7 +1089,36 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       y += 10;
       doc.setFontSize(14);
       const total = Math.max(0, o.totalPrice + o.packagingFee + (o.deliveryFee || 0) - (o.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
-      doc.text(safeText(`CELKEM K UHRADE: ${total} Kc`), 196, y, { align: "right" });
+      doc.text(tSafe(`CELKEM K ÚHRADĚ: ${total} Kč`), 196, y, { align: "right" });
+
+      // 3. QR Code Logic
+      try {
+          const iban = generateCzIban(settings.companyDetails.bankAccount).replace(/\s/g,'');
+          const bic = settings.companyDetails.bic ? `+${settings.companyDetails.bic}` : '';
+          const acc = `ACC:${iban}${bic}`;
+          const amountStr = total.toFixed(2);
+          const vs = o.id.replace(/\D/g,'') || '0';
+          const msg = removeDiacritics(`Objednavka ${o.id}`); // QR MSG should be ASCII
+          
+          const qrString = `SPD*1.0*${acc}*AM:${amountStr}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
+          // Use fetch to get image as blob to avoid CORS issues if canvas was used directly
+          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrString)}`;
+          
+          const qrRes = await fetch(qrUrl);
+          const qrBlob = await qrRes.blob();
+          const qrBase64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.readAsDataURL(qrBlob);
+          });
+          
+          // Add QR to PDF
+          doc.addImage(qrBase64, 'PNG', 150, 200, 40, 40); 
+          doc.setFontSize(8);
+          doc.text("QR Platba", 170, 242, { align: "center" });
+      } catch (e) {
+          console.warn("QR kód se nepodařilo vložit", e);
+      }
 
       doc.save(`faktura_${o.id}.pdf`);
   };
@@ -1088,7 +1141,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       t, tData, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification, showNotify,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       getFullApiUrl,
-      isPreviewEnvironment
+      isPreviewEnvironment,
+      refreshData: fetchData // Exported for manual refresh
     }}>
       {children}
     </StoreContext.Provider>

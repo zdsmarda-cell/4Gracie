@@ -575,10 +575,17 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 const userEmail = userRows[0]?.email;
 
                 if (userEmail) {
-                    // Use dynamic host retrieval to avoid hardcoded typos or ENV issues
+                    // Use dynamic host retrieval or ENV.
+                    // Important: Constructing base URL carefully to avoid duplicates
                     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-                    const host = req.get('host'); // Includes port if present
-                    const appUrl = process.env.VITE_API_URL || `${protocol}://${host}`;
+                    const host = req.get('host'); 
+                    let appUrl = process.env.VITE_API_URL;
+                    
+                    if (!appUrl) {
+                        appUrl = `${protocol}://${host}`;
+                    }
+                    // Remove trailing slash to be consistent
+                    if (appUrl.endsWith('/')) appUrl = appUrl.slice(0, -1);
                     
                     const itemsHtml = dbOrder.items.map(item => {
                         // Construct image URL safely
@@ -587,17 +594,17 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                             if (item.images[0].startsWith('http')) {
                                 imgUrl = item.images[0];
                             } else {
-                                // Ensure no double slashes and correct concatenation
-                                const cleanBase = appUrl.replace(/\/$/, '');
                                 const cleanPath = item.images[0].startsWith('/') ? item.images[0] : `/${item.images[0]}`;
-                                imgUrl = `${cleanBase}${cleanPath}`;
+                                imgUrl = `${appUrl}${cleanPath}`;
                             }
                         }
                         
+                        // FIX: MULTI-LINE ATTRIBUTES TO PREVENT QUOTED-PRINTABLE BREAKING URLS
+                        // Inserting newlines inside the tag allows the email server to break lines at whitespace rather than mid-URL
                         return `
                         <tr>
                             <td style="padding: 10px; border-bottom: 1px solid #eee;">
-                                ${imgUrl ? `<img src="${imgUrl}" alt="${item.name}" width="50" height="50" style="object-fit: cover; border-radius: 5px;">` : ''}
+                                ${imgUrl ? `<img \n src="${imgUrl}" \n alt="Product" \n width="50" \n height="50" \n style="object-fit: cover; border-radius: 5px;">` : ''}
                             </td>
                             <td style="padding: 10px; border-bottom: 1px solid #eee;">
                                 <strong>${item.name}</strong>
@@ -612,10 +619,19 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                                 <strong>${item.price * item.quantity} Kč</strong>
                             </td>
                         </tr>
-                        `; // Added new line to help email parsers avoid ultra-long lines (quoted-printable issues)
+                        `; 
                     }).join('\n');
 
-                    const finalTotal = dbOrder.totalPrice + dbOrder.packagingFee + (dbOrder.deliveryFee || 0);
+                    // Calculate Total Discount and HTML rows for discounts
+                    const discountRowsHtml = (dbOrder.appliedDiscounts || []).map(d => `
+                        <tr>
+                            <td colspan="4" style="padding: 10px; text-align: right; color: #15803d;">Sleva (${d.code}):</td>
+                            <td style="padding: 10px; text-align: right; color: #15803d;">-${d.amount} Kč</td>
+                        </tr>
+                    `).join('\n');
+
+                    const totalDiscount = (dbOrder.appliedDiscounts || []).reduce((acc, d) => acc + d.amount, 0);
+                    const finalTotal = Math.max(0, dbOrder.totalPrice + dbOrder.packagingFee + (dbOrder.deliveryFee || 0) - totalDiscount);
 
                     const mailOptions = {
                         from: process.env.SMTP_FROM || '"4Gracie Catering" <info@4gracie.cz>',
@@ -655,6 +671,7 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                                             <td colspan="4" style="padding: 10px; text-align: right;">Balné:</td>
                                             <td style="padding: 10px; text-align: right;">${dbOrder.packagingFee} Kč</td>
                                         </tr>
+                                        ${discountRowsHtml}
                                         <tr style="font-size: 18px;">
                                             <td colspan="4" style="padding: 10px; text-align: right;"><strong>CELKEM K ÚHRADĚ:</strong></td>
                                             <td style="padding: 10px; text-align: right; color: #9333ea;"><strong>${finalTotal} Kč</strong></td>

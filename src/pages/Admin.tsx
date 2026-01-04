@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { 
     Product, Category, DiscountCode, PackagingType, DayConfig, 
@@ -28,7 +28,7 @@ import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
     const { 
-        dataSource, setDataSource, t, isPreviewEnvironment, user 
+        dataSource, setDataSource, t, isPreviewEnvironment, user, refreshData
     } = useStore();
 
     // Guard Clause: Redirect if not logged in or not admin
@@ -37,6 +37,11 @@ export const Admin: React.FC = () => {
     }
 
     const [activeTab, setActiveTab] = useState('orders');
+    
+    // Refresh data when tab changes to ensure fresh DB content
+    useEffect(() => {
+        refreshData();
+    }, [activeTab, refreshData]);
     
     // Navigation State (Load -> Orders)
     const [filterDate, setFilterDate] = useState<string | null>(null);

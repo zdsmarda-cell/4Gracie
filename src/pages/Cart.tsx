@@ -1,10 +1,11 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store } from 'lucide-react';
 import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
+import { VOP_TEXT } from '../constants';
 
 export const Cart: React.FC = () => {
   const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
@@ -33,6 +34,7 @@ export const Cart: React.FC = () => {
   const [orderNote, setOrderNote] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(true);
   const [termsConsent, setTermsConsent] = useState(false); 
+  const [isTermsModalOpen, setIsTermsModalOpen] = useState(false);
 
   const [discountInput, setDiscountInput] = useState('');
   const [discountError, setDiscountError] = useState('');
@@ -604,14 +606,13 @@ export const Cart: React.FC = () => {
                         />
                         <span className="flex flex-wrap items-center gap-1">
                             {t('cart.terms_consent')}
-                            <Link 
-                                to="/terms" 
-                                target="_blank" 
+                            <button 
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setIsTermsModalOpen(true); }}
                                 className="text-accent hover:text-primary underline font-bold ml-1 z-10 relative"
-                                onClick={(e) => e.stopPropagation()}
                             >
                                 (Zobrazit VOP)
-                            </Link>
+                            </button>
                         </span>
                         </label>
                     </div>
@@ -630,7 +631,7 @@ export const Cart: React.FC = () => {
         </div>
       </div>
       
-      {/* ... (Modal stays same) ... */}
+      {/* ... (Address Modal stays same) ... */}
       {modalType && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
           <form onSubmit={saveAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
@@ -682,6 +683,24 @@ export const Cart: React.FC = () => {
             )}
             <div className="flex gap-2 pt-4"><button type="button" onClick={() => setModalType(null)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-xs uppercase">{t('common.cancel')}</button><button type="submit" className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-xs uppercase shadow-lg">{t('common.save')}</button></div>
           </form>
+        </div>
+      )}
+
+      {/* VOP Modal */}
+      {isTermsModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsTermsModalOpen(false)}>
+            <div className="bg-white rounded-2xl p-8 max-w-2xl w-full shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+                <div className="flex justify-between items-center mb-6 border-b pb-4">
+                    <h3 className="text-2xl font-serif font-bold text-primary">Obchodní podmínky</h3>
+                    <button onClick={() => setIsTermsModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-full transition text-gray-500"><X size={24}/></button>
+                </div>
+                <div className="overflow-y-auto pr-2 text-sm leading-relaxed text-gray-600 whitespace-pre-wrap flex-grow">
+                    {VOP_TEXT}
+                </div>
+                <div className="mt-6 pt-4 border-t flex justify-end">
+                    <button onClick={() => setIsTermsModalOpen(false)} className="bg-primary text-white px-8 py-3 rounded-xl font-bold hover:bg-black transition shadow-lg">Rozumím</button>
+                </div>
+            </div>
         </div>
       )}
     </div>
