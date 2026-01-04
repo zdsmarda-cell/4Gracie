@@ -80,35 +80,48 @@ console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 app.get(/^\/uploads\/(.+)$/, (req, res) => {
     try {
         const relativePath = req.params[0];
+        console.log(`🔍 [READ Request] URL: ${req.originalUrl}`);
+        console.log(`   > Captured Relative: '${relativePath}'`);
         
         // Prevent directory traversal
         if (!relativePath || relativePath.includes('..')) {
+            console.warn(`   ⚠️ Access Denied (Directory Traversal attempt)`);
             return res.status(403).send('Access Denied');
         }
 
-        const fullPath = path.join(UPLOAD_ROOT, relativePath);
+        // Decode URL (e.g. %20 -> space)
+        const safeRelative = decodeURIComponent(relativePath);
+        const fullPath = path.join(UPLOAD_ROOT, safeRelative);
+        
+        console.log(`   > Target Absolute Path: '${fullPath}'`);
 
         // Verify the file is actually inside our upload root
         if (!fullPath.startsWith(UPLOAD_ROOT)) {
+            console.warn(`   ⚠️ Access Denied (Path outside root)`);
             return res.status(403).send('Access Denied');
         }
 
         if (fs.existsSync(fullPath)) {
             // Check if directory
             if (fs.statSync(fullPath).isDirectory()) {
+                console.warn(`   ⚠️ Access Denied (Is directory)`);
                 return res.status(403).send('Access Denied');
             }
+            
+            console.log(`   ✅ File FOUND. Streaming...`);
             
             // Explicitly use absolute path with root option disabled (since we provide absolute path)
             // or just provide the absolute path string.
             res.sendFile(fullPath, (err) => {
                 if (err) {
-                    console.error(`❌ Error sending file ${fullPath}:`, err);
+                    console.error(`   ❌ Error sending file:`, err);
                     if (!res.headersSent) res.status(500).end(); 
+                } else {
+                    console.log(`   🚀 File sent successfully.`);
                 }
             });
         } else {
-            console.warn(`⚠️ 404 Not Found: ${fullPath}`);
+            console.error(`   ❌ File NOT FOUND on disk.`);
             res.status(404).send('File not found');
         }
     } catch (error) {
