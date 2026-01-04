@@ -80,6 +80,9 @@ if (process.env.SMTP_HOST) {
         auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
         tls: { rejectUnauthorized: false }
     });
+    console.log('📧 SMTP Configured.');
+} else {
+    console.warn('⚠️ SMTP Config Missing - Emails will not be sent.');
 }
 
 // --- DATABASE CONNECTION ---
@@ -409,7 +412,13 @@ app.post('/api/auth/login', withDb(async (req, res, db) => {
 // 3. ORDERS & STATS (Historical & Aggregated)
 app.post('/api/orders', withDb(async (req, res, db) => {
     const o = req.body;
+    const { vopPdf } = req.body; // Extract Base64 PDF
+    
     if (!o.id || !o.userId) return res.status(400).json({ error: "Missing fields" });
+
+    // Clean order object for DB (remove transient PDF data if mixed)
+    const dbOrder = { ...o };
+    delete dbOrder.vopPdf; 
 
     const conn = await db.getConnection();
     try {
@@ -425,18 +434,18 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 status=?, total_price=?, delivery_date=?, user_name=?, 
                 is_paid=?, delivery_address=?, full_json=?
         `, [
-            o.id, o.userId, o.userName, o.deliveryDate, o.status, o.totalPrice,
-            o.deliveryFee, o.packagingFee, o.paymentMethod, o.isPaid,
-            o.deliveryType, o.deliveryAddress, o.billingAddress, o.note,
-            o.pickupLocationId, o.language, o.createdAt || new Date(), JSON.stringify(o),
-            o.status, o.totalPrice, o.deliveryDate, o.userName,
-            o.isPaid, o.deliveryAddress, JSON.stringify(o)
+            dbOrder.id, dbOrder.userId, dbOrder.userName, dbOrder.deliveryDate, dbOrder.status, dbOrder.totalPrice,
+            dbOrder.deliveryFee, dbOrder.packagingFee, dbOrder.paymentMethod, dbOrder.isPaid,
+            dbOrder.deliveryType, dbOrder.deliveryAddress, dbOrder.billingAddress, dbOrder.note,
+            dbOrder.pickupLocationId, dbOrder.language, dbOrder.createdAt || new Date(), JSON.stringify(dbOrder),
+            dbOrder.status, dbOrder.totalPrice, dbOrder.deliveryDate, dbOrder.userName,
+            dbOrder.isPaid, dbOrder.deliveryAddress, JSON.stringify(dbOrder)
         ]);
 
-        await conn.query('DELETE FROM order_items WHERE order_id = ?', [o.id]);
-        if (o.items && o.items.length > 0) {
-            const itemValues = o.items.map(i => [
-                o.id, i.id, i.name, i.quantity, i.price, i.category, i.unit, 
+        await conn.query('DELETE FROM order_items WHERE order_id = ?', [dbOrder.id]);
+        if (dbOrder.items && dbOrder.items.length > 0) {
+            const itemValues = dbOrder.items.map(i => [
+                dbOrder.id, i.id, i.name, i.quantity, i.price, i.category, i.unit, 
                 i.workload || 0, i.workloadOverhead || 0
             ]);
             await conn.query(`
@@ -447,7 +456,53 @@ app.post('/api/orders', withDb(async (req, res, db) => {
             `, [itemValues]);
         }
         await conn.commit();
-        res.json({ success: true, id: o.id });
+
+        // --- EMAIL SENDING LOGIC ---
+        if (transporter) {
+            try {
+                // Get User Email
+                const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [dbOrder.userId]);
+                const userEmail = userRows[0]?.email;
+
+                if (userEmail) {
+                    const mailOptions = {
+                        from: process.env.SMTP_FROM || '"4Gracie Catering" <info@4gracie.cz>',
+                        to: userEmail,
+                        subject: `Potvrzení objednávky #${dbOrder.id}`,
+                        html: `
+                            <div style="font-family: Arial, sans-serif; color: #333;">
+                                <h2>Děkujeme za Vaši objednávku!</h2>
+                                <p>Vaše objednávka <strong>#${dbOrder.id}</strong> byla úspěšně přijata.</p>
+                                <hr/>
+                                <p><strong>Datum doručení:</strong> ${dbOrder.deliveryDate}</p>
+                                <p><strong>Celková cena:</strong> ${dbOrder.totalPrice + dbOrder.packagingFee + (dbOrder.deliveryFee || 0)} Kč</p>
+                                <p>Stav objednávky můžete sledovat ve svém profilu.</p>
+                                <br/>
+                                <p>S pozdravem,<br/>Tým 4Gracie</p>
+                            </div>
+                        `,
+                        attachments: []
+                    };
+
+                    // Attach VOP PDF if provided
+                    if (vopPdf) {
+                        mailOptions.attachments.push({
+                            filename: 'Obchodni_podminky_4Gracie.pdf',
+                            content: Buffer.from(vopPdf, 'base64'),
+                            contentType: 'application/pdf'
+                        });
+                    }
+
+                    await transporter.sendMail(mailOptions);
+                    console.log(`📧 Order confirmation sent to ${userEmail}`);
+                }
+            } catch (mailError) {
+                console.error("❌ Failed to send order email:", mailError);
+                // Don't fail the request if email fails, just log it
+            }
+        }
+
+        res.json({ success: true, id: dbOrder.id });
     } catch (e) {
         await conn.rollback();
         throw e;

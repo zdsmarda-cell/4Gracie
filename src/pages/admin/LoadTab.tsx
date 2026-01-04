@@ -159,7 +159,9 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
             return acc;
         }, {} as Record<string, ServerLoadDetail[]>);
 
-        Object.entries(grouped).forEach(([catId, items]) => {
+        // Safe iteration over keys to avoid unknown type issues with Object.entries
+        Object.keys(grouped).forEach(catId => {
+            const items = grouped[catId];
             const catName = settings.categories.find(c => c.id === catId)?.name || catId;
             const catSummary = serverDetails.summary.find(s => s.category === catId);
             const totalLoad = (Number(catSummary?.total_workload) || 0) + (Number(catSummary?.total_overhead) || 0);

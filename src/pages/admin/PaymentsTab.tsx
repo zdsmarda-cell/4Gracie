@@ -2,8 +2,9 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { PaymentMethodConfig } from '../../types';
+import { DEFAULT_SETTINGS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
-import { Edit, Languages, Globe, X, Check } from 'lucide-react';
+import { Edit, Languages, Globe, X, Check, RefreshCw } from 'lucide-react';
 
 const TranslationViewModal: React.FC<{
     isOpen: boolean;
@@ -81,50 +82,70 @@ export const PaymentsTab: React.FC = () => {
         setEditingMethod(null);
     };
 
+    const restoreDefaults = async () => {
+        if (confirm('Opravdu chcete obnovit výchozí platební metody?')) {
+            await updateSettings({ ...settings, paymentMethods: DEFAULT_SETTINGS.paymentMethods });
+        }
+    };
+
     return (
         <div className="animate-fade-in max-w-3xl">
             <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                <h2 className="text-xl font-bold mb-6">{t('admin.payment_methods')}</h2>
-                <div className="space-y-4">
-                {settings.paymentMethods.map((pm, idx) => (
-                    <div key={pm.id} className="flex items-center justify-between p-4 border rounded-xl bg-gray-50 hover:bg-white hover:shadow-sm transition duration-200">
-                        <div className="flex-1 mr-4">
-                            <div className="flex items-center gap-2 mb-1">
-                                <h4 className="font-bold text-primary">{pm.label}</h4>
-                                {pm.translations && (
-                                    <button 
-                                        onClick={() => setViewingTranslations(pm)}
-                                        className="text-gray-400 hover:text-accent transition"
-                                        title="Zobrazit překlady"
-                                    >
-                                        <Languages size={14} />
-                                    </button>
-                                )}
-                            </div>
-                            <p className="text-xs text-gray-500">{pm.description}</p>
-                        </div>
-                        
-                        <div className="flex items-center gap-4">
-                            <button 
-                                onClick={() => setEditingMethod(pm)}
-                                className="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 rounded-full transition"
-                                title="Upravit"
-                            >
-                                <Edit size={18} />
-                            </button>
-
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" className="sr-only peer" checked={pm.enabled} onChange={e => {
-                                    const newMethods = [...settings.paymentMethods];
-                                    newMethods[idx].enabled = e.target.checked;
-                                    updateSettings({...settings, paymentMethods: newMethods});
-                                }} />
-                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                            </label>
-                        </div>
-                    </div>
-                ))}
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold">{t('admin.payment_methods')}</h2>
+                    {settings.paymentMethods.length === 0 && (
+                        <button onClick={restoreDefaults} className="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center hover:bg-blue-100 transition">
+                            <RefreshCw size={14} className="mr-2"/> Obnovit výchozí
+                        </button>
+                    )}
                 </div>
+                
+                {settings.paymentMethods.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                        Žádné platební metody. Klikněte na "Obnovit výchozí".
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                    {settings.paymentMethods.map((pm, idx) => (
+                        <div key={pm.id} className="flex items-center justify-between p-4 border rounded-xl bg-gray-50 hover:bg-white hover:shadow-sm transition duration-200">
+                            <div className="flex-1 mr-4">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <h4 className="font-bold text-primary">{pm.label}</h4>
+                                    {pm.translations && (
+                                        <button 
+                                            onClick={() => setViewingTranslations(pm)}
+                                            className="text-gray-400 hover:text-accent transition"
+                                            title="Zobrazit překlady"
+                                        >
+                                            <Languages size={14} />
+                                        </button>
+                                    )}
+                                </div>
+                                <p className="text-xs text-gray-500">{pm.description}</p>
+                            </div>
+                            
+                            <div className="flex items-center gap-4">
+                                <button 
+                                    onClick={() => setEditingMethod(pm)}
+                                    className="p-2 text-gray-400 hover:text-primary hover:bg-gray-100 rounded-full transition"
+                                    title="Upravit"
+                                >
+                                    <Edit size={18} />
+                                </button>
+
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" className="sr-only peer" checked={pm.enabled} onChange={e => {
+                                        const newMethods = [...settings.paymentMethods];
+                                        newMethods[idx].enabled = e.target.checked;
+                                        updateSettings({...settings, paymentMethods: newMethods});
+                                    }} />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                                </label>
+                            </div>
+                        </div>
+                    ))}
+                    </div>
+                )}
             </div>
 
             <TranslationViewModal 

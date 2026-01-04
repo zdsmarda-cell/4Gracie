@@ -1,10 +1,13 @@
 
+// ... existing imports ...
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store } from 'lucide-react';
 import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
+import { jsPDF } from 'jspdf';
+import { VOP_TEXT } from '../constants';
 
 export const Cart: React.FC = () => {
   const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
@@ -19,9 +22,17 @@ export const Cart: React.FC = () => {
   const [selectedBillingId, setSelectedBillingId] = useState<string>('');
   const [selectedPickupLocationId, setSelectedPickupLocationId] = useState<string>(''); 
   const [date, setDate] = useState('');
+  
+  // PAYMENT METHOD LOGIC
+  const activePaymentMethods = useMemo(() => settings.paymentMethods.filter(m => m.enabled), [settings.paymentMethods]);
+  
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => {
-    return (localStorage.getItem('cart_paymentMethod') as PaymentMethod) || PaymentMethod.GATEWAY;
+    const saved = localStorage.getItem('cart_paymentMethod') as PaymentMethod;
+    // If saved method is still active, use it. Otherwise use first active or fallback.
+    if (saved && activePaymentMethods.some(m => m.id === saved)) return saved;
+    return activePaymentMethods.length > 0 ? activePaymentMethods[0].id : PaymentMethod.GATEWAY; // Default fallback to something even if disabled, validation will block submit
   });
+
   const [orderNote, setOrderNote] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(true);
   const [termsConsent, setTermsConsent] = useState(false); 
@@ -42,6 +53,13 @@ export const Cart: React.FC = () => {
         setSelectedPickupLocationId(activePickupLocations[0].id);
     }
   }, [deliveryType, activePickupLocations]);
+
+  // Ensure payment method is valid when active methods change
+  useEffect(() => {
+      if (activePaymentMethods.length > 0 && !activePaymentMethods.some(m => m.id === paymentMethod)) {
+          setPaymentMethod(activePaymentMethods[0].id);
+      }
+  }, [activePaymentMethods, paymentMethod]);
 
   const validationErrors = useMemo(() => {
     return cart.reduce((acc, item) => {
@@ -129,6 +147,9 @@ export const Cart: React.FC = () => {
     return checkAvailability(date, cart);
   }, [date, cart, checkAvailability]);
 
+  // Check for Payment Validity
+  const isPaymentValid = activePaymentMethods.some(m => m.id === paymentMethod);
+
   const handleApplyDiscount = () => {
     setDiscountError('');
     if (!discountInput) return;
@@ -142,7 +163,7 @@ export const Cart: React.FC = () => {
   };
 
   const handleSubmit = () => {
-    if (!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || hasValidationErrors || isDeliveryMethodInvalid || !termsConsent) return;
+    if (!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || hasValidationErrors || isDeliveryMethodInvalid || !termsConsent || !isPaymentValid) return;
     if (deliveryType === DeliveryType.DELIVERY && !region) return;
     if (deliveryType === DeliveryType.PICKUP && !pickupLocation) return;
 
@@ -150,6 +171,20 @@ export const Cart: React.FC = () => {
     if (user.marketingConsent !== marketingConsent) {
         updateUser({ ...user, marketingConsent });
     }
+
+    // GENERATE VOP PDF
+    const doc = new jsPDF();
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("Obchodní podmínky 4Gracie", 20, 20);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    
+    // Simple text wrapping for VOP content
+    const splitText = doc.splitTextToSize(VOP_TEXT, 170);
+    doc.text(splitText, 20, 30);
+    
+    const vopBase64 = doc.output('datauristring').split(',')[1]; // Remove data:application/pdf;base64, prefix
 
     const newOrder: Order = {
       id: `${Math.floor(Math.random() * 90000) + 10000}`,
@@ -176,7 +211,7 @@ export const Cart: React.FC = () => {
     };
     
     newOrder.invoiceUrl = generateInvoice(newOrder);
-    addOrder(newOrder);
+    addOrder(newOrder, vopBase64); // Pass VOP payload
     setSubmittedOrder(newOrder);
     setStep(3);
     clearCart();
@@ -308,6 +343,7 @@ export const Cart: React.FC = () => {
 
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <h3 className="font-bold mb-4 flex items-center"><Truck className="mr-2 text-accent" size={20}/> {t('cart.delivery_pickup')}</h3>
+                    {/* ... (delivery regions logic remains same) ... */}
                     <div className={`grid ${enabledRegions.length > 0 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} gap-4`}>
                        <button onClick={() => setDeliveryType(DeliveryType.PICKUP)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.PICKUP ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
                           <div className="font-bold text-sm mb-1">{t('cart.pickup')}</div>
@@ -478,17 +514,25 @@ export const Cart: React.FC = () => {
 
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <h3 className="font-bold mb-4 flex items-center"><CreditCard className="mr-2 text-accent" size={20}/> {t('cart.payment_method')}</h3>
-                    <div className="space-y-2">
-                      {settings.paymentMethods.filter(m => m.enabled).map(method => (
-                        <label key={method.id} className="flex items-center p-3 border rounded-xl cursor-pointer hover:bg-gray-50 transition">
-                          <input type="radio" name="payment" className="text-accent focus:ring-accent" checked={paymentMethod === method.id} onChange={() => setPaymentMethod(method.id)} />
-                          <div className="ml-3">
-                            <span className="block text-sm font-bold text-gray-900">{tData(method, 'label')}</span>
-                            <span className="block text-xs text-gray-500">{tData(method, 'description')}</span>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
+                    
+                    {/* Error if no payment methods available */}
+                    {activePaymentMethods.length === 0 ? (
+                        <div className="bg-red-50 p-4 rounded-lg text-red-600 text-sm font-bold flex items-center">
+                            <AlertCircle size={20} className="mr-2"/> Není k dispozici žádná aktivní platební metoda. Objednávku nelze dokončit.
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                        {activePaymentMethods.map(method => (
+                            <label key={method.id} className="flex items-center p-3 border rounded-xl cursor-pointer hover:bg-gray-50 transition">
+                            <input type="radio" name="payment" className="text-accent focus:ring-accent" checked={paymentMethod === method.id} onChange={() => setPaymentMethod(method.id)} />
+                            <div className="ml-3">
+                                <span className="block text-sm font-bold text-gray-900">{tData(method, 'label')}</span>
+                                <span className="block text-xs text-gray-500">{tData(method, 'description')}</span>
+                            </div>
+                            </label>
+                        ))}
+                        </div>
+                    )}
                   </div>
 
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -582,7 +626,7 @@ export const Cart: React.FC = () => {
                     </div>
                   )}
                   <button 
-                    disabled={!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || isDeliveryMethodInvalid || !termsConsent || (deliveryType === DeliveryType.PICKUP && !pickupLocation) || (deliveryType === DeliveryType.DELIVERY && !region)} 
+                    disabled={!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || isDeliveryMethodInvalid || !termsConsent || (deliveryType === DeliveryType.PICKUP && !pickupLocation) || (deliveryType === DeliveryType.DELIVERY && !region) || !isPaymentValid} 
                     onClick={handleSubmit} 
                     className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50 disabled:bg-gray-300 uppercase text-xs tracking-widest"
                   >
@@ -595,6 +639,7 @@ export const Cart: React.FC = () => {
         </div>
       </div>
       
+      {/* ... (Modal stays same) ... */}
       {modalType && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
           <form onSubmit={saveAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">

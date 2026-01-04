@@ -18,6 +18,30 @@ export const ALLERGENS: Allergen[] = [
   { id: 14, code: '14', name: 'Měkkýši a výrobky z nich' },
 ];
 
+export const VOP_TEXT = `OBCHODNÍ PODMÍNKY (VOP) - 4Gracie
+
+1. ÚVODNÍ USTANOVENÍ
+Tyto obchodní podmínky upravují v souladu s § 1751 odst. 1 zákona č. 89/2012 Sb., občanský zákoník, vzájemná práva a povinnosti smluvních stran vzniklé v souvislosti nebo na základě kupní smlouvy uzavírané mezi prodávajícím a jinou osobou (kupujícím) prostřednictvím internetového obchodu prodávajícího.
+
+2. UZAVŘENÍ KUPNÍ SMLOUVY
+Veškerá prezentace zboží umístěná ve webovém rozhraní obchodu je informativního charakteru a prodávající není povinen uzavřít kupní smlouvu ohledně tohoto zboží. Kupní smlouva vzniká odesláním objednávky kupujícím a jejím přijetím prodávajícím.
+
+3. CENA ZBOŽÍ A PLATEBNÍ PODMÍNKY
+Ceny zboží jsou uvedeny včetně daně z přidané hodnoty a všech souvisejících poplatků. Cenu zboží a případné náklady spojené s dodáním zboží dle kupní smlouvy může kupující uhradit prodávajícímu způsoby nabízenými v objednávkovém formuláři.
+
+4. ODSTOUPENÍ OD SMLOUVY
+Kupující bere na vědomí, že dle § 1837 občanského zákoníku nelze mimo jiné odstoupit od kupní smlouvy o dodávce zboží, které podléhá rychlé zkáze, jakož i zboží, které bylo po dodání nenávratně smíseno s jiným zbožím.
+
+5. PRÁVA Z VADNÉHO PLNĚNÍ
+Práva a povinnosti smluvních stran ohledně práv z vadného plnění se řídí příslušnými obecně závaznými právními předpisy.
+
+Provozovatel:
+Šárka Šmardová
+Sídlo: Neslovicá 411, 664 17 Tetčice
+IČ: 01303562
+
+Plné znění obchodních podmínek je k dispozici na webu 4gracie.cz.`;
+
 export const PRODUCTS: Product[] = [
   {
     id: 'p1',
