@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { useNavigate } from 'react-router-dom';
-import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store } from 'lucide-react';
+import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store, Loader2 } from 'lucide-react';
 import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
 import { TermsContent } from '../components/TermsContent';
@@ -12,6 +12,7 @@ export const Cart: React.FC = () => {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false); // New State
   
   const [deliveryType, setDeliveryType] = useState<DeliveryType>(() => {
     return (localStorage.getItem('cart_deliveryType') as DeliveryType) || DeliveryType.PICKUP;
@@ -154,11 +155,10 @@ export const Cart: React.FC = () => {
       if (!termsConsent) return false;
       if (deliveryType === DeliveryType.PICKUP && !pickupLocation) return false;
       if (deliveryType === DeliveryType.DELIVERY && !region) return false;
+      if (isSubmitting) return false;
       
-      // Payment method check relaxed to allow submission if list is empty (fallback to default on backend)
-      // or if it's currently loading.
       return true;
-  }, [user, date, availability, selectedBillingId, hasValidationErrors, isDeliveryMethodInvalid, termsConsent, deliveryType, pickupLocation, region]);
+  }, [user, date, availability, selectedBillingId, hasValidationErrors, isDeliveryMethodInvalid, termsConsent, deliveryType, pickupLocation, region, isSubmitting]);
 
   const submitBlockerReason = useMemo(() => {
       if (!user) return t('cart.login_required');
@@ -186,8 +186,9 @@ export const Cart: React.FC = () => {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit) return;
+    setIsSubmitting(true);
 
     if (user!.marketingConsent !== marketingConsent) {
         updateUser({ ...user!, marketingConsent });
@@ -229,10 +230,15 @@ export const Cart: React.FC = () => {
     };
     
     newOrder.invoiceUrl = generateInvoice(newOrder);
-    addOrder(newOrder); 
-    setSubmittedOrder(newOrder);
-    setStep(3);
-    clearCart();
+    
+    const success = await addOrder(newOrder); 
+    setIsSubmitting(false);
+
+    if (success) {
+        setSubmittedOrder(newOrder);
+        setStep(3);
+        clearCart();
+    }
   };
 
   const saveAddress = (e: React.FormEvent) => {
@@ -653,13 +659,14 @@ export const Cart: React.FC = () => {
                   )}
 
                   <button 
-                    disabled={!canSubmit}
+                    disabled={!canSubmit || isSubmitting}
                     onClick={handleSubmit} 
-                    className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50 disabled:bg-gray-300 uppercase text-xs tracking-widest"
+                    className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50 disabled:bg-gray-300 uppercase text-xs tracking-widest flex items-center justify-center"
                   >
-                    {user?.isBlocked ? t('cart.account_blocked') : t('cart.submit_order')}
+                    {isSubmitting ? <Loader2 size={18} className="animate-spin mr-2"/> : null}
+                    {user?.isBlocked ? t('cart.account_blocked') : isSubmitting ? 'Odesílám...' : t('cart.submit_order')}
                   </button>
-                  <button onClick={() => setStep(1)} className="w-full text-gray-400 text-[10px] font-bold uppercase tracking-widest hover:text-gray-600">{t('cart.back')}</button>
+                  <button onClick={() => setStep(1)} disabled={isSubmitting} className="w-full text-gray-400 text-[10px] font-bold uppercase tracking-widest hover:text-gray-600">{t('cart.back')}</button>
                 </div>
               )}
            </div>
