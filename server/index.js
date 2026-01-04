@@ -58,8 +58,11 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Global headers (Cache control mainly for API, but avoid strict no-store for uploads to allow image loading)
 app.use((req, res, next) => {
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    if (!req.path.startsWith('/uploads')) {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    }
     next();
 });
 
@@ -75,7 +78,28 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
     }
 }
 
-app.use('/uploads', express.static(UPLOAD_ROOT));
+// Explicitly serve uploads using res.sendFile for better control and robustness
+// This replaces express.static which was causing empty responses in some environments
+app.get('/uploads/*', (req, res) => {
+    const relativePath = req.params[0];
+    // Security check to prevent directory traversal
+    if (relativePath.includes('..')) {
+        return res.status(403).send('Access Denied');
+    }
+    
+    const fullPath = path.join(UPLOAD_ROOT, relativePath);
+
+    // Ensure we are still inside UPLOAD_ROOT
+    if (!fullPath.startsWith(UPLOAD_ROOT)) {
+        return res.status(403).send('Access Denied');
+    }
+
+    if (fs.existsSync(fullPath)) {
+        res.sendFile(fullPath);
+    } else {
+        res.status(404).send('File not found');
+    }
+});
 
 // --- EMAIL CONFIG ---
 let transporter = null;
@@ -1173,12 +1197,21 @@ app.delete('/api/calendar/:date', withDb(async (req, res, db) => { await db.quer
 app.post('/api/admin/upload', async (req, res) => {
     const { image, name } = req.body;
     if (!image) return res.status(400).json({ error: 'No image' });
+    
+    // Updated Regex to handle multiple formats (jpeg, png, gif, webp, svg)
     const matches = image.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
     if (!matches) return res.status(400).json({ error: 'Invalid format' });
+    
+    // Correct extension mapping
+    let ext = matches[1];
+    if (ext === 'jpeg') ext = 'jpg';
+    if (ext === 'svg+xml') ext = 'svg';
+    
     const buffer = Buffer.from(matches[2], 'base64');
     const safeName = name ? name.replace(/[^a-z0-9]/gi, '_') : 'img';
-    const fileName = `${Date.now()}_${safeName}.jpg`;
+    const fileName = `${Date.now()}_${safeName}.${ext}`;
     const fullPath = path.join(UPLOAD_IMAGES_DIR, fileName);
+    
     try {
         fs.writeFileSync(fullPath, buffer);
         res.json({ success: true, url: `/uploads/images/${fileName}` });
