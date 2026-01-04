@@ -161,14 +161,41 @@ const parseJsonCol = (row, colName = 'data') => {
 
 // --- EMAIL HTML GENERATOR ---
 const generateEmailHtml = (order, title, introText) => {
-    const itemsHtml = order.items.map(i => `
+    const itemsHtml = order.items.map(i => {
+        // Resolve Image
+        let imgHtml = '<div style="width: 50px; height: 50px; background-color: #f3f4f6; border-radius: 4px; display:inline-block;"></div>';
+        
+        if (i.images && i.images.length > 0) {
+            let imgSrc = i.images[0];
+            
+            // If it is a local path, try to read file and convert to base64
+            if (imgSrc.startsWith('/uploads/')) {
+                try {
+                    const relativePath = imgSrc.replace(/^\/uploads\//, '');
+                    const fullPath = path.join(UPLOAD_ROOT, relativePath);
+                    if (fs.existsSync(fullPath)) {
+                        const ext = path.extname(fullPath).substring(1) || 'jpg';
+                        const b64 = fs.readFileSync(fullPath, 'base64');
+                        imgSrc = `data:image/${ext};base64,${b64}`;
+                    }
+                } catch (e) {
+                    console.error("Failed to embed image in email:", e.message);
+                }
+            }
+            
+            imgHtml = `<img src="${imgSrc}" alt="${i.name}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px; display: block;">`;
+        }
+
+        return `
         <tr style="border-bottom: 1px solid #eee;">
-            <td style="padding: 8px;">${i.name}</td>
-            <td style="padding: 8px; text-align: center;">${i.quantity} ${i.unit || 'ks'}</td>
-            <td style="padding: 8px; text-align: right;">${i.price} Kč</td>
-            <td style="padding: 8px; text-align: right;">${i.price * i.quantity} Kč</td>
+            <td style="padding: 8px; width: 60px; vertical-align: middle;">${imgHtml}</td>
+            <td style="padding: 8px; vertical-align: middle;">${i.name}</td>
+            <td style="padding: 8px; text-align: center; vertical-align: middle;">${i.quantity} ${i.unit || 'ks'}</td>
+            <td style="padding: 8px; text-align: right; vertical-align: middle;">${i.price} Kč</td>
+            <td style="padding: 8px; text-align: right; vertical-align: middle;">${i.price * i.quantity} Kč</td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 
     const discountSum = order.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0;
     const itemsTotal = order.items.reduce((acc, i) => acc + (i.price * i.quantity), 0);
@@ -176,7 +203,7 @@ const generateEmailHtml = (order, title, introText) => {
 
     const discountsHtml = order.appliedDiscounts?.map(d => `
         <tr>
-            <td colspan="3" style="padding: 4px 8px; text-align: right; color: green;">Sleva (${d.code})</td>
+            <td colspan="4" style="padding: 4px 8px; text-align: right; color: green;">Sleva (${d.code})</td>
             <td style="padding: 4px 8px; text-align: right; color: green;">-${d.amount} Kč</td>
         </tr>
     `).join('') || '';
@@ -190,7 +217,7 @@ const generateEmailHtml = (order, title, introText) => {
             .container { max-width: 600px; margin: 0 auto; border: 1px solid #ddd; padding: 20px; }
             h2 { color: #1f2937; border-bottom: 2px solid #9333ea; padding-bottom: 10px; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th { text-align: left; background: #f3f4f6; padding: 10px; }
+            th { text-align: left; background: #f3f4f6; padding: 10px; font-size: 12px; text-transform: uppercase; }
             .total-row { font-weight: bold; font-size: 1.2em; background: #f9fafb; }
             .info-box { background: #f9fafb; padding: 15px; margin: 20px 0; border-radius: 8px; font-size: 0.9em; }
         </style>
@@ -212,6 +239,7 @@ const generateEmailHtml = (order, title, introText) => {
             <table>
                 <thead>
                     <tr>
+                        <th style="width: 60px;"></th>
                         <th>Položka</th>
                         <th style="text-align: center;">Ks</th>
                         <th style="text-align: right;">Cena/j</th>
@@ -222,15 +250,15 @@ const generateEmailHtml = (order, title, introText) => {
                     ${itemsHtml}
                     ${discountsHtml}
                     <tr>
-                        <td colspan="3" style="padding: 8px; text-align: right;">Balné</td>
+                        <td colspan="4" style="padding: 8px; text-align: right;">Balné</td>
                         <td style="padding: 8px; text-align: right;">${order.packagingFee} Kč</td>
                     </tr>
                     <tr>
-                        <td colspan="3" style="padding: 8px; text-align: right;">Doprava</td>
+                        <td colspan="4" style="padding: 8px; text-align: right;">Doprava</td>
                         <td style="padding: 8px; text-align: right;">${order.deliveryFee || 0} Kč</td>
                     </tr>
                     <tr class="total-row">
-                        <td colspan="3" style="padding: 15px; text-align: right;">CELKEM K ÚHRADĚ:</td>
+                        <td colspan="4" style="padding: 15px; text-align: right;">CELKEM K ÚHRADĚ:</td>
                         <td style="padding: 15px; text-align: right; color: #9333ea;">${finalTotal} Kč</td>
                     </tr>
                 </tbody>
@@ -336,8 +364,8 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     const isVatPayer = !!comp.dic;
     
     const headerTitle = type === 'proforma' 
-        ? "ZALOHOVY DANOVY DOKLAD" // Ascii fallback safety
-        : (isVatPayer ? "FAKTURA - DANOVY DOKLAD" : "FAKTURA");
+        ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" 
+        : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
 
     const dateToUse = type === 'final' 
         ? (o.finalInvoiceDate || new Date().toISOString()) 
