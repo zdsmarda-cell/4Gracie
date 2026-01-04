@@ -159,6 +159,93 @@ const parseJsonCol = (row, colName = 'data') => {
     return typeof row[colName] === 'string' ? JSON.parse(row[colName]) : (row[colName] || {});
 };
 
+// --- EMAIL HTML GENERATOR ---
+const generateEmailHtml = (order, title, introText) => {
+    const itemsHtml = order.items.map(i => `
+        <tr style="border-bottom: 1px solid #eee;">
+            <td style="padding: 8px;">${i.name}</td>
+            <td style="padding: 8px; text-align: center;">${i.quantity} ${i.unit || 'ks'}</td>
+            <td style="padding: 8px; text-align: right;">${i.price} Kč</td>
+            <td style="padding: 8px; text-align: right;">${i.price * i.quantity} Kč</td>
+        </tr>
+    `).join('');
+
+    const discountSum = order.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0;
+    const itemsTotal = order.items.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+    const finalTotal = Math.max(0, itemsTotal - discountSum) + order.packagingFee + (order.deliveryFee || 0);
+
+    const discountsHtml = order.appliedDiscounts?.map(d => `
+        <tr>
+            <td colspan="3" style="padding: 4px 8px; text-align: right; color: green;">Sleva (${d.code})</td>
+            <td style="padding: 4px 8px; text-align: right; color: green;">-${d.amount} Kč</td>
+        </tr>
+    `).join('') || '';
+
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }
+            .container { max-width: 600px; margin: 0 auto; border: 1px solid #ddd; padding: 20px; }
+            h2 { color: #1f2937; border-bottom: 2px solid #9333ea; padding-bottom: 10px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th { text-align: left; background: #f3f4f6; padding: 10px; }
+            .total-row { font-weight: bold; font-size: 1.2em; background: #f9fafb; }
+            .info-box { background: #f9fafb; padding: 15px; margin: 20px 0; border-radius: 8px; font-size: 0.9em; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>${title}</h2>
+            <p>${introText}</p>
+            
+            <div class="info-box">
+                <p><strong>Číslo objednávky:</strong> #${order.id}</p>
+                <p><strong>Datum doručení:</strong> ${new Date(order.deliveryDate).toLocaleDateString('cs-CZ')}</p>
+                <p><strong>Způsob dopravy:</strong> ${order.deliveryType === 'pickup' ? 'Osobní odběr' : 'Rozvoz'}</p>
+                ${order.deliveryType === 'delivery' ? `<p><strong>Adresa doručení:</strong> ${order.deliveryStreet}, ${order.deliveryCity}, ${order.deliveryZip}</p>` : ''}
+                <p><strong>Způsob platby:</strong> ${order.paymentMethod === 'gateway' ? 'Online karta' : order.paymentMethod === 'qr' ? 'QR Platba' : 'Hotovost/Karta'}</p>
+                ${order.note ? `<p><strong>Poznámka:</strong> ${order.note}</p>` : ''}
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Položka</th>
+                        <th style="text-align: center;">Ks</th>
+                        <th style="text-align: right;">Cena/j</th>
+                        <th style="text-align: right;">Celkem</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${itemsHtml}
+                    ${discountsHtml}
+                    <tr>
+                        <td colspan="3" style="padding: 8px; text-align: right;">Balné</td>
+                        <td style="padding: 8px; text-align: right;">${order.packagingFee} Kč</td>
+                    </tr>
+                    <tr>
+                        <td colspan="3" style="padding: 8px; text-align: right;">Doprava</td>
+                        <td style="padding: 8px; text-align: right;">${order.deliveryFee || 0} Kč</td>
+                    </tr>
+                    <tr class="total-row">
+                        <td colspan="3" style="padding: 15px; text-align: right;">CELKEM K ÚHRADĚ:</td>
+                        <td style="padding: 15px; text-align: right; color: #9333ea;">${finalTotal} Kč</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <p style="margin-top: 30px; font-size: 0.8em; color: #888; text-align: center;">
+                4Gracie Catering<br>
+                Toto je automaticky generovaná zpráva.
+            </p>
+        </div>
+    </body>
+    </html>
+    `;
+};
+
 // --- PDF GENERATION HELPERS ---
 
 const fetchBuffer = (url) => {
@@ -752,8 +839,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
     const settings = settingsRows.length ? parseJsonCol(settingsRows[0]) : {};
     
     const operatorEmail = settings.companyDetails?.email || 'info@4gracie.cz';
-    
-    // Sender configuration from .env
     const fromAddress = process.env.EMAIL_FROM || process.env.SMTP_USER;
 
     try {
@@ -779,6 +864,9 @@ app.post('/api/orders', withDb(async (req, res, db) => {
         if (transporter && o.status === 'created') {
             console.log(`📧 Attempting to send creation emails for #${o.id} using sender: ${fromAddress}`);
             try {
+                // Generate detailed HTML content
+                const fullHtml = generateEmailHtml(o, `Potvrzení objednávky #${o.id}`, 'Děkujeme za Vaši objednávku. Níže naleznete rekapitulaci.');
+
                 // 1. Email to Customer (With Attachments)
                 const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [o.userId]);
                 const userEmail = userRows[0]?.email;
@@ -808,16 +896,10 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                     console.log(`📨 Sending customer email to ${userEmail}...`);
                     await transporter.sendMail({
                         from: fromAddress,
-                        replyTo: fromAddress,
+                        replyTo: operatorEmail, // Customer replies to Operator
                         to: userEmail,
                         subject: `Potvrzení objednávky #${o.id}`,
-                        html: `
-                            <p>Dobrý den,</p>
-                            <p>děkujeme za Vaši objednávku číslo <strong>${o.id}</strong>.</p>
-                            <p>Celková cena: <strong>${(o.totalPrice + o.packagingFee + (o.deliveryFee || 0))} Kč</strong></p>
-                            <p>V příloze naleznete zálohovou fakturu a obchodní podmínky.</p>
-                            <p>S pozdravem,<br>4Gracie</p>
-                        `,
+                        html: fullHtml,
                         attachments
                     });
                     console.log(`✅ Customer email sent to ${userEmail}`);
@@ -825,28 +907,16 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                     console.warn(`⚠️ User email not found for ID ${o.userId}`);
                 }
 
-                // 2. Email to Operator (NO Attachments)
+                // 2. Email to Operator (NO Attachments, Detailed Info)
+                // Ensure operator email is not null/empty
                 if (operatorEmail) {
-                    const itemCount = o.items.length;
-                    const itemsSummary = o.items.map(i => `- ${i.quantity}x ${i.name}`).join('<br>');
-                    
                     console.log(`📨 Sending operator email to ${operatorEmail}...`);
                     await transporter.sendMail({
                         from: fromAddress,
-                        replyTo: userEmail || fromAddress, // Allow operator to reply to customer
+                        replyTo: userEmail || fromAddress, // Operator replies to Customer
                         to: operatorEmail,
                         subject: `Nová objednávka #${o.id} (${o.userName})`,
-                        html: `
-                            <h2>Nová objednávka přijata</h2>
-                            <p><strong>ID:</strong> #${o.id}</p>
-                            <p><strong>Zákazník:</strong> ${o.userName}</p>
-                            <p><strong>Datum doručení:</strong> ${new Date(o.deliveryDate).toLocaleDateString('cs-CZ')}</p>
-                            <p><strong>Typ:</strong> ${o.deliveryType === 'pickup' ? 'Osobní odběr' : 'Rozvoz'}</p>
-                            <p><strong>Položky (${itemCount}):</strong></p>
-                            <p>${itemsSummary}</p>
-                            <p><strong>Poznámka:</strong> ${o.note || '-'}</p>
-                            <p><strong>Cena celkem:</strong> ${o.totalPrice + o.packagingFee + (o.deliveryFee || 0)} Kč</p>
-                        `
+                        html: fullHtml 
                     });
                     console.log(`✅ Operator email sent to ${operatorEmail}`);
                 }
@@ -894,6 +964,7 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
     const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
     const settings = settingsRows.length ? parseJsonCol(settingsRows[0]) : {};
     
+    const operatorEmail = settings.companyDetails?.email || 'info@4gracie.cz';
     const fromAddress = process.env.EMAIL_FROM || process.env.SMTP_USER;
 
     const placeholders = ids.map(() => '?').join(',');
@@ -919,8 +990,9 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                     const o = parseJsonCol(row, 'full_json');
                     if (row.final_invoice_date) o.finalInvoiceDate = row.final_invoice_date;
 
+                    // Use common HTML generator
+                    let emailBodyHtml = generateEmailHtml(o, `Změna stavu objednávky #${o.id}`, `Stav Vaší objednávky byl změněn na: <strong>${status}</strong>.`);
                     const attachments = [];
-                    let emailBody = `<p>Dobrý den,</p><p>stav Vaší objednávky <strong>#${o.id}</strong> byl změněn na: <strong>${status}</strong>.</p>`;
 
                     // If delivered, generate Final Invoice
                     if (status === 'delivered') {
@@ -928,20 +1000,18 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                         try {
                             const finalInvoicePdf = await generateInvoicePdf(o, 'final', settings);
                             attachments.push({ filename: `faktura_${o.id}.pdf`, content: finalInvoicePdf });
-                            emailBody += `<p>V příloze naleznete daňový doklad.</p>`;
+                            emailBodyHtml = emailBodyHtml.replace('</body>', '<p style="text-align:center; font-weight:bold;">V příloze naleznete daňový doklad.</p></body>');
                         } catch (invErr) {
                             console.error('Invoice gen error in status update:', invErr);
                         }
                     }
 
-                    emailBody += `<p>S pozdravem,<br>4Gracie</p>`;
-
                     await transporter.sendMail({ 
                         from: fromAddress, 
-                        replyTo: fromAddress,
+                        replyTo: operatorEmail,
                         to: row.email, 
                         subject: `Změna stavu objednávky #${o.id}`, 
-                        html: emailBody,
+                        html: emailBodyHtml,
                         attachments
                     });
                     console.log(`✅ Status update email sent to ${row.email} for order #${o.id}`);
