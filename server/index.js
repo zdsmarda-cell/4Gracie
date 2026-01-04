@@ -78,8 +78,8 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
 }
 
 // Explicitly serve uploads using res.sendFile for robustness
-// FIXED: Express 5 syntax requires named parameter for wildcard: :path(*)
-app.get('/uploads/:path(*)', (req, res) => {
+// FIXED: Express 5 syntax requires named parameter for wildcard with valid regex: :path(.*)
+app.get('/uploads/:path(.*)', (req, res) => {
     try {
         const relativePath = req.params.path;
         if (!relativePath || relativePath.includes('..')) {
