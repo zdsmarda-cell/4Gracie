@@ -60,6 +60,7 @@ interface StoreContextType {
   language: Language;
   setLanguage: (lang: Language) => void;
   cart: CartItem[];
+  cartBump: boolean; 
   addToCart: (product: Product, quantity?: number) => void;
   removeFromCart: (productId: string) => void;
   updateCartItemQuantity: (productId: string, quantity: number) => void;
@@ -80,7 +81,7 @@ interface StoreContextType {
   orders: Order[]; 
   searchOrders: (filters: any) => Promise<{ orders: Order[], total?: number, pages?: number }>; 
   searchUsers: (filters: any) => Promise<User[]>; 
-  addOrder: (order: Order, vopPdfBase64?: string) => Promise<boolean>;
+  addOrder: (order: Order) => Promise<boolean>;
   updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
   updateOrder: (order: Order, sendNotify?: boolean) => Promise<boolean>;
   checkOrderRestoration: (order: Order) => RestorationCheckResult;
@@ -209,6 +210,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [language, setLanguage] = useState<Language>(Language.CS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
+  
+  // Animation state for cart
+  const [cartBump, setCartBump] = useState(false);
 
   const t = useCallback((key: string, params?: Record<string, string>) => {
     let text = TRANSLATIONS[language]?.[key] || key;
@@ -421,7 +425,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       return [...prev, { ...product, quantity }];
     });
-    showNotify(t('notification.added_to_cart', { name: tData(product, 'name') }));
+    
+    // Trigger animation instead of notification
+    setCartBump(true);
+    setTimeout(() => setCartBump(false), 300);
   };
 
   const removeFromCart = (id: string) => {
@@ -770,7 +777,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
      return check.status;
   };
 
-  const addOrder = async (order: Order, vopPdfBase64?: string): Promise<boolean> => {
+  const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
       ...order,
       language: language,
@@ -778,7 +785,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       statusHistory: [{ status: order.status, date: new Date().toISOString() }]
     };
     if (dataSource === 'api') {
-      const res = await apiCall('/api/orders', 'POST', { ...orderWithHistory, vopPdf: vopPdfBase64 });
+      const res = await apiCall('/api/orders', 'POST', orderWithHistory); // Removed vopPdf argument
       if (res && res.success) {
         setOrders(prev => [orderWithHistory, ...prev]);
         showNotify(`Objednávka #${order.id} byla uložena.`);
@@ -981,7 +988,88 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
   
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
-  const printInvoice = async (o: Order) => { const doc = new jsPDF(); doc.text(`Faktura ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
+  
+  const printInvoice = async (o: Order) => { 
+      const doc = new jsPDF();
+      const comp = o.companyDetailsSnapshot || settings.companyDetails;
+      const safeText = (text: string) => removeDiacritics(text || '');
+
+      doc.setFontSize(22);
+      doc.text(safeText("FAKTURA - DANOVY DOKLAD"), 105, 20, { align: "center" });
+      
+      doc.setFontSize(10);
+      doc.text(safeText(`Cislo obj: ${o.id}`), 105, 28, { align: "center" });
+      doc.text(safeText(`Datum vystaveni: ${formatDate(new Date().toISOString())}`), 105, 34, { align: "center" });
+
+      // Supplier
+      doc.setFontSize(12);
+      doc.text(safeText("DODAVATEL:"), 14, 50);
+      doc.setFontSize(10);
+      doc.text(safeText(comp.name), 14, 56);
+      doc.text(safeText(comp.street), 14, 61);
+      doc.text(safeText(`${comp.zip} ${comp.city}`), 14, 66);
+      doc.text(safeText(`IC: ${comp.ic}`), 14, 71);
+      if(comp.dic) doc.text(safeText(`DIC: ${comp.dic}`), 14, 76);
+      
+      // Customer
+      doc.setFontSize(12);
+      doc.text(safeText("ODBERATEL:"), 120, 50);
+      doc.setFontSize(10);
+      const billingLines = o.billingAddress ? o.billingAddress.split(',') : [];
+      doc.text(safeText(o.userName || 'Zakaznik'), 120, 56);
+      billingLines.forEach((line, i) => {
+          doc.text(safeText(line.trim()), 120, 61 + (i*5));
+      });
+
+      // Items Table
+      let y = 100;
+      doc.line(14, y, 196, y);
+      y += 6;
+      doc.setFontSize(9);
+      doc.text("POLOZKA", 14, y);
+      doc.text("KS", 130, y);
+      doc.text("CENA/KS", 150, y);
+      doc.text("CELKEM", 180, y);
+      y += 3;
+      doc.line(14, y, 196, y);
+      y += 6;
+
+      o.items.forEach(item => {
+          doc.text(safeText(item.name), 14, y);
+          doc.text(item.quantity.toString(), 130, y);
+          doc.text(item.price.toString(), 150, y);
+          doc.text((item.price * item.quantity).toString(), 180, y);
+          y += 6;
+      });
+
+      // Fees
+      if (o.packagingFee > 0) {
+          doc.text("Balne", 14, y);
+          doc.text(o.packagingFee.toString(), 180, y);
+          y += 6;
+      }
+      if (o.deliveryFee > 0) {
+          doc.text("Doprava", 14, y);
+          doc.text(o.deliveryFee.toString(), 180, y);
+          y += 6;
+      }
+      
+      // Discounts
+      o.appliedDiscounts?.forEach(d => {
+          doc.text(safeText(`Sleva ${d.code}`), 14, y);
+          doc.text(`-${d.amount}`, 180, y);
+          y += 6;
+      });
+
+      doc.line(14, y, 196, y);
+      y += 10;
+      doc.setFontSize(14);
+      const total = Math.max(0, o.totalPrice + o.packagingFee + (o.deliveryFee || 0) - (o.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
+      doc.text(safeText(`CELKEM K UHRADE: ${total} Kc`), 196, y, { align: "right" });
+
+      doc.save(`faktura_${o.id}.pdf`);
+  };
+  
   const generateCzIban = calculateCzIban;
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-400">Načítám data...</div>;
@@ -990,7 +1078,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     <StoreContext.Provider value={{
       dataSource, setDataSource,
       isLoading, isOperationPending, 
-      language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
+      language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, cartBump,
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
       orders, searchOrders, searchUsers, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct, uploadImage,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,

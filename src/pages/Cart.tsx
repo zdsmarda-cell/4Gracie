@@ -6,8 +6,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store } from 'lucide-react';
 import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
-import { jsPDF } from 'jspdf';
-import { VOP_TEXT } from '../constants';
 
 export const Cart: React.FC = () => {
   const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
@@ -172,20 +170,6 @@ export const Cart: React.FC = () => {
         updateUser({ ...user, marketingConsent });
     }
 
-    // GENERATE VOP PDF
-    const doc = new jsPDF();
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("Obchodní podmínky 4Gracie", 20, 20);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    
-    // Simple text wrapping for VOP content
-    const splitText = doc.splitTextToSize(VOP_TEXT, 170);
-    doc.text(splitText, 20, 30);
-    
-    const vopBase64 = doc.output('datauristring').split(',')[1]; // Remove data:application/pdf;base64, prefix
-
     const newOrder: Order = {
       id: `${Math.floor(Math.random() * 90000) + 10000}`,
       userId: user.id,
@@ -211,7 +195,7 @@ export const Cart: React.FC = () => {
     };
     
     newOrder.invoiceUrl = generateInvoice(newOrder);
-    addOrder(newOrder, vopBase64); // Pass VOP payload
+    addOrder(newOrder); // Server handles VOP attachment via path
     setSubmittedOrder(newOrder);
     setStep(3);
     clearCart();

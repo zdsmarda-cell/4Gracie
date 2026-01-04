@@ -518,7 +518,7 @@ app.post('/api/auth/reset-password-confirm', withDb(async (req, res, db) => {
 // 3. ORDERS & STATS (Historical & Aggregated)
 app.post('/api/orders', withDb(async (req, res, db) => {
     const o = req.body;
-    const { vopPdf } = req.body; // Extract Base64 PDF
+    // NOTE: vopPdf removed from arguments, we use server-side path now
     
     if (!o.id || !o.userId) return res.status(400).json({ error: "Missing fields" });
 
@@ -575,32 +575,109 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 const userEmail = userRows[0]?.email;
 
                 if (userEmail) {
+                    // Generate rich HTML table for items
+                    const appUrl = process.env.VITE_API_URL || 'http://localhost:3000'; // Base for images
+                    
+                    const itemsHtml = dbOrder.items.map(item => {
+                        // Construct image URL (assuming item.images[0] is strictly relative like /uploads/...)
+                        // If it's a full URL (picsum), use as is. If relative, prepend appUrl.
+                        let imgUrl = '';
+                        if (item.images && item.images.length > 0) {
+                            if (item.images[0].startsWith('http')) imgUrl = item.images[0];
+                            else imgUrl = `${appUrl}${item.images[0]}`;
+                        }
+                        
+                        return `
+                        <tr>
+                            <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                                ${imgUrl ? `<img src="${imgUrl}" alt="${item.name}" width="50" height="50" style="object-fit: cover; border-radius: 5px;">` : ''}
+                            </td>
+                            <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                                <strong>${item.name}</strong>
+                            </td>
+                            <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                                ${item.quantity} ${item.unit}
+                            </td>
+                            <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">
+                                ${item.price} Kč
+                            </td>
+                            <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">
+                                <strong>${item.price * item.quantity} Kč</strong>
+                            </td>
+                        </tr>`;
+                    }).join('');
+
+                    const finalTotal = dbOrder.totalPrice + dbOrder.packagingFee + (dbOrder.deliveryFee || 0);
+
                     const mailOptions = {
                         from: process.env.SMTP_FROM || '"4Gracie Catering" <info@4gracie.cz>',
                         to: userEmail,
                         subject: `Potvrzení objednávky #${dbOrder.id}`,
                         html: `
-                            <div style="font-family: Arial, sans-serif; color: #333;">
-                                <h2>Děkujeme za Vaši objednávku!</h2>
-                                <p>Vaše objednávka <strong>#${dbOrder.id}</strong> byla úspěšně přijata.</p>
-                                <hr/>
-                                <p><strong>Datum doručení:</strong> ${dbOrder.deliveryDate}</p>
-                                <p><strong>Celková cena:</strong> ${dbOrder.totalPrice + dbOrder.packagingFee + (dbOrder.deliveryFee || 0)} Kč</p>
-                                <p>Stav objednávky můžete sledovat ve svém profilu.</p>
+                            <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
+                                <h2 style="color: #9333ea;">Děkujeme za Vaši objednávku!</h2>
+                                <p>Vaše objednávka <strong>#${dbOrder.id}</strong> byla úspěšně přijata a zpracovává se.</p>
+                                
+                                <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                                    <p><strong>Datum doručení:</strong> ${dbOrder.deliveryDate}</p>
+                                    <p><strong>Způsob dopravy:</strong> ${dbOrder.deliveryType === 'pickup' ? 'Osobní odběr' : 'Rozvoz'}</p>
+                                    <p><strong>Adresa:</strong><br/>${dbOrder.deliveryAddress.replace(/\n/g, '<br/>')}</p>
+                                </div>
+
+                                <h3>Rekapitulace košíku</h3>
+                                <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                                    <thead>
+                                        <tr style="background: #eee;">
+                                            <th style="padding: 8px;">Foto</th>
+                                            <th style="padding: 8px; text-align: left;">Název</th>
+                                            <th style="padding: 8px;">Množství</th>
+                                            <th style="padding: 8px; text-align: right;">Cena/j</th>
+                                            <th style="padding: 8px; text-align: right;">Celkem</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${itemsHtml}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colspan="4" style="padding: 10px; text-align: right;">Doprava:</td>
+                                            <td style="padding: 10px; text-align: right;">${dbOrder.deliveryFee} Kč</td>
+                                        </tr>
+                                        <tr>
+                                            <td colspan="4" style="padding: 10px; text-align: right;">Balné:</td>
+                                            <td style="padding: 10px; text-align: right;">${dbOrder.packagingFee} Kč</td>
+                                        </tr>
+                                        <tr style="font-size: 18px;">
+                                            <td colspan="4" style="padding: 10px; text-align: right;"><strong>CELKEM K ÚHRADĚ:</strong></td>
+                                            <td style="padding: 10px; text-align: right; color: #9333ea;"><strong>${finalTotal} Kč</strong></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+
                                 <br/>
+                                <p>Stav objednávky můžete sledovat ve svém <a href="${process.env.VITE_APP_URL || 'https://eshop.4gracie.cz'}/#/profile">zákaznickém profilu</a>.</p>
+                                <br/>
+                                <p style="font-size: 12px; color: #888;">Obchodní podmínky naleznete v příloze tohoto emailu.</p>
+                                <hr/>
                                 <p>S pozdravem,<br/>Tým 4Gracie</p>
                             </div>
                         `,
                         attachments: []
                     };
 
-                    // Attach VOP PDF if provided
-                    if (vopPdf) {
+                    // Handle VOP Attachment from ENV or Fallback
+                    const vopPath = process.env.VOP_PATH 
+                        ? path.resolve(process.cwd(), process.env.VOP_PATH) 
+                        : path.join(process.cwd(), 'uploads', 'obchodni_podminky.pdf');
+
+                    if (fs.existsSync(vopPath)) {
                         mailOptions.attachments.push({
                             filename: 'Obchodni_podminky_4Gracie.pdf',
-                            content: Buffer.from(vopPdf, 'base64'),
-                            contentType: 'application/pdf'
+                            path: vopPath // Nodemailer handles path reading automatically
                         });
+                        console.log(`📎 Attaching VOP from: ${vopPath}`);
+                    } else {
+                        console.warn(`⚠️ VOP file not found at ${vopPath}, sending email without attachment.`);
                     }
 
                     await transporter.sendMail(mailOptions);
@@ -650,8 +727,13 @@ app.get('/api/orders', withDb(async (req, res, db) => {
     });
 }));
 
+// Load Stats - Updated with correct Group By for strict mode
 app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
+    
+    // Ensure we filter by date only (without time)
+    const targetDate = formatToMysqlDate(date); 
+
     const summaryQuery = `
         SELECT 
             oi.category, 
@@ -663,6 +745,8 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
         WHERE o.delivery_date = ? AND o.status != 'cancelled'
         GROUP BY oi.category
     `;
+    
+    // Full Group By compliant query
     const detailQuery = `
         SELECT 
             oi.category,
@@ -676,9 +760,15 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
         WHERE o.delivery_date = ? AND o.status != 'cancelled'
         GROUP BY oi.category, oi.product_id, oi.name, oi.unit
     `;
-    const [summary] = await db.query(summaryQuery, [date]);
-    const [details] = await db.query(detailQuery, [date]);
-    res.json({ success: true, summary, details });
+    
+    try {
+        const [summary] = await db.query(summaryQuery, [targetDate]);
+        const [details] = await db.query(detailQuery, [targetDate]);
+        res.json({ success: true, summary, details });
+    } catch (e) {
+        console.error("Stats Load Error:", e);
+        res.status(500).json({ error: e.message });
+    }
 }));
 
 app.post('/api/settings', withDb(async (req, res, db) => {

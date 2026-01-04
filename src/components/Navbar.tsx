@@ -6,7 +6,7 @@ import { ShoppingCart, User, Menu as MenuIcon, X } from 'lucide-react';
 import { Language } from '../types';
 
 export const Navbar: React.FC = () => {
-  const { cart, language, setLanguage, user, t, logout, openAuthModal, settings } = useStore();
+  const { cart, language, setLanguage, user, t, logout, openAuthModal, settings, cartBump } = useStore();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -69,7 +69,10 @@ export const Navbar: React.FC = () => {
             )}
 
             {/* Cart */}
-            <Link to="/cart" className="relative p-2 text-gray-700 hover:text-accent">
+            <Link 
+              to="/cart" 
+              className={`relative p-2 text-gray-700 hover:text-accent transition-transform duration-200 ${cartBump ? 'scale-125 text-accent' : ''}`}
+            >
               <ShoppingCart size={24} />
               {totalItems > 0 && (
                 <span className="absolute top-0 right-0 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/4 -translate-y-1/4 bg-accent rounded-full">
