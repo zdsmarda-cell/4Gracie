@@ -210,7 +210,25 @@ const calculateCzIban = (accountString) => {
   return `CZ${checkDigitsStr}${bban}`;
 };
 
-const generateVopPdf = async () => {
+// Gets VOP buffer either from local file (path in .env) or generates dynamic fallback
+const getVopPdfBuffer = async () => {
+    const vopPath = process.env.VOP_PATH;
+    
+    if (vopPath) {
+        const resolvedPath = path.resolve(__dirname, '..', vopPath); // Adjust relative to server/index.js
+        if (fs.existsSync(resolvedPath)) {
+            console.log(`📄 Loading VOP from file: ${resolvedPath}`);
+            return fs.readFileSync(resolvedPath);
+        } else if (fs.existsSync(vopPath)) {
+             // Try absolute or cwd relative
+             console.log(`📄 Loading VOP from file (direct): ${vopPath}`);
+             return fs.readFileSync(vopPath);
+        } else {
+            console.warn(`⚠️ VOP_PATH defined but file not found at: ${vopPath}. Using fallback generator.`);
+        }
+    }
+
+    // Fallback Generator
     await loadFonts();
     const doc = new jsPDF();
     if (regularFontBase64) {
@@ -225,30 +243,20 @@ const generateVopPdf = async () => {
     doc.setFontSize(10);
     const text = `
     1. ÚVODNÍ USTANOVENÍ
-    Tyto obchodní podmínky upravují vzájemná práva a povinnosti smluvních stran vzniklé v souvislosti nebo na základě kupní smlouvy uzavírané mezi prodávajícím (4Gracie s.r.o.) a kupujícím prostřednictvím internetového obchodu.
+    Tyto obchodní podmínky upravují vzájemná práva a povinnosti smluvních stran vzniklé v souvislosti nebo na základě kupní smlouvy uzavírané mezi prodávajícím a kupujícím prostřednictvím internetového obchodu.
 
+    (Zkrácená verze pro generované PDF - pro plné znění kontaktujte provozovatele)
+    
     2. OBJEDNÁVKA A UZAVŘENÍ SMLOUVY
-    Odesláním objednávky kupující stvrzuje, že se seznámil s těmito obchodními podmínkami a že s nimi souhlasí. Objednávka je návrhem kupní smlouvy.
+    Odesláním objednávky kupující stvrzuje, že se seznámil s těmito obchodními podmínkami a že s nimi souhlasí.
 
-    3. CENA A PLATEBNÍ PODMÍNKY
-    Ceny uvedené na e-shopu jsou konečné, včetně DPH. Platbu lze provést převodem, kartou on-line nebo hotově při převzetí.
-
-    4. DODACÍ PODMÍNKY
-    Zboží je doručováno dle zvoleného způsobu dopravy (osobní odběr, rozvoz). Termíny dodání jsou závazné po potvrzení objednávky.
-
-    5. ODSTOUPENÍ OD SMLOUVY
-    Kupující má právo odstoupit od smlouvy do 14 dnů od převzetí zboží, s výjimkou zboží podléhajícího rychlé zkáze (potraviny).
-
-    6. OCHRANA OSOBNÍCH ÚDAJŮ
-    Prodávající prohlašuje, že veškeré osobní údaje jsou důvěrné, budou použity pouze k uskutečnění plnění smlouvy s kupujícím a nebudou jinak zveřejněny.
-
-    Platné od 1.1.2025
+    3. ODSTOUPENÍ OD SMLOUVY
+    Kupující má právo odstoupit od smlouvy do 14 dnů od převzetí zboží, s výjimkou zboží podléhajícího rychlé zkáze.
     `;
     
     const splitText = doc.splitTextToSize(text, 170);
     doc.text(splitText, 15, 30);
     
-    // Output as Buffer for nodemailer
     const arrayBuffer = doc.output('arraybuffer');
     return Buffer.from(arrayBuffer);
 };
@@ -765,6 +773,9 @@ app.post('/api/orders', withDb(async (req, res, db) => {
     // Fetch settings for PDF generation
     const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
     const settings = settingsRows.length ? parseJsonCol(settingsRows[0]) : {};
+    
+    // Determine operator email
+    const operatorEmail = settings.companyDetails?.email || process.env.SMTP_USER;
 
     try {
         await conn.beginTransaction();
@@ -787,29 +798,60 @@ app.post('/api/orders', withDb(async (req, res, db) => {
         // --- EMAIL NOTIFICATION FOR NEW ORDER ---
         if (transporter && o.status === 'created') {
             try {
-                // Get User Email
+                // 1. Email to Customer (With Attachments)
                 const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [o.userId]);
                 const userEmail = userRows[0]?.email;
 
                 if (userEmail) {
                     const invoicePdf = await generateInvoicePdf(o, 'proforma', settings);
-                    const vopPdf = await generateVopPdf();
+                    const vopPdf = await getVopPdfBuffer();
 
                     await transporter.sendMail({
                         from: process.env.SMTP_FROM,
                         to: userEmail,
                         subject: `Potvrzení objednávky #${o.id}`,
-                        html: `<p>Dobrý den,</p><p>děkujeme za Vaši objednávku číslo <strong>${o.id}</strong>.</p><p>V příloze naleznete zálohovou fakturu a obchodní podmínky.</p><p>S pozdravem,<br>4Gracie</p>`,
+                        html: `
+                            <p>Dobrý den,</p>
+                            <p>děkujeme za Vaši objednávku číslo <strong>${o.id}</strong>.</p>
+                            <p>Celková cena: <strong>${(o.totalPrice + o.packagingFee + (o.deliveryFee || 0))} Kč</strong></p>
+                            <p>V příloze naleznete zálohovou fakturu a obchodní podmínky.</p>
+                            <p>S pozdravem,<br>4Gracie</p>
+                        `,
                         attachments: [
                             { filename: `zalohova_faktura_${o.id}.pdf`, content: invoicePdf },
                             { filename: 'VOP_4Gracie.pdf', content: vopPdf }
                         ]
                     });
-                    console.log(`📧 Order created email sent to ${userEmail}`);
+                    console.log(`📧 Customer email sent to ${userEmail}`);
                 }
+
+                // 2. Email to Operator (NO Attachments)
+                if (operatorEmail) {
+                    const itemCount = o.items.length;
+                    const itemsSummary = o.items.map(i => `- ${i.quantity}x ${i.name}`).join('<br>');
+                    
+                    await transporter.sendMail({
+                        from: process.env.SMTP_FROM,
+                        to: operatorEmail,
+                        subject: `Nová objednávka #${o.id} (${o.userName})`,
+                        html: `
+                            <h2>Nová objednávka přijata</h2>
+                            <p><strong>ID:</strong> #${o.id}</p>
+                            <p><strong>Zákazník:</strong> ${o.userName}</p>
+                            <p><strong>Datum doručení:</strong> ${new Date(o.deliveryDate).toLocaleDateString('cs-CZ')}</p>
+                            <p><strong>Typ:</strong> ${o.deliveryType === 'pickup' ? 'Osobní odběr' : 'Rozvoz'}</p>
+                            <p><strong>Položky (${itemCount}):</strong></p>
+                            <p>${itemsSummary}</p>
+                            <p><strong>Poznámka:</strong> ${o.note || '-'}</p>
+                            <p><strong>Cena celkem:</strong> ${o.totalPrice + o.packagingFee + (o.deliveryFee || 0)} Kč</p>
+                        `
+                    });
+                    console.log(`📧 Operator email sent to ${operatorEmail}`);
+                }
+
             } catch (emailErr) {
-                console.error("Failed to send order creation email:", emailErr);
-                // Do not fail the request if email fails, but log it
+                console.error("Failed to send order emails:", emailErr);
+                // Non-blocking error
             }
         }
 
