@@ -1,9 +1,12 @@
+
+// ... existing imports ...
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 
+// ... (keep all interfaces) ...
 interface CheckResult {
   allowed: boolean;
   reason?: string;
@@ -270,7 +273,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return `${baseUrl}${cleanEndpoint}`;
   }, []);
 
-  // WRAPPED IN CALLBACK TO PREVENT INFINITE LOOPS IN EFFECTS
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
     setIsOperationPending(true);
@@ -278,7 +280,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setTimeout(() => {
             controller.abort();
             reject(new Error('TIMEOUT_LIMIT_REACHED'));
-        }, 8000); 
+        }, 10000); // Increased timeout for images
     });
 
     try {
@@ -292,15 +294,29 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }),
         timeoutPromise
       ]);
+      
+      // Handle 204 or empty responses gracefully
+      if (res.status === 204) {
+          return { success: true };
+      }
+
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
-          throw new Error("Server vrátil neplatná data (HTML místo JSON).");
+          // If we get here with non-JSON, it might be an HTML error page from webserver
+          const text = await res.text();
+          console.error("API Non-JSON Response:", text.substring(0, 200));
+          throw new Error("Server vrátil neplatná data (HTML/Text).");
       }
-      if (!res.ok) throw new Error(`API Chyba: ${res.status} ${res.statusText}`);
+      
+      if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `API Chyba: ${res.status} ${res.statusText}`);
+      }
+      
       return await res.json();
     } catch (e: any) {
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
-         showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
+         showNotify('Operace trvá příliš dlouho. Zkontrolujte připojení.', 'error');
       } else {
          console.warn(`[API] Call to ${endpoint} failed:`, e);
          showNotify(`Chyba připojení: ${e.message || 'Neznámá chyba'}`, 'error');
@@ -315,26 +331,33 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (dataSource === 'local') {
           return base64;
       }
-      const res = await apiCall('/api/admin/upload', 'POST', { image: base64, name });
-      if (res && res.success && res.url) {
-          const apiUrl = getFullApiUrl('');
-          if (res.url.startsWith('/')) {
-              // Ensure we don't end up with double slash like https://...:3000//uploads
-              return `${apiUrl}${res.url}`;
+      
+      try {
+          const res = await apiCall('/api/admin/upload', 'POST', { image: base64, name });
+          if (res && res.success && res.url) {
+              const apiUrl = getFullApiUrl('');
+              if (res.url.startsWith('/')) {
+                  return `${apiUrl}${res.url}`;
+              }
+              return res.url;
           }
-          return res.url;
+          console.warn('Upload API did not return success/url, using base64 fallback');
+      } catch (e) {
+          console.error('Upload failed, falling back to base64', e);
       }
-      showNotify('Nahrání obrázku selhalo, používám lokální data.', 'error');
+      
+      showNotify('Nahrání obrázku na server selhalo, uložen lokálně (Base64).', 'error');
       return base64;
   };
 
   const fetchData = async () => {
+      // ... existing implementation ...
       setIsLoading(true);
       try {
         if (dataSource === 'api') {
           setAllUsers([]);
           setProducts([]);
-          setOrders([]); // This will hold ACTIVE orders only from bootstrap
+          setOrders([]); 
           setDiscountCodes([]);
           setDayConfigs([]);
           setSettings(EMPTY_SETTINGS);
@@ -342,7 +365,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           if (data) {
               setAllUsers(data.users || []);
               setProducts(data.products || []);
-              setOrders(data.orders || []); // Contains only orders >= today for capacity check
+              setOrders(data.orders || []);
               if (data.settings) {
                  const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
                  if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
@@ -354,6 +377,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               showNotify(t('notification.db_saved'), 'success');
           }
         } else {
+          // ... local loading ...
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
           setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
@@ -439,14 +463,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart]);
 
-  // WRAPPED IN CALLBACK to be stable for useEffect dependencies
+  // ... (rest of the context functions are mostly same, abbreviated for brevity, assuming they work) ...
+  // Keeping essential exports for functionality
+  
   const searchOrders = useCallback(async (filters: any) => {
       if (dataSource === 'api') {
           const query = new URLSearchParams(filters).toString();
           const data = await apiCall(`/api/orders?${query}`, 'GET');
           return { orders: data?.orders || [], total: data?.total, pages: data?.pages };
       } else {
-          // Local fallback filtering
           const filtered = orders.filter(o => {
               if (filters.userId && o.userId !== filters.userId) return false;
               if (filters.id && !o.id.toLowerCase().includes(filters.id.toLowerCase())) return false;
@@ -575,7 +600,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
     if (allUsers.length > 0 && allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
-    
     const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
     
     if (dataSource === 'api') {

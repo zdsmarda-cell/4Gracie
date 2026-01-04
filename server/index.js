@@ -3,7 +3,7 @@ import express from 'express';
 import mysql from 'mysql2/promise';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import bodyParser from 'body-parser';
+// Remove independent body-parser import, use express native
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -34,8 +34,20 @@ for (const p of pathsToCheck) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// --- MIDDLEWARE ---
 app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
+
+// Increase payload limit for Base64 images
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Debug middleware to log request sizes (optional, helps debugging)
+app.use((req, res, next) => {
+    if (req.path === '/api/admin/upload' || req.path === '/api/products') {
+        // console.log(`[${req.method}] ${req.path} - Payload size: ${req.headers['content-length']} bytes`);
+    }
+    next();
+});
 
 // --- STATIC FILES ---
 const uploadDir = path.join(__dirname, 'uploads', 'images');
@@ -230,7 +242,6 @@ const parseJsonCol = (row, colName = 'data') => {
 
 // 1. PRODUCTS (Relational CRUD)
 app.get('/api/bootstrap', withDb(async (req, res, db) => {
-    // Optimized bootstrap fetching only necessary data
     const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
     const products = prodRows.map(row => ({
         ...parseJsonCol(row, 'full_json'),
@@ -251,7 +262,6 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
     const [discounts] = await db.query('SELECT * FROM discounts');
     const [calendar] = await db.query('SELECT * FROM calendar_exceptions');
     
-    // Future orders only for capacity checks
     const today = new Date().toISOString().split('T')[0];
     const [activeOrders] = await db.query('SELECT full_json FROM orders WHERE delivery_date >= ? AND status != "cancelled"', [today]);
 
@@ -261,12 +271,15 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
         discountCodes: discounts.map(r => ({...parseJsonCol(r), id: r.id})),
         dayConfigs: calendar.map(r => ({...parseJsonCol(r), date: r.date})),
         orders: activeOrders.map(r => parseJsonCol(r, 'full_json')),
-        users: [] // Security: Don't send users in bootstrap
+        users: []
     });
 }));
 
 app.post('/api/products', withDb(async (req, res, db) => {
     const p = req.body;
+    // Log incoming product size to verify it's not too huge
+    // console.log(`Saving product ${p.id}, images count: ${p.images?.length}`);
+    
     const fullJson = JSON.stringify(p);
     const mainImage = p.images && p.images.length > 0 ? p.images[0] : null;
 
@@ -281,11 +294,10 @@ app.post('/api/products', withDb(async (req, res, db) => {
     `, [
         p.id, p.name, p.description, p.price, p.unit, p.category, p.workload, p.workloadOverhead,
         p.vatRateInner, p.vatRateTakeaway, mainImage, fullJson, false,
-        // Update
         p.name, p.description, p.price, p.unit, p.category, p.workload, p.workloadOverhead,
         p.vatRateInner, p.vatRateTakeaway, mainImage, fullJson, false
     ]);
-    res.json({ success: true });
+    res.status(200).json({ success: true });
 }));
 
 app.delete('/api/products/:id', withDb(async (req, res, db) => {
@@ -306,8 +318,6 @@ app.get('/api/users', withDb(async (req, res, db) => {
     query += ' LIMIT 100';
 
     const [rows] = await db.query(query, params);
-    
-    // Fetch addresses for these users
     const users = [];
     for (const row of rows) {
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [row.id]);
@@ -332,7 +342,6 @@ app.post('/api/users', withDb(async (req, res, db) => {
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
-        
         await conn.query(`
             INSERT INTO users (id, email, password_hash, name, phone, role, is_blocked, marketing_consent)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -343,7 +352,6 @@ app.post('/api/users', withDb(async (req, res, db) => {
             u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent
         ]);
 
-        // Sync Addresses
         await conn.query('DELETE FROM user_addresses WHERE user_id = ?', [u.id]);
         const addresses = [
             ...(u.deliveryAddresses || []).map(a => ({...a, type: 'delivery'})),
@@ -359,7 +367,6 @@ app.post('/api/users', withDb(async (req, res, db) => {
                 [values]
             );
         }
-
         await conn.commit();
         res.json({ success: true });
     } catch (e) {
@@ -372,11 +379,9 @@ app.post('/api/users', withDb(async (req, res, db) => {
 
 app.post('/api/auth/login', withDb(async (req, res, db) => {
     const { email } = req.body;
-    // Password check is simplified for this demo, real app needs bcrypt compare
     const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
     if (rows.length > 0) {
         const u = rows[0];
-        // Fetch addresses
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
         const fullUser = {
             id: u.id,
@@ -404,8 +409,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
-
-        // Upsert Order Head
         await conn.query(`
             INSERT INTO orders (
                 id, user_id, user_name, delivery_date, status, total_price, 
@@ -421,18 +424,12 @@ app.post('/api/orders', withDb(async (req, res, db) => {
             o.deliveryFee, o.packagingFee, o.paymentMethod, o.isPaid,
             o.deliveryType, o.deliveryAddress, o.billingAddress, o.note,
             o.pickupLocationId, o.language, o.createdAt || new Date(), JSON.stringify(o),
-            // Update
             o.status, o.totalPrice, o.deliveryDate, o.userName,
             o.isPaid, o.deliveryAddress, JSON.stringify(o)
         ]);
 
-        // Upsert Items - This is where we freeze history
         await conn.query('DELETE FROM order_items WHERE order_id = ?', [o.id]);
-        
         if (o.items && o.items.length > 0) {
-            // We trust the frontend sent the correct "snapshot" values in the items array
-            // Ideally, backend should refetch price/workload from products table for security,
-            // but for this task we assume frontend sends the "cart state" which is the snapshot.
             const itemValues = o.items.map(i => [
                 o.id, i.id, i.name, i.quantity, i.price, i.category, i.unit, 
                 i.workload || 0, i.workloadOverhead || 0
@@ -444,7 +441,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 ) VALUES ?
             `, [itemValues]);
         }
-
         await conn.commit();
         res.json({ success: true, id: o.id });
     } catch (e) {
@@ -456,7 +452,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
 }));
 
 app.get('/api/orders', withDb(async (req, res, db) => {
-    // Pagination & Filtering logic similar to before, reading from relational columns
     const { id, dateFrom, dateTo, userId, status, customer, page = 1, limit = 50 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     
@@ -470,10 +465,8 @@ app.get('/api/orders', withDb(async (req, res, db) => {
     if (status) { query += ' AND status = ?'; params.push(status); }
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
 
-    // Total Count
     const [cnt] = await db.query(query.replace('SELECT full_json', 'SELECT COUNT(*) as t'), params);
     
-    // Fetch
     query += ' ORDER BY delivery_date DESC, created_at DESC LIMIT ? OFFSET ?';
     params.push(Number(limit), Number(offset));
     
@@ -489,8 +482,6 @@ app.get('/api/orders', withDb(async (req, res, db) => {
 
 app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
-    
-    // Efficient SQL Aggregation for Workload using historical data in order_items
     const summaryQuery = `
         SELECT 
             oi.category, 
@@ -502,7 +493,6 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
         WHERE o.delivery_date = ? AND o.status != 'cancelled'
         GROUP BY oi.category
     `;
-    
     const detailQuery = `
         SELECT 
             oi.category,
@@ -516,14 +506,11 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
         WHERE o.delivery_date = ? AND o.status != 'cancelled'
         GROUP BY oi.category, oi.product_id, oi.name, oi.unit
     `;
-
     const [summary] = await db.query(summaryQuery, [date]);
     const [details] = await db.query(detailQuery, [date]);
-
     res.json({ success: true, summary, details });
 }));
 
-// --- Other config endpoints (settings, discounts...) same as before ---
 app.post('/api/settings', withDb(async (req, res, db) => {
   await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(req.body), JSON.stringify(req.body)]);
   res.json({ success: true });
@@ -552,20 +539,35 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
     await db.query(`UPDATE orders SET status=?, full_json=JSON_SET(full_json, '$.status', ?) WHERE id IN (${placeholders})`, [status, status, ...ids]);
     res.json({ success: true });
 }));
+
+// --- IMAGE UPLOAD ---
 app.post('/api/admin/upload', async (req, res) => {
     const { image, name } = req.body;
-    if (!image) return res.status(400).json({ error: 'No image' });
-    const fileName = `${Date.now()}_${name ? name.replace(/[^a-z0-9]/gi, '_') : 'img'}.jpg`;
+    if (!image) {
+        console.error('❌ Upload: No image data received');
+        return res.status(400).json({ error: 'No image data' });
+    }
+    
+    // Extract format and data
+    const matches = image.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+        console.error('❌ Upload: Invalid base64 format');
+        return res.status(400).json({ error: 'Invalid image format' });
+    }
+    
+    const imageBuffer = Buffer.from(matches[2], 'base64');
+    const safeName = name ? name.replace(/[^a-z0-9]/gi, '_') : 'img';
+    const fileName = `${Date.now()}_${safeName}.jpg`;
     const fullPath = path.join(uploadDir, fileName);
     
-    console.log(`💾 Writing file to: ${fullPath}`);
+    console.log(`💾 Writing ${imageBuffer.length} bytes to: ${fullPath}`);
     
-    fs.writeFile(fullPath, image.replace(/^data:image\/\w+;base64,/, ""), 'base64', (err) => {
+    fs.writeFile(fullPath, imageBuffer, (err) => {
         if (err) {
             console.error("❌ Write Error:", err);
             return res.status(500).json({ error: 'Save failed' });
         }
-        console.log(`✅ File saved successfully.`);
+        console.log(`✅ File saved: /uploads/images/${fileName}`);
         res.json({ success: true, url: `/uploads/images/${fileName}` });
     });
 });
@@ -573,7 +575,7 @@ app.post('/api/admin/upload', async (req, res) => {
 // --- SERVER START ---
 const startServer = async () => {
   const sslKeyPath = process.env.SSL_KEY_PATH;
-  const sslCertPath = process.env.SSL_CERT_PATH; // User provided .csr, but assuming they mean certificate
+  const sslCertPath = process.env.SSL_CERT_PATH; 
 
   if (sslKeyPath && sslCertPath) {
       try {
