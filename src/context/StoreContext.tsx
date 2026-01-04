@@ -309,7 +309,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return await res.json();
     } catch (e: any) {
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
-         showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
+         // Silently ignore abort errors to prevent spamming notifications during rapid navigation
+         if (e.name !== 'AbortError') {
+             showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
+         }
       } else {
          console.warn(`[API] Call to ${endpoint} failed:`, e);
          showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
@@ -320,9 +323,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [getFullApiUrl]);
 
-  // FIX: Stable fetchData with minimal dependencies to prevent loop
+  // FIX: Removed setIsLoading(true) to prevent unmounting component tree during background refresh
   const fetchData = useCallback(async (force: boolean = false) => {
-      setIsLoading(true);
+      // Intentionally NOT setting isLoading(true) here to keep UI mounted. 
+      // Only initial load (state default true) blocks UI.
       try {
         if (dataSource === 'api') {
           const data = await apiCall('/api/bootstrap', 'GET');
@@ -365,14 +369,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       } catch (err: any) {
         showNotify('Chyba při načítání aplikace: ' + err.message, 'error');
       } finally {
-        setIsLoading(false);
+        setIsLoading(false); // Unblock UI after first load
       }
-  }, [dataSource, apiCall]); // Removed 'user' and 't' to prevent loop
+  }, [dataSource, apiCall]); 
 
   // Initial load only
   useEffect(() => {
     fetchData();
-  }, [dataSource]); // Only trigger on dataSource change or initial mount
+  }, [dataSource]); 
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
