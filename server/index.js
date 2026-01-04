@@ -575,16 +575,23 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 const userEmail = userRows[0]?.email;
 
                 if (userEmail) {
-                    // Generate rich HTML table for items
-                    const appUrl = process.env.VITE_API_URL || 'http://localhost:3000'; // Base for images
+                    // Use dynamic host retrieval to avoid hardcoded typos or ENV issues
+                    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+                    const host = req.get('host'); // Includes port if present
+                    const appUrl = process.env.VITE_API_URL || `${protocol}://${host}`;
                     
                     const itemsHtml = dbOrder.items.map(item => {
-                        // Construct image URL (assuming item.images[0] is strictly relative like /uploads/...)
-                        // If it's a full URL (picsum), use as is. If relative, prepend appUrl.
+                        // Construct image URL safely
                         let imgUrl = '';
                         if (item.images && item.images.length > 0) {
-                            if (item.images[0].startsWith('http')) imgUrl = item.images[0];
-                            else imgUrl = `${appUrl}${item.images[0]}`;
+                            if (item.images[0].startsWith('http')) {
+                                imgUrl = item.images[0];
+                            } else {
+                                // Ensure no double slashes and correct concatenation
+                                const cleanBase = appUrl.replace(/\/$/, '');
+                                const cleanPath = item.images[0].startsWith('/') ? item.images[0] : `/${item.images[0]}`;
+                                imgUrl = `${cleanBase}${cleanPath}`;
+                            }
                         }
                         
                         return `
@@ -604,8 +611,9 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                             <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">
                                 <strong>${item.price * item.quantity} Kč</strong>
                             </td>
-                        </tr>`;
-                    }).join('');
+                        </tr>
+                        `; // Added new line to help email parsers avoid ultra-long lines (quoted-printable issues)
+                    }).join('\n');
 
                     const finalTotal = dbOrder.totalPrice + dbOrder.packagingFee + (dbOrder.deliveryFee || 0);
 

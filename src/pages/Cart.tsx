@@ -1,5 +1,4 @@
 
-// ... existing imports ...
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { useNavigate, Link } from 'react-router-dom';
@@ -603,8 +602,16 @@ export const Cart: React.FC = () => {
                             onChange={e => setTermsConsent(e.target.checked)} 
                             className="rounded text-accent mt-0.5" 
                         />
-                        <span>
+                        <span className="flex flex-wrap items-center gap-1">
                             {t('cart.terms_consent')}
+                            <Link 
+                                to="/terms" 
+                                target="_blank" 
+                                className="text-accent hover:text-primary underline font-bold ml-1 z-10 relative"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                (Zobrazit VOP)
+                            </Link>
                         </span>
                         </label>
                     </div>
