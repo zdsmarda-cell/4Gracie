@@ -361,10 +361,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (dataSource === 'api') {
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data && !data.notModified) {
-              // Only update state if data is present and actually loaded
-              // If we do explicit setOrders etc here, it triggers re-renders. 
-              // We must do it only if data changed or is fresh.
-              
               if (data.users) setAllUsers(data.users);
               if (data.products) setProducts(data.products);
               if (data.orders) setOrders(data.orders);
@@ -1022,8 +1018,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           console.warn("Nepodařilo se načíst font pro diakritiku, používám výchozí.", e);
       }
 
+      // 3. Resolve Supplier Details (Snapshot vs Current Settings)
+      // Fallback to settings if snapshot is missing (legacy orders)
       const comp = o.companyDetailsSnapshot || settings.companyDetails;
-      // We no longer strip diacritics, assuming font loaded
+      
+      // Helper to handle potential nulls if settings are incomplete
       const tSafe = (txt: string) => txt || ''; 
 
       doc.setFontSize(22);

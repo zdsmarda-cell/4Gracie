@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { OrderStatus } from '../../types';
-import { FileSpreadsheet, X, Eye } from 'lucide-react';
+import { FileSpreadsheet, X, Eye, ListFilter } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface LoadTabProps {
@@ -66,20 +66,41 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         return config?.capacityOverrides?.[catId] ?? settings.defaultCapacities[catId] ?? 0;
     };
 
+    const getActiveOrdersCount = (date: string) => {
+        return orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED).length;
+    };
+
     // Fetch details when modal opens (API or LOCAL calc)
     useEffect(() => {
-        if (!selectedDate) return;
+        if (!selectedDate) {
+            setServerDetails(null);
+            return;
+        }
 
         setIsLoadingDetails(true);
 
         if (dataSource === 'api') {
             // API MODE
-            fetch(getFullApiUrl(`/api/admin/stats/load?date=${selectedDate}`))
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success) setServerDetails({ summary: data.summary, details: data.details });
+            const url = getFullApiUrl(`/api/admin/stats/load?date=${selectedDate}`);
+            console.log("Fetching stats from:", url);
+            
+            fetch(url)
+                .then(res => {
+                    if (!res.ok) throw new Error('API Request failed');
+                    return res.json();
                 })
-                .catch(err => console.error(err))
+                .then(data => {
+                    if (data.success) {
+                        setServerDetails({ summary: data.summary, details: data.details });
+                    } else {
+                        console.error("API returned error:", data);
+                        setServerDetails({ summary: [], details: [] });
+                    }
+                })
+                .catch(err => {
+                    console.error("Fetch error:", err);
+                    setServerDetails({ summary: [], details: [] });
+                })
                 .finally(() => setIsLoadingDetails(false));
         } else {
             // LOCAL MODE (Preview) - Calculate manually from orders context
@@ -141,7 +162,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
             });
             setIsLoadingDetails(false);
         }
-    }, [selectedDate, dataSource, orders, settings.categories]);
+    }, [selectedDate, dataSource, orders, settings.categories, getFullApiUrl]);
 
     const handleOpenDetail = (date: string) => {
         setSelectedDate(date);
@@ -202,6 +223,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                     <tr>
                     <th className="px-6 py-4 text-left min-w-[120px]">Datum</th>
                     <th className="px-6 py-4 text-center w-16">Detail</th>
+                    <th className="px-6 py-4 text-center">Objednávky</th>
                     <th className="px-6 py-4 text-left w-24">Stav</th>
                     {sortedCategories.map(cat => (
                         <th key={cat.id} className="px-6 py-4 text-left min-w-[150px]">{cat.name}</th>
@@ -213,6 +235,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                         const load = getDailyLoad(date);
                         const dayConfig = dayConfigs.find(d => d.date === date);
                         const isClosed = dayConfig && !dayConfig.isOpen;
+                        const ordersCount = getActiveOrdersCount(date);
                         
                         return (
                             <tr key={date} className={`hover:bg-gray-50 ${isClosed ? 'bg-red-50' : ''}`}>
@@ -221,6 +244,19 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                                 </td>
                                 <td className="px-6 py-4 text-center">
                                     <button onClick={() => handleOpenDetail(date)} className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold hover:bg-blue-200 transition flex items-center justify-center mx-auto"><Eye size={16}/></button>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                    {ordersCount > 0 ? (
+                                        <button 
+                                            onClick={() => onNavigateToDate(date)} 
+                                            className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold text-[10px] hover:bg-purple-200 transition flex items-center justify-center gap-1 mx-auto"
+                                            title="Přejít na objednávky"
+                                        >
+                                            <ListFilter size={12}/> {ordersCount}
+                                        </button>
+                                    ) : (
+                                        <span className="text-gray-300">-</span>
+                                    )}
                                 </td>
                                 <td className="px-6 py-4">
                                     {isClosed ? <span className="text-red-600 font-bold uppercase text-[10px]">{t('admin.exception_closed')}</span> : <span className="text-green-600 font-bold uppercase text-[10px]">Otevřeno</span>}
@@ -277,7 +313,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                             {isLoadingDetails ? (
                                 <p className="text-center text-gray-400">Načítám data...</p>
                             ) : !serverDetails || serverDetails.details.length === 0 ? (
-                                <p className="text-center text-gray-400">Žádná výroba pro tento den.</p>
+                                <p className="text-center text-gray-400">Žádná výroba pro tento den (nebo chyba načítání).</p>
                             ) : (
                                 settings.categories.map(cat => {
                                     const items = serverDetails.details.filter(d => d.category === cat.id);

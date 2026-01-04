@@ -127,6 +127,7 @@ const formatToMysqlDateTime = (isoDateString) => {
 const formatToMysqlDate = (dateString) => {
     if (!dateString) return new Date().toISOString().split('T')[0];
     try {
+        // Ensure we strip any time component for DATE columns
         return new Date(dateString).toISOString().split('T')[0];
     } catch (e) {
         return dateString; // Fallback
@@ -751,6 +752,10 @@ app.get('/api/orders', withDb(async (req, res, db) => {
 app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
     
+    if (!date) {
+        return res.status(400).json({ error: "Missing date parameter" });
+    }
+
     // Ensure we filter by date only (without time)
     const targetDate = formatToMysqlDate(date); 
 
