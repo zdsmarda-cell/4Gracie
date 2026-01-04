@@ -1,3 +1,4 @@
+
 import express from 'express';
 import mysql from 'mysql2/promise';
 import cors from 'cors';
@@ -50,9 +51,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // --- GLOBAL REQUEST LOGGER ---
-// This will help us see exactly what URL is hitting the node server
 app.use((req, res, next) => {
-    console.log(`📡 [${req.method}] ${req.url}`);
+    // Log only API methods to keep logs clean, but log ALL upload attempts
+    if (req.method !== 'GET' || req.url.includes('upload')) {
+        console.log(`📡 [${req.method}] ${req.url}`);
+    }
     next();
 });
 
@@ -82,34 +85,38 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursi
 console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 
 // --- FILE SERVING HANDLER ---
-// We define the handler function separately to use it on multiple routes
 const handleFileRequest = (req, res) => {
     try {
-        // Extract the path after 'uploads/' regardless of prefix (/uploads or /api/uploads)
-        // Regex: Match everything after the last occurrence of 'uploads/'
-        const match = req.path.match(/uploads\/(.+)$/);
+        // Express Regex routes capture the group in req.params[0]
+        const rawRelativePath = req.params[0];
         
-        if (!match || !match[1]) {
-            console.warn(`   ⚠️ Invalid file path format: ${req.path}`);
-            return res.status(404).send('Invalid path');
+        console.log(`🔍 [FILE] Request for: '${rawRelativePath}'`);
+
+        if (!rawRelativePath) {
+            console.warn(`   ⚠️ Empty path`);
+            return res.status(404).send('File not found');
         }
 
-        const relativePath = match[1];
-        console.log(`🔍 [FILE READ] Request: ${req.url} -> Target: ${relativePath}`);
-
         // Prevent directory traversal
-        if (relativePath.includes('..')) {
-            console.warn(`   ⚠️ Access Denied (Directory Traversal attempt)`);
+        if (rawRelativePath.includes('..')) {
+            console.warn(`   ⚠️ Access Denied (Traversal)`);
             return res.status(403).send('Access Denied');
         }
 
-        // Decode URL (e.g. %20 -> space)
-        const safeRelative = decodeURIComponent(relativePath);
+        // Safe Decode
+        let safeRelative;
+        try {
+            safeRelative = decodeURIComponent(rawRelativePath);
+        } catch (e) {
+            console.warn(`   ⚠️ Failed to decode URI component: ${rawRelativePath}`);
+            safeRelative = rawRelativePath; // Fallback to raw
+        }
+
         const fullPath = path.join(UPLOAD_ROOT, safeRelative);
         
         // Verify the file is actually inside our upload root
         if (!fullPath.startsWith(UPLOAD_ROOT)) {
-            console.warn(`   ⚠️ Access Denied (Path outside root)`);
+            console.warn(`   ⚠️ Access Denied (Path outside root): ${fullPath}`);
             return res.status(403).send('Access Denied');
         }
 
@@ -125,10 +132,8 @@ const handleFileRequest = (req, res) => {
             
             res.sendFile(fullPath, (err) => {
                 if (err) {
-                    console.error(`   ❌ Error sending file:`, err);
+                    console.error(`   ❌ Error sending file: ${err.message}`);
                     if (!res.headersSent) res.status(500).end(); 
-                } else {
-                    // console.log(`   🚀 File sent successfully.`);
                 }
             });
         } else {
@@ -136,14 +141,14 @@ const handleFileRequest = (req, res) => {
             res.status(404).send('File not found');
         }
     } catch (error) {
-        console.error('Server error serving file:', error);
+        console.error('CRITICAL ERROR in file handler:', error);
         if (!res.headersSent) res.status(500).send('Internal Server Error');
     }
 };
 
 // --- FILE ROUTES ---
-// FIXED: Use REGEX routing to bypass Express 5 "path-to-regexp" syntax errors.
-// Matches any path starting with /api/uploads/ or /uploads/ and captures the rest
+// Using Regex routes to support Express 5 and avoiding "path-to-regexp" errors
+// Matches /api/uploads/ANYTHING and /uploads/ANYTHING
 app.get(/^\/api\/uploads\/(.+)$/, handleFileRequest);
 app.get(/^\/uploads\/(.+)$/, handleFileRequest);
 
@@ -264,7 +269,6 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// ... (Other endpoints remain the same, kept brief for robust startup logic focus) ...
 app.get('/api/bootstrap', withDb(async (req, res, db) => {
     try {
         const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
