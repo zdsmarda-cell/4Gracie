@@ -10,7 +10,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import nodemailer from 'nodemailer';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+
+// --- POLYFILLS FOR NODE.JS ENVIRONMENT ---
+if (typeof global.btoa === 'undefined') {
+    global.btoa = (str) => Buffer.from(str, 'binary').toString('base64');
+}
+if (typeof global.atob === 'undefined') {
+    global.atob = (b64Encoded) => Buffer.from(b64Encoded, 'base64').toString('binary');
+}
+if (typeof global.window === 'undefined') {
+    // Basic shim for jsPDF
+    global.window = global;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -142,6 +153,21 @@ const parseJsonCol = (row, colName = 'data') => {
 
 // --- PDF GENERATION HELPERS ---
 
+// Helper to fetch binary data using Node's https module (no fetch dependency)
+const fetchBuffer = (url) => {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            if (res.statusCode !== 200) {
+                reject(new Error(`Failed to fetch ${url}, status: ${res.statusCode}`));
+                return;
+            }
+            const data = [];
+            res.on('data', (chunk) => data.push(chunk));
+            res.on('end', () => resolve(Buffer.concat(data)));
+        }).on('error', (e) => reject(e));
+    });
+};
+
 // Cache fonts to avoid fetching on every request
 let regularFontBase64 = null;
 let boldFontBase64 = null;
@@ -149,15 +175,14 @@ let boldFontBase64 = null;
 const loadFonts = async () => {
     if (regularFontBase64 && boldFontBase64) return;
     try {
-        const fetchFont = async (url) => {
-            const response = await fetch(url);
-            const arrayBuffer = await response.arrayBuffer();
-            return Buffer.from(arrayBuffer).toString('base64');
-        };
-        regularFontBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
-        boldFontBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
+        // Fetch fonts using native https
+        const regularBuffer = await fetchBuffer('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
+        regularFontBase64 = regularBuffer.toString('base64');
+        
+        const boldBuffer = await fetchBuffer('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
+        boldFontBase64 = boldBuffer.toString('base64');
     } catch (e) {
-        console.error("Failed to load fonts for PDF generation:", e);
+        console.error("Failed to load fonts for PDF generation:", e.message);
     }
 };
 
@@ -223,7 +248,9 @@ const generateVopPdf = async () => {
     const splitText = doc.splitTextToSize(text, 170);
     doc.text(splitText, 15, 30);
     
-    return doc.output('buffer');
+    // Output as Buffer for nodemailer
+    const arrayBuffer = doc.output('arraybuffer');
+    return Buffer.from(arrayBuffer);
 };
 
 const generateInvoicePdf = async (o, type = 'proforma', settings) => {
@@ -408,9 +435,8 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
             
             // Fetch QR
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrString)}`;
-            const qrRes = await fetch(qrUrl);
-            const qrBuffer = await qrRes.arrayBuffer();
-            const qrBase64 = Buffer.from(qrBuffer).toString('base64');
+            const qrBuffer = await fetchBuffer(qrUrl);
+            const qrBase64 = qrBuffer.toString('base64');
             
             doc.addImage(qrBase64, 'PNG', 150, y + 10, 40, 40);
             doc.setFontSize(8);
@@ -425,7 +451,9 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
         doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 105, y, { align: "center" });
     }
 
-    return doc.output('buffer');
+    // Output as Buffer
+    const arrayBuffer = doc.output('arraybuffer');
+    return Buffer.from(arrayBuffer);
 };
 
 // --- INITIALIZATION ---
