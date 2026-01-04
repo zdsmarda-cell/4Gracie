@@ -1,4 +1,3 @@
-
 import express from 'express';
 import mysql from 'mysql2/promise';
 import cors from 'cors';
@@ -143,11 +142,10 @@ const handleFileRequest = (req, res) => {
 };
 
 // --- FILE ROUTES ---
-// 1. Listen on /api/uploads/... (This ensures it passes through Nginx/Apache API proxy rules)
-app.get('/api/uploads/*', handleFileRequest);
-
-// 2. Listen on /uploads/... (Legacy support, or if Nginx is configured to pass these too)
-app.get('/uploads/*', handleFileRequest);
+// FIXED: Use REGEX routing to bypass Express 5 "path-to-regexp" syntax errors.
+// Matches any path starting with /api/uploads/ or /uploads/ and captures the rest
+app.get(/^\/api\/uploads\/(.+)$/, handleFileRequest);
+app.get(/^\/uploads\/(.+)$/, handleFileRequest);
 
 
 // --- DATABASE CONNECTION ---
