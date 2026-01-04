@@ -92,7 +92,11 @@ export const ProductsTab: React.FC = () => {
             visibility: { online: true, store: true, stand: true },
             allergens: [],
             images: [],
-            price: 0
+            price: 0,
+            vatRateInner: 12,
+            vatRateTakeaway: 12,
+            workload: 0,
+            workloadOverhead: 0
         });
         setIsProductModalOpen(true);
     };

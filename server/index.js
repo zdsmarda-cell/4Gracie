@@ -393,13 +393,13 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     doc.setFontSize(10);
     if(regularFontBase64) doc.setFont("Roboto", "normal");
     
-    doc.text(`Cislo dokladu: ${o.id}`, 105, 28, { align: "center" });
+    doc.text(`Číslo dokladu: ${o.id}`, 105, 28, { align: "center" });
     
     const d = new Date(dateToUse);
     const dateStr = d.toLocaleDateString('cs-CZ');
     
-    doc.text(`Datum vystaveni: ${dateStr}`, 105, 34, { align: "center" });
-    if (isVatPayer) doc.text(`Datum zdan. plneni: ${dateStr}`, 105, 39, { align: "center" });
+    doc.text(`Datum vystavení: ${dateStr}`, 105, 34, { align: "center" });
+    if (isVatPayer) doc.text(`Datum zdan. plnění: ${dateStr}`, 105, 39, { align: "center" });
 
     // Supplier / Customer
     doc.setFontSize(11);
@@ -412,11 +412,11 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     if(comp.dic) doc.text(`DIC: ${s(comp.dic)}`, 14, 76);
     
     doc.setFontSize(11);
-    doc.text("ODBERATEL:", 120, 50);
+    doc.text("ODBĚRATEL:", 120, 50);
     doc.setFontSize(10);
     
     let yPos = 56;
-    doc.text(s(o.billingName || o.userName || 'Zakaznik'), 120, yPos); yPos += 5;
+    doc.text(s(o.billingName || o.userName || 'Zákazník'), 120, yPos); yPos += 5;
     doc.text(s(o.billingStreet), 120, yPos); yPos += 5;
     doc.text(`${s(o.billingZip)} ${s(o.billingCity)}`, 120, yPos); yPos += 5;
     if (o.billingIc) { doc.text(`IC: ${o.billingIc}`, 120, yPos); yPos += 5; }
@@ -429,14 +429,14 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     doc.setFontSize(9);
     
     if (isVatPayer) {
-        doc.text("POLOZKA", 14, y);
+        doc.text("POLOŽKA", 14, y);
         doc.text("KS", 90, y);
         doc.text("CENA/KS", 105, y);
         doc.text("DPH", 130, y);
-        doc.text("ZAKLAD", 150, y);
+        doc.text("ZÁKLAD", 150, y);
         doc.text("CELKEM", 180, y);
     } else {
-        doc.text("POLOZKA", 14, y);
+        doc.text("POLOŽKA", 14, y);
         doc.text("KS", 130, y);
         doc.text("CENA/KS", 150, y);
         doc.text("CELKEM", 180, y);
@@ -481,14 +481,14 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     if (o.packagingFee > 0) {
         if (isVatPayer) {
             const { priceNoVat } = calculateVat(o.packagingFee, feeVatRate);
-            doc.text("Balne", 14, y);
+            doc.text("Balné", 14, y);
             doc.text("1", 90, y);
             doc.text(priceNoVat.toFixed(2), 105, y);
             doc.text(`${feeVatRate}%`, 130, y);
             doc.text(priceNoVat.toFixed(2), 150, y);
             doc.text(o.packagingFee.toFixed(2), 180, y);
         } else {
-            doc.text("Balne", 14, y);
+            doc.text("Balné", 14, y);
             doc.text("1", 130, y);
             doc.text(String(o.packagingFee), 150, y);
             doc.text(String(o.packagingFee), 180, y);
@@ -530,7 +530,7 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
 
     doc.setFontSize(14);
     if(boldFontBase64) doc.setFont("Roboto", "bold");
-    doc.text(`CELKEM K UHRADE: ${total.toFixed(2)} Kc`, 196, y, { align: "right" });
+    doc.text(`CELKEM K ÚHRADĚ: ${total.toFixed(2)} Kč`, 196, y, { align: "right" });
 
     // QR Code for Proforma
     if (type === 'proforma') {
@@ -557,7 +557,7 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
         // Final invoice footer
         y += 10;
         doc.setFontSize(12);
-        doc.text("NEPLATIT - Jiz uhrazeno zalohou.", 105, y, { align: "center" });
+        doc.text("NEPLATIT - Již uhrazeno zálohou.", 105, y, { align: "center" });
     }
 
     // Output as Buffer
