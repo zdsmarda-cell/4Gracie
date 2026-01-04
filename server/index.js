@@ -19,7 +19,6 @@ if (typeof global.atob === 'undefined') {
     global.atob = (b64Encoded) => Buffer.from(b64Encoded, 'base64').toString('binary');
 }
 if (typeof global.window === 'undefined') {
-    // Basic shim for jsPDF
     global.window = global;
 }
 
@@ -87,12 +86,12 @@ if (process.env.SMTP_HOST) {
         auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
         tls: { rejectUnauthorized: false }
     });
-    // Verify connection config
+    
     transporter.verify(function (error, success) {
         if (error) {
             console.error('❌ SMTP Connection Error:', error);
         } else {
-            console.log('✅ SMTP Server is ready to take our messages');
+            console.log('✅ SMTP Server is ready.');
         }
     });
 } else {
@@ -160,7 +159,6 @@ const parseJsonCol = (row, colName = 'data') => {
 
 // --- PDF GENERATION HELPERS ---
 
-// Helper to fetch binary data using Node's https module (no fetch dependency)
 const fetchBuffer = (url) => {
     return new Promise((resolve, reject) => {
         https.get(url, (res) => {
@@ -175,21 +173,21 @@ const fetchBuffer = (url) => {
     });
 };
 
-// Cache fonts to avoid fetching on every request
+// Cache fonts
 let regularFontBase64 = null;
 let boldFontBase64 = null;
 
 const loadFonts = async () => {
     if (regularFontBase64 && boldFontBase64) return;
     try {
-        // Fetch fonts using native https
         const regularBuffer = await fetchBuffer('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
         regularFontBase64 = regularBuffer.toString('base64');
         
         const boldBuffer = await fetchBuffer('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
         boldFontBase64 = boldBuffer.toString('base64');
     } catch (e) {
-        console.error("Failed to load fonts for PDF generation:", e.message);
+        console.error("Failed to load fonts for PDF (using fallback):", e.message);
+        // Do not throw, allow PDF generation without custom fonts
     }
 };
 
@@ -217,58 +215,28 @@ const calculateCzIban = (accountString) => {
   return `CZ${checkDigitsStr}${bban}`;
 };
 
-// Gets VOP buffer either from local file (path in .env) or generates dynamic fallback
+// Gets VOP buffer ONLY from local file. 
+// REMOVED dynamic PDF generation to prevent "550 5.7.1 Command rejected" due to malformed PDF structure.
 const getVopPdfBuffer = async () => {
     const vopPath = process.env.VOP_PATH;
     
     if (vopPath) {
-        // Resolve path relative to CWD (root of project), not __dirname (server folder)
         const resolvedPath = path.resolve(process.cwd(), vopPath);
         if (fs.existsSync(resolvedPath)) {
             console.log(`📄 Loading VOP from file: ${resolvedPath}`);
             return fs.readFileSync(resolvedPath);
         } else {
-            console.warn(`⚠️ VOP_PATH defined (${vopPath}) but file not found at: ${resolvedPath}. Using fallback generator.`);
+            console.warn(`⚠️ VOP_PATH defined (${vopPath}) but file not found at: ${resolvedPath}. Email will be sent WITHOUT VOP attachment.`);
         }
     }
-
-    // Fallback Generator
-    await loadFonts();
-    const doc = new jsPDF();
-    if (regularFontBase64) {
-        doc.addFileToVFS("Roboto-Regular.ttf", regularFontBase64);
-        doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
-        doc.setFont("Roboto");
-    }
-    
-    doc.setFontSize(16);
-    doc.text("Všeobecné obchodní podmínky (VOP)", 105, 20, { align: "center" });
-    
-    doc.setFontSize(10);
-    const text = `
-    1. ÚVODNÍ USTANOVENÍ
-    Tyto obchodní podmínky upravují vzájemná práva a povinnosti smluvních stran vzniklé v souvislosti nebo na základě kupní smlouvy uzavírané mezi prodávajícím a kupujícím prostřednictvím internetového obchodu.
-
-    (Zkrácená verze pro generované PDF - pro plné znění kontaktujte provozovatele)
-    
-    2. OBJEDNÁVKA A UZAVŘENÍ SMLOUVY
-    Odesláním objednávky kupující stvrzuje, že se seznámil s těmito obchodními podmínkami a že s nimi souhlasí.
-
-    3. ODSTOUPENÍ OD SMLOUVY
-    Kupující má právo odstoupit od smlouvy do 14 dnů od převzetí zboží, s výjimkou zboží podléhajícího rychlé zkáze.
-    `;
-    
-    const splitText = doc.splitTextToSize(text, 170);
-    doc.text(splitText, 15, 30);
-    
-    const arrayBuffer = doc.output('arraybuffer');
-    return Buffer.from(arrayBuffer);
+    return null;
 };
 
 const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     await loadFonts();
     const doc = new jsPDF();
     
+    // Add fonts ONLY if successfully loaded
     if (regularFontBase64 && boldFontBase64) {
         doc.addFileToVFS("Roboto-Regular.ttf", regularFontBase64);
         doc.addFileToVFS("Roboto-Medium.ttf", boldFontBase64);
@@ -281,48 +249,53 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     const isVatPayer = !!comp.dic;
     
     const headerTitle = type === 'proforma' 
-        ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" 
-        : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
+        ? "ZALOHOVY DANOVY DOKLAD" // Ascii fallback safety
+        : (isVatPayer ? "FAKTURA - DANOVY DOKLAD" : "FAKTURA");
 
     const dateToUse = type === 'final' 
         ? (o.finalInvoiceDate || new Date().toISOString()) 
         : o.createdAt;
 
+    // Use Safe Strings (no nulls)
+    const s = (str) => str || '';
+
     // Header
     doc.setFontSize(18);
-    doc.setFont("Roboto", "bold");
+    // If custom font loaded, use bold, else normal
+    if(boldFontBase64) doc.setFont("Roboto", "bold");
     doc.text(headerTitle, 105, 20, { align: "center" });
     
     doc.setFontSize(10);
-    doc.setFont("Roboto", "normal");
-    doc.text(`Číslo dokladu: ${o.id}`, 105, 28, { align: "center" });
+    if(regularFontBase64) doc.setFont("Roboto", "normal");
+    
+    doc.text(`Cislo dokladu: ${o.id}`, 105, 28, { align: "center" });
     
     const d = new Date(dateToUse);
     const dateStr = d.toLocaleDateString('cs-CZ');
     
-    doc.text(`Datum vystavení: ${dateStr}`, 105, 34, { align: "center" });
-    if (isVatPayer) doc.text(`Datum zdan. plnění: ${dateStr}`, 105, 39, { align: "center" });
+    doc.text(`Datum vystaveni: ${dateStr}`, 105, 34, { align: "center" });
+    if (isVatPayer) doc.text(`Datum zdan. plneni: ${dateStr}`, 105, 39, { align: "center" });
 
     // Supplier / Customer
     doc.setFontSize(11);
     doc.text("DODAVATEL:", 14, 50);
     doc.setFontSize(10);
-    doc.text(comp.name || '', 14, 56);
-    doc.text(comp.street || '', 14, 61);
-    doc.text(`${comp.zip || ''} ${comp.city || ''}`, 14, 66);
-    doc.text(`IČ: ${comp.ic || ''}`, 14, 71);
-    if(comp.dic) doc.text(`DIČ: ${comp.dic}`, 14, 76);
+    doc.text(s(comp.name), 14, 56);
+    doc.text(s(comp.street), 14, 61);
+    doc.text(`${s(comp.zip)} ${s(comp.city)}`, 14, 66);
+    doc.text(`IC: ${s(comp.ic)}`, 14, 71);
+    if(comp.dic) doc.text(`DIC: ${s(comp.dic)}`, 14, 76);
     
     doc.setFontSize(11);
-    doc.text("ODBĚRATEL:", 120, 50);
+    doc.text("ODBERATEL:", 120, 50);
     doc.setFontSize(10);
     
     let yPos = 56;
-    doc.text(o.billingName || o.userName || 'Zákazník', 120, yPos); yPos += 5;
-    doc.text(o.billingStreet || '', 120, yPos); yPos += 5;
-    doc.text(`${o.billingZip || ''} ${o.billingCity || ''}`, 120, yPos); yPos += 5;
-    if (o.billingIc) { doc.text(`IČ: ${o.billingIc}`, 120, yPos); yPos += 5; }
-    if (o.billingDic) { doc.text(`DIČ: ${o.billingDic}`, 120, yPos); yPos += 5; }
+    doc.text(s(o.billingName || o.userName || 'Zakaznik'), 120, yPos); yPos += 5;
+    doc.text(s(o.billingStreet), 120, yPos); yPos += 5;
+    doc.text(`${s(o.billingZip)} ${s(o.billingCity)}`, 120, yPos); yPos += 5;
+    if (o.billingIc) { doc.text(`IC: ${o.billingIc}`, 120, yPos); yPos += 5; }
+    if (o.billingDic) { doc.text(`DIC: ${o.billingDic}`, 120, yPos); yPos += 5; }
 
     // Table Header
     let y = 100;
@@ -331,14 +304,14 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     doc.setFontSize(9);
     
     if (isVatPayer) {
-        doc.text("POLOŽKA", 14, y);
+        doc.text("POLOZKA", 14, y);
         doc.text("KS", 90, y);
         doc.text("CENA/KS", 105, y);
         doc.text("DPH", 130, y);
-        doc.text("ZÁKLAD", 150, y);
+        doc.text("ZAKLAD", 150, y);
         doc.text("CELKEM", 180, y);
     } else {
-        doc.text("POLOŽKA", 14, y);
+        doc.text("POLOZKA", 14, y);
         doc.text("KS", 130, y);
         doc.text("CENA/KS", 150, y);
         doc.text("CELKEM", 180, y);
@@ -363,14 +336,14 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
 
         if (isVatPayer) {
             const { priceNoVat } = calculateVat(item.price, vatRate);
-            doc.text((item.name || '').substring(0, 35), 14, y);
+            doc.text(s(item.name).substring(0, 35), 14, y);
             doc.text(String(item.quantity), 90, y);
             doc.text(priceNoVat.toFixed(2), 105, y);
             doc.text(`${vatRate}%`, 130, y);
             doc.text((priceNoVat * item.quantity).toFixed(2), 150, y);
             doc.text(itemTotal.toFixed(2), 180, y);
         } else {
-            doc.text((item.name || '').substring(0, 50), 14, y);
+            doc.text(s(item.name).substring(0, 50), 14, y);
             doc.text(String(item.quantity), 130, y);
             doc.text(String(item.price), 150, y);
             doc.text(String(itemTotal), 180, y);
@@ -384,14 +357,14 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     if (o.packagingFee > 0) {
         if (isVatPayer) {
             const { priceNoVat } = calculateVat(o.packagingFee, feeVatRate);
-            doc.text("Balné", 14, y);
+            doc.text("Balne", 14, y);
             doc.text("1", 90, y);
             doc.text(priceNoVat.toFixed(2), 105, y);
             doc.text(`${feeVatRate}%`, 130, y);
             doc.text(priceNoVat.toFixed(2), 150, y);
             doc.text(o.packagingFee.toFixed(2), 180, y);
         } else {
-            doc.text("Balné", 14, y);
+            doc.text("Balne", 14, y);
             doc.text("1", 130, y);
             doc.text(String(o.packagingFee), 150, y);
             doc.text(String(o.packagingFee), 180, y);
@@ -432,8 +405,8 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
     const total = Math.max(0, o.totalPrice + o.packagingFee + (o.deliveryFee || 0) - discountSum);
 
     doc.setFontSize(14);
-    doc.setFont("Roboto", "bold");
-    doc.text(`CELKEM K ÚHRADĚ: ${total.toFixed(2)} Kč`, 196, y, { align: "right" });
+    if(boldFontBase64) doc.setFont("Roboto", "bold");
+    doc.text(`CELKEM K UHRADE: ${total.toFixed(2)} Kc`, 196, y, { align: "right" });
 
     // QR Code for Proforma
     if (type === 'proforma') {
@@ -454,13 +427,13 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
             doc.setFontSize(8);
             doc.text("QR Platba", 170, y + 55, { align: "center" });
         } catch (e) {
-            console.error("QR gen error", e);
+            console.error("QR gen error", e.message);
         }
     } else {
         // Final invoice footer
         y += 10;
         doc.setFontSize(12);
-        doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 105, y, { align: "center" });
+        doc.text("NEPLATIT - Jiz uhrazeno zalohou.", 105, y, { align: "center" });
     }
 
     // Output as Buffer
@@ -615,7 +588,6 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/api/bootstrap', withDb(async (req, res, db) => {
-    // console.log('API: Bootstrap called');
     try {
         const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
         const products = prodRows.map(row => ({
@@ -653,7 +625,7 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
             discountCodes: discounts.map(r => ({...parseJsonCol(r), id: r.id})),
             dayConfigs: calendar.map(r => ({...parseJsonCol(r), date: r.date})),
             orders: mergedOrders,
-            users: [] // EMPTY USERS ARRAY TO PREVENT HEAVY LOAD
+            users: [] 
         });
     } catch (e) {
         console.error("Bootstrap error:", e);
@@ -725,11 +697,6 @@ app.post('/api/users', withDb(async (req, res, db) => {
         }
         await conn.commit();
         
-        // Send welcome email logic if new user (simplified)
-        if (transporter) {
-             // Logic to detect if new user (omitted for brevity, can check affectedRows on insert)
-        }
-
         res.json({ success: true });
     } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 }));
@@ -810,12 +777,30 @@ app.post('/api/orders', withDb(async (req, res, db) => {
 
                 if (userEmail) {
                     console.log(`📄 Generating PDF attachments...`);
-                    const invoicePdf = await generateInvoicePdf(o, 'proforma', settings);
-                    const vopPdf = await getVopPdfBuffer();
+                    const attachments = [];
+                    
+                    // 1. Invoice (Generated safely)
+                    try {
+                        const invoicePdf = await generateInvoicePdf(o, 'proforma', settings);
+                        attachments.push({ filename: `zalohova_faktura_${o.id}.pdf`, content: invoicePdf });
+                    } catch (pdfErr) {
+                        console.error('Failed to generate invoice PDF:', pdfErr);
+                        // Continue without attachment
+                    }
+
+                    // 2. VOP (Static file load)
+                    try {
+                        const vopPdf = await getVopPdfBuffer();
+                        if (vopPdf) {
+                            attachments.push({ filename: 'VOP_4Gracie.pdf', content: vopPdf });
+                        }
+                    } catch (vopErr) {
+                        console.error('Failed to load VOP file:', vopErr);
+                    }
 
                     console.log(`📨 Sending customer email to ${userEmail}...`);
                     await transporter.sendMail({
-                        from: process.env.SMTP_FROM,
+                        from: process.env.SMTP_FROM, // Important: Use authenticated sender
                         to: userEmail,
                         subject: `Potvrzení objednávky #${o.id}`,
                         html: `
@@ -825,10 +810,7 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                             <p>V příloze naleznete zálohovou fakturu a obchodní podmínky.</p>
                             <p>S pozdravem,<br>4Gracie</p>
                         `,
-                        attachments: [
-                            { filename: `zalohova_faktura_${o.id}.pdf`, content: invoicePdf },
-                            { filename: 'VOP_4Gracie.pdf', content: vopPdf }
-                        ]
+                        attachments // Safely constructed attachments
                     });
                     console.log(`✅ Customer email sent to ${userEmail}`);
                 } else {
@@ -861,7 +843,7 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 }
 
             } catch (emailErr) {
-                console.error("❌ Failed to send order emails:", emailErr);
+                console.error("❌ Failed to send order emails (SMTP):", emailErr);
                 // Non-blocking error
             }
         }
@@ -931,9 +913,13 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                     // If delivered, generate Final Invoice
                     if (status === 'delivered') {
                         console.log(`📄 Generating Final Invoice for #${o.id}...`);
-                        const finalInvoicePdf = await generateInvoicePdf(o, 'final', settings);
-                        attachments.push({ filename: `faktura_${o.id}.pdf`, content: finalInvoicePdf });
-                        emailBody += `<p>V příloze naleznete daňový doklad.</p>`;
+                        try {
+                            const finalInvoicePdf = await generateInvoicePdf(o, 'final', settings);
+                            attachments.push({ filename: `faktura_${o.id}.pdf`, content: finalInvoicePdf });
+                            emailBody += `<p>V příloze naleznete daňový doklad.</p>`;
+                        } catch (invErr) {
+                            console.error('Invoice gen error in status update:', invErr);
+                        }
                     }
 
                     emailBody += `<p>S pozdravem,<br>4Gracie</p>`;
