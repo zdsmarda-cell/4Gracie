@@ -18,6 +18,7 @@ interface ServerLoadSummary {
 
 interface ServerLoadDetail {
     category: string | null;
+    product_id?: string;
     name: string;
     unit: string;
     total_quantity: number | string;
@@ -41,11 +42,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
     // Filter dates to only show those with Activity (Orders) or Exceptions (Config)
     const loadDates = useMemo(() => {
         const dates = new Set<string>();
-        
-        // 1. Add dates from configured exceptions (Manual blocks/opens)
         dayConfigs.forEach(c => dates.add(c.date));
-        
-        // 2. Add dates from active orders
         orders.forEach(o => {
             if (o.status !== OrderStatus.CANCELLED) {
                 dates.add(o.deliveryDate);
@@ -58,7 +55,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         if (!showLoadHistory) {
              return sorted.filter(d => d >= now);
         }
-        return sorted.reverse(); // History reversed
+        return sorted.reverse(); 
     }, [dayConfigs, orders, showLoadHistory]);
 
     const getDayCapacityLimit = (date: string, catId: string) => {
@@ -70,7 +67,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         return orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED).length;
     };
 
-    // Fetch details when modal opens (API or LOCAL calc)
+    // Fetch details when modal opens
     useEffect(() => {
         if (!selectedDate) {
             setServerDetails(null);
@@ -80,7 +77,6 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         setIsLoadingDetails(true);
 
         if (dataSource === 'api') {
-            // API MODE
             const url = getFullApiUrl(`/api/admin/stats/load?date=${selectedDate}`);
             
             fetch(url)
@@ -102,26 +98,23 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 })
                 .finally(() => setIsLoadingDetails(false));
         } else {
-            // LOCAL MODE (Preview) - Calculate manually from orders context
+            // LOCAL MODE (Preview)
             const relevantOrders = orders.filter(o => o.deliveryDate === selectedDate && o.status !== OrderStatus.CANCELLED);
             
             const summaryMap = new Map<string, ServerLoadSummary>();
             const detailsMap = new Map<string, ServerLoadDetail>();
 
-            // Initialize summary for all categories
             settings.categories.forEach(c => {
                 summaryMap.set(c.id, { category: c.id, total_workload: 0, total_overhead: 0, order_count: 0 });
             });
 
             relevantOrders.forEach(order => {
                 const categoriesInOrder = new Set<string>();
-                
                 order.items.forEach(item => {
                     const cat = item.category;
                     const workload = (item.workload || 0) * item.quantity;
                     const overhead = (item.workloadOverhead || 0);
 
-                    // Update Summary
                     if (!summaryMap.has(cat)) {
                         summaryMap.set(cat, { category: cat, total_workload: 0, total_overhead: 0, order_count: 0 });
                     }
@@ -130,12 +123,11 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                     sum.total_overhead = Number(sum.total_overhead) + overhead; 
                     categoriesInOrder.add(cat);
 
-                    // Update Details
-                    // We use item.id + cat as key to group same products
                     const detailKey = `${item.id}_${cat}`; 
                     if (!detailsMap.has(detailKey)) {
                         detailsMap.set(detailKey, {
                             category: cat,
+                            product_id: item.id,
                             name: item.name,
                             unit: item.unit,
                             total_quantity: 0,
@@ -148,7 +140,6 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                     det.product_workload = Number(det.product_workload) + workload;
                 });
 
-                // Update Order Count per category
                 categoriesInOrder.forEach(cat => {
                     const sum = summaryMap.get(cat);
                     if (sum) sum.order_count += 1;
@@ -173,23 +164,21 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         const wb = XLSX.utils.book_new();
         const exportRows: any[] = [];
         
-        // Group items by category (handle null as 'other')
         const grouped = serverDetails.details.reduce((acc, item) => {
-            const catKey = item.category || 'other';
+            const catKey = item.category || 'unknown';
             if (!acc[catKey]) acc[catKey] = [];
             acc[catKey].push(item);
             return acc;
         }, {} as Record<string, ServerLoadDetail[]>);
 
-        // Iterate categories from Settings to respect order
-        const catKeys = [...settings.categories.map(c => c.id), 'other'];
+        const catKeys = [...settings.categories.map(c => c.id), 'unknown'];
 
         catKeys.forEach(catId => {
             const items = grouped[catId];
             if (!items || items.length === 0) return;
 
-            const catName = catId === 'other' ? 'Nezařazeno / Smazané' : (settings.categories.find(c => c.id === catId)?.name || catId);
-            const catSummary = serverDetails.summary.find(s => (s.category || 'other') === catId);
+            const catName = catId === 'unknown' ? 'Nezařazeno / Chyba' : (settings.categories.find(c => c.id === catId)?.name || catId);
+            const catSummary = serverDetails.summary.find(s => (s.category || 'unknown') === catId);
             const totalLoad = (Number(catSummary?.total_workload) || 0) + (Number(catSummary?.total_overhead) || 0);
 
             exportRows.push({ Název: `KATEGORIE: ${catName} (Celkem pracnost: ${totalLoad})`, Ks: '', Jednotka: '', 'Pracnost (Suma)': '' });
@@ -358,10 +347,10 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                                         );
                                     })}
 
-                                    {/* Uncategorized Items (category is null or not in settings) */}
+                                    {/* Uncategorized / Unknown Items */}
                                     {(() => {
                                         const knownCatIds = settings.categories.map(c => c.id);
-                                        const uncategorizedItems = serverDetails.details.filter(d => !d.category || !knownCatIds.includes(d.category));
+                                        const uncategorizedItems = serverDetails.details.filter(d => !d.category || d.category === 'unknown' || !knownCatIds.includes(d.category));
                                         
                                         if (uncategorizedItems.length === 0) return null;
 
@@ -371,7 +360,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                                         return (
                                             <div key="uncategorized" className="border rounded-xl overflow-hidden shadow-sm border-red-200">
                                                 <div className="bg-red-50 p-3 flex justify-between items-center border-b border-red-100">
-                                                    <h3 className="font-bold text-sm uppercase text-red-700">Nezařazeno / Smazané produkty</h3>
+                                                    <h3 className="font-bold text-sm uppercase text-red-700">Nezařazeno / Chyba dat</h3>
                                                     <span className="text-xs font-bold bg-white px-2 py-1 rounded border border-red-200 text-red-600">Celkem pracnost: {totalUncatWorkload}</span>
                                                 </div>
                                                 <table className="min-w-full divide-y">
@@ -385,7 +374,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                                                     <tbody className="divide-y text-xs">
                                                         {uncategorizedItems.map((p, idx) => (
                                                             <tr key={idx} className="hover:bg-gray-50">
-                                                                <td className="px-4 py-2 font-bold">{p.name}</td>
+                                                                <td className="px-4 py-2 font-bold">{p.name} <span className="text-[9px] text-red-400 block">(ID: {p.product_id || 'N/A'})</span></td>
                                                                 <td className="px-4 py-2 text-center">
                                                                     {Number(p.total_quantity)} <span className="text-gray-400 text-[10px]">{p.unit}</span>
                                                                 </td>

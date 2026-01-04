@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Language, Product } from '../../types';
-import { FileText, Save, X, AlertCircle, Plus, Minus, Trash2, CheckCircle, Search, Tag, CreditCard, ImageIcon, QrCode, ChevronLeft, ChevronRight } from 'lucide-react';
+import { FileText, Save, X, AlertCircle, Plus, Minus, Trash2, CheckCircle, Search, Tag, CreditCard, ImageIcon, QrCode, ChevronLeft, ChevronRight, Mail } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
 interface OrdersTabProps {
@@ -143,9 +143,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
 
     const handleBulkStatusChange = async (status: OrderStatus) => {
         if (!status) return;
-        if (confirm(`Opravdu změnit stav ${selectedOrders.length} objednávek na ${status}?`)) {
+        if (confirm(`Opravdu změnit stav ${selectedOrders.length} objednávek na "${t(`status.${status}`)}"?${notifyCustomer ? ' (Bude odeslán email)' : ''}`)) {
             await updateOrderStatus(selectedOrders, status, notifyCustomer);
             setSelectedOrders([]);
+            setNotifyCustomer(false); // Reset after action
             loadOrders(); // Refresh
         }
     };
@@ -276,14 +277,32 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 <div className="flex items-center gap-2">
                     <span className="text-xl font-bold text-primary mr-4">{t('admin.orders')}</span>
                     {selectedOrders.length > 0 && (
-                    <div className="flex items-center gap-2 animate-in fade-in">
-                        <div className="flex items-center bg-accent/10 px-3 py-1 rounded-lg border border-accent/20">
-                        <span className="text-[10px] font-bold text-primary mr-3">Vybráno: {selectedOrders.length}</span>
-                        <select className="text-[10px] border rounded bg-white p-1 mr-2" onChange={e => handleBulkStatusChange(e.target.value as OrderStatus)}>
-                            <option value="">{t('admin.status_update')}...</option>
+                    <div className="flex items-center gap-4 animate-in fade-in bg-white p-2 rounded-xl shadow-sm border border-accent/20">
+                        <span className="text-xs font-bold text-primary">Vybráno: {selectedOrders.length}</span>
+                        
+                        {/* Status Select */}
+                        <select 
+                            className="text-xs border rounded bg-white p-2 font-bold focus:ring-accent outline-none" 
+                            onChange={e => handleBulkStatusChange(e.target.value as OrderStatus)}
+                            value=""
+                        >
+                            <option value="" disabled>{t('admin.status_update')}...</option>
                             {Object.values(OrderStatus).map(s => <option key={s as string} value={s as string}>{t(`status.${s}`)}</option>)}
                         </select>
-                        </div>
+
+                        {/* Notify Checkbox */}
+                        <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none border-l pl-4 border-gray-200">
+                            <input 
+                                type="checkbox" 
+                                checked={notifyCustomer} 
+                                onChange={e => setNotifyCustomer(e.target.checked)} 
+                                className="rounded text-accent focus:ring-accent w-4 h-4" 
+                            />
+                            <div className="flex items-center gap-1">
+                                <Mail size={14} className={notifyCustomer ? "text-accent" : "text-gray-400"} />
+                                <span className={notifyCustomer ? "text-gray-800" : "text-gray-500"}>{t('admin.notify_customer')}</span>
+                            </div>
+                        </label>
                     </div>
                     )}
                 </div>
@@ -394,7 +413,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             </div>
             )}
 
-            {/* QR Modal */}
+            {/* ... QR and Order Modals (unchanged) ... */}
             {qrModalOrder && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in zoom-in-95 duration-200" onClick={() => setQrModalOrder(null)}>
                 <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
@@ -461,11 +480,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                             excludeOrderId={editingOrder.id}
                                         />
                                     </div>
-                                    {/* Address fields similar to Profile logic or Admin basic inputs */}
                                     <div className="grid grid-cols-1 gap-2">
                                         <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.delivery')}</label><select className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryType} onChange={e => setEditingOrder({...editingOrder, deliveryType: e.target.value as DeliveryType})}><option value={DeliveryType.PICKUP}>{t('checkout.pickup')}</option><option value={DeliveryType.DELIVERY}>{t('admin.delivery')}</option></select></div>
                                     </div>
-                                    {/* Delivery Address Text Area for simple editing */}
                                     <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.street')} (Text)</label><textarea className="w-full border rounded p-2 text-sm h-20" value={editingOrder.deliveryAddress || ''} onChange={e => setEditingOrder({...editingOrder, deliveryAddress: e.target.value})}/></div>
                                 </div>
                             </div>
@@ -489,7 +506,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                     <button onClick={() => setIsAddProductModalOpen(true)} className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-xs font-bold text-gray-600 border-t">+ Přidat produkt</button>
                                 </div>
                                 
-                                {/* Totals with Breakdown */}
                                 <div className="bg-gray-50 p-4 rounded-2xl space-y-2">
                                     <div className="flex justify-between text-xs text-gray-500">
                                         <span>Zboží:</span>
@@ -526,7 +542,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </div>
             )}
 
-            {/* ADD PRODUCT MODAL */}
+            {/* ADD PRODUCT MODAL ... (kept same) */}
             {isAddProductModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4">
                     <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] flex flex-col">
