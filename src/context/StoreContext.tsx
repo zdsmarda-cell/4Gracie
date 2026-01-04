@@ -4,6 +4,7 @@ import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, Pr
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
+import 'jspdf-autotable'; 
 
 interface CheckResult {
   allowed: boolean;
@@ -995,21 +996,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   
   const printInvoice = async (o: Order) => { 
-      // 1. Prepare Doc
       const doc = new jsPDF();
       
-      // 2. Load Font (Czech support)
-      // Fetching Roboto from a stable CDN to ensure Czech chars work
       try {
           const fontRes = await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
           const fontBlob = await fontRes.blob();
           const fontBase64 = await new Promise<string>((resolve) => {
               const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string); // Returns data:font/ttf;base64,...
+              reader.onloadend = () => resolve(reader.result as string);
               reader.readAsDataURL(fontBlob);
           });
           
-          // Clean base64 string
           const pureBase64 = fontBase64.split(',')[1];
           doc.addFileToVFS("Roboto-Regular.ttf", pureBase64);
           doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
@@ -1018,19 +1015,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           console.warn("Nepodařilo se načíst font pro diakritiku, používám výchozí.", e);
       }
 
-      // 3. Resolve Supplier Details (Snapshot vs Current Settings)
-      // Fallback to settings if snapshot is missing (legacy orders)
       const comp = o.companyDetailsSnapshot || settings.companyDetails;
+      const isVatPayer = !!comp.dic;
       
-      // Helper to handle potential nulls if settings are incomplete
       const tSafe = (txt: string) => txt || ''; 
 
       doc.setFontSize(22);
-      doc.text(tSafe("FAKTURA - DAŇOVÝ DOKLAD"), 105, 20, { align: "center" });
+      doc.text(tSafe(isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA"), 105, 20, { align: "center" });
       
       doc.setFontSize(10);
       doc.text(tSafe(`Číslo obj: ${o.id}`), 105, 28, { align: "center" });
-      doc.text(tSafe(`Datum vystavení: ${formatDate(new Date().toISOString())}`), 105, 34, { align: "center" });
+      
+      // FIX: DUZP must equal creation date
+      doc.text(tSafe(`Datum vystavení: ${formatDate(o.createdAt)}`), 105, 34, { align: "center" });
+      if (isVatPayer) {
+          doc.text(tSafe(`Datum zdan. plnění: ${formatDate(o.createdAt)}`), 105, 40, { align: "center" });
+      }
 
       // Supplier
       doc.setFontSize(12);
@@ -1052,36 +1052,110 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           doc.text(tSafe(line.trim()), 120, 61 + (i*5));
       });
 
-      // Items Table
+      // Items Table Logic
+      const calculateVat = (priceWithVat: number, rate: number) => {
+          const priceNoVat = priceWithVat / (1 + rate / 100);
+          const vat = priceWithVat - priceNoVat;
+          return { priceNoVat, vat };
+      };
+
       let y = 100;
       doc.line(14, y, 196, y);
       y += 6;
       doc.setFontSize(9);
-      doc.text("POLOŽKA", 14, y);
-      doc.text("KS", 130, y);
-      doc.text("CENA/KS", 150, y);
-      doc.text("CELKEM", 180, y);
+      
+      if (isVatPayer) {
+          doc.text("POLOŽKA", 14, y);
+          doc.text("KS", 90, y);
+          doc.text("CENA/KS", 105, y);
+          doc.text("DPH", 130, y);
+          doc.text("ZÁKLAD", 150, y);
+          doc.text("CELKEM", 180, y);
+      } else {
+          doc.text("POLOŽKA", 14, y);
+          doc.text("KS", 130, y);
+          doc.text("CENA/KS", 150, y);
+          doc.text("CELKEM", 180, y);
+      }
       y += 3;
       doc.line(14, y, 196, y);
       y += 6;
 
+      // Tax Aggregation
+      const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
+      const addToTaxSummary = (rate: number, totalWithVat: number) => {
+          if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
+          const { priceNoVat, vat } = calculateVat(totalWithVat, rate);
+          taxSummary[rate].base += priceNoVat;
+          taxSummary[rate].vat += vat;
+          taxSummary[rate].total += totalWithVat;
+      };
+
+      // 1. Determine Max VAT Rate from items for Fees
+      let maxItemVatRate = 0;
       o.items.forEach(item => {
-          doc.text(tSafe(item.name), 14, y);
-          doc.text(item.quantity.toString(), 130, y);
-          doc.text(item.price.toString(), 150, y);
-          doc.text((item.price * item.quantity).toString(), 180, y);
+           const rate = item.vatRateTakeaway || 12; // fallback
+           if (rate > maxItemVatRate) maxItemVatRate = rate;
+      });
+      // Default to 21% if no items or something weird, otherwise use max found
+      const feeVatRate = maxItemVatRate > 0 ? maxItemVatRate : 21;
+
+      // 2. Product Items
+      o.items.forEach(item => {
+          const itemTotal = item.price * item.quantity;
+          const vatRate = item.vatRateTakeaway || 12; 
+          
+          if (isVatPayer) {
+              const { priceNoVat } = calculateVat(item.price, vatRate);
+              addToTaxSummary(vatRate, itemTotal);
+              
+              doc.text(tSafe(item.name).substring(0, 35), 14, y);
+              doc.text(item.quantity.toString(), 90, y);
+              doc.text(priceNoVat.toFixed(2), 105, y);
+              doc.text(`${vatRate}%`, 130, y);
+              doc.text((priceNoVat * item.quantity).toFixed(2), 150, y);
+              doc.text(itemTotal.toFixed(2), 180, y);
+          } else {
+              doc.text(tSafe(item.name).substring(0, 50), 14, y);
+              doc.text(item.quantity.toString(), 130, y);
+              doc.text(item.price.toString(), 150, y);
+              doc.text(itemTotal.toString(), 180, y);
+          }
           y += 6;
       });
 
-      // Fees
+      // 3. Fees (Packaging & Delivery) - Using maxItemVatRate
       if (o.packagingFee > 0) {
-          doc.text("Balné", 14, y);
-          doc.text(o.packagingFee.toString(), 180, y);
+          if (isVatPayer) {
+              const { priceNoVat } = calculateVat(o.packagingFee, feeVatRate);
+              addToTaxSummary(feeVatRate, o.packagingFee);
+              doc.text("Balné", 14, y);
+              doc.text("1", 90, y);
+              doc.text(priceNoVat.toFixed(2), 105, y);
+              doc.text(`${feeVatRate}%`, 130, y);
+              doc.text(priceNoVat.toFixed(2), 150, y);
+              doc.text(o.packagingFee.toFixed(2), 180, y);
+          } else {
+              doc.text("Balné", 14, y);
+              doc.text(o.packagingFee.toString(), 180, y);
+          }
           y += 6;
       }
+
       if (o.deliveryFee > 0) {
-          doc.text("Doprava", 14, y);
-          doc.text(o.deliveryFee.toString(), 180, y);
+          if (isVatPayer) {
+              const { priceNoVat } = calculateVat(o.deliveryFee, feeVatRate);
+              addToTaxSummary(feeVatRate, o.deliveryFee);
+              doc.text("Doprava", 14, y);
+              doc.text("1", 90, y);
+              doc.text(priceNoVat.toFixed(2), 105, y);
+              doc.text(`${feeVatRate}%`, 130, y);
+              doc.text(priceNoVat.toFixed(2), 150, y);
+              doc.text(o.deliveryFee.toFixed(2), 180, y);
+          } else {
+              doc.text("Doprava", 14, y);
+              doc.text(o.deliveryFee.toString(), 180, y);
+          }
           y += 6;
       }
       
@@ -1094,21 +1168,43 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       doc.line(14, y, 196, y);
       y += 10;
+
+      // Tax Recap Table
+      if (isVatPayer) {
+          doc.setFontSize(8);
+          doc.text("Rekapitulace DPH", 14, y);
+          y += 4;
+          doc.text("Sazba", 14, y);
+          doc.text("Základ", 40, y);
+          doc.text("DPH", 70, y);
+          doc.text("Celkem", 100, y);
+          y += 4;
+          
+          Object.keys(taxSummary).forEach(rate => {
+              const r = Number(rate);
+              const s = taxSummary[r];
+              doc.text(`${r}%`, 14, y);
+              doc.text(s.base.toFixed(2), 40, y);
+              doc.text(s.vat.toFixed(2), 70, y);
+              doc.text(s.total.toFixed(2), 100, y);
+              y += 4;
+          });
+          y += 10;
+      }
+
       doc.setFontSize(14);
       const total = Math.max(0, o.totalPrice + o.packagingFee + (o.deliveryFee || 0) - (o.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
       doc.text(tSafe(`CELKEM K ÚHRADĚ: ${total} Kč`), 196, y, { align: "right" });
 
-      // 3. QR Code Logic
       try {
           const iban = generateCzIban(settings.companyDetails.bankAccount).replace(/\s/g,'');
           const bic = settings.companyDetails.bic ? `+${settings.companyDetails.bic}` : '';
           const acc = `ACC:${iban}${bic}`;
           const amountStr = total.toFixed(2);
           const vs = o.id.replace(/\D/g,'') || '0';
-          const msg = removeDiacritics(`Objednavka ${o.id}`); // QR MSG should be ASCII
+          const msg = removeDiacritics(`Objednavka ${o.id}`); 
           
           const qrString = `SPD*1.0*${acc}*AM:${amountStr}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
-          // Use fetch to get image as blob to avoid CORS issues if canvas was used directly
           const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrString)}`;
           
           const qrRes = await fetch(qrUrl);
@@ -1119,7 +1215,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               reader.readAsDataURL(qrBlob);
           });
           
-          // Add QR to PDF
           doc.addImage(qrBase64, 'PNG', 150, 200, 40, 40); 
           doc.setFontSize(8);
           doc.text("QR Platba", 170, 242, { align: "center" });
@@ -1132,7 +1227,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   const generateCzIban = calculateCzIban;
 
-  // Memoize the refreshData wrapper
   const refreshData = useCallback((silent = true) => {
       return fetchData(silent);
   }, [fetchData]);
@@ -1154,7 +1248,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       getFullApiUrl,
       isPreviewEnvironment,
-      refreshData // Now stable
+      refreshData 
     }}>
       {children}
     </StoreContext.Provider>

@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store } from 'lucide-react';
 import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
-import { VOP_TEXT } from '../constants';
+import { TermsContent } from '../components/TermsContent';
 
 export const Cart: React.FC = () => {
   const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
@@ -694,8 +694,8 @@ export const Cart: React.FC = () => {
                     <h3 className="text-2xl font-serif font-bold text-primary">Obchodní podmínky</h3>
                     <button onClick={() => setIsTermsModalOpen(false)} className="p-2 hover:bg-gray-100 rounded-full transition text-gray-500"><X size={24}/></button>
                 </div>
-                <div className="overflow-y-auto pr-2 text-sm leading-relaxed text-gray-600 whitespace-pre-wrap flex-grow">
-                    {VOP_TEXT}
+                <div className="overflow-y-auto pr-2 flex-grow">
+                    <TermsContent />
                 </div>
                 <div className="mt-6 pt-4 border-t flex justify-end">
                     <button onClick={() => setIsTermsModalOpen(false)} className="bg-primary text-white px-8 py-3 rounded-xl font-bold hover:bg-black transition shadow-lg">Rozumím</button>

@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Language, Product } from '../../types';
@@ -118,10 +119,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
     };
 
     const displayOrders = useMemo(() => {
-        // Since we unified searchOrders, fetchedOrders contains the correct subset. 
-        // We do client side filter for IC in local mode if searchOrders didn't catch it perfectly, 
-        // but searchOrders handles it reasonably now.
-        // For local mode consistency if searchOrders implementation is basic:
         let result = fetchedOrders;
         if (dataSource === 'local' && orderFilters.ic) {
              result = result.filter(o => {
@@ -292,6 +289,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </div>
             </div>
 
+            {/* Filters ... (kept same) */}
             <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
                 <div className="md:col-span-1">
                     <label className="text-xs font-bold text-gray-400 block mb-1">ID</label>
@@ -374,7 +372,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </tbody>
                 </table>
                 
-                {/* Pagination Controls */}
                 {dataSource === 'api' && totalPages > 1 && (
                     <div className="flex justify-between items-center p-4 bg-gray-50 border-t">
                         <button 
@@ -397,7 +394,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             </div>
             )}
 
-            {/* QR & Edit Modals (Omitting repetitive content for brevity, they remain same as before but use editingOrder) */}
+            {/* QR Modal */}
             {qrModalOrder && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in zoom-in-95 duration-200" onClick={() => setQrModalOrder(null)}>
                 <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
@@ -411,7 +408,22 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                         className="w-48 h-48"
                         />
                     </div>
-                    {/* ... details ... */}
+                    <div className="text-left bg-gray-50 p-4 rounded-xl space-y-2 text-sm">
+                        <div className="flex justify-between border-b pb-2">
+                            <span className="text-gray-500">{t('common.bank_acc')}</span>
+                            <span className="font-bold">{settings.companyDetails.bankAccount}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-2">
+                            <span className="text-gray-500">Var. symbol</span>
+                            <span className="font-bold">{qrModalOrder.id.replace(/\D/g, '') || '0'}</span>
+                        </div>
+                        <div className="flex justify-between pt-1">
+                            <span className="text-gray-500">{t('common.total')}</span>
+                            <span className="font-bold text-lg text-primary">
+                            {(Math.max(0, qrModalOrder.totalPrice - (qrModalOrder.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0)) + qrModalOrder.packagingFee + (qrModalOrder.deliveryFee||0)).toFixed(2)} Kč
+                            </span>
+                        </div>
+                    </div>
                     </div>
                 </div>
                 </div>
@@ -430,10 +442,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                 <AlertCircle size={18} className="mr-2"/> {orderSaveError}
                             </div>
                         )}
-                        {/* Edit Form Content - Same as previous version */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                             <div className="space-y-4">
-                                {/* Details & Address */}
                                 <div className="p-4 bg-gray-50 rounded-2xl space-y-3">
                                     <h3 className="font-bold text-gray-400 uppercase text-xs tracking-widest border-b pb-2">Zákazník & Termín</h3>
                                     <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Jméno</label><input type="text" className="w-full border rounded p-2 text-sm" value={editingOrder.userName} onChange={e => setEditingOrder({...editingOrder, userName: e.target.value})}/></div>
@@ -451,11 +461,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                             excludeOrderId={editingOrder.id}
                                         />
                                     </div>
+                                    {/* Address fields similar to Profile logic or Admin basic inputs */}
+                                    <div className="grid grid-cols-1 gap-2">
+                                        <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.delivery')}</label><select className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryType} onChange={e => setEditingOrder({...editingOrder, deliveryType: e.target.value as DeliveryType})}><option value={DeliveryType.PICKUP}>{t('checkout.pickup')}</option><option value={DeliveryType.DELIVERY}>{t('admin.delivery')}</option></select></div>
+                                    </div>
+                                    {/* Delivery Address Text Area for simple editing */}
+                                    <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.street')} (Text)</label><textarea className="w-full border rounded p-2 text-sm h-20" value={editingOrder.deliveryAddress || ''} onChange={e => setEditingOrder({...editingOrder, deliveryAddress: e.target.value})}/></div>
                                 </div>
-                                {/* Delivery Address Fields etc. */}
                             </div>
                             <div className="space-y-4">
-                                {/* Items Table */}
                                 <div className="border rounded-2xl overflow-hidden shadow-sm bg-white">
                                     <table className="min-w-full divide-y">
                                         <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
@@ -474,8 +488,31 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                     </table>
                                     <button onClick={() => setIsAddProductModalOpen(true)} className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-xs font-bold text-gray-600 border-t">+ Přidat produkt</button>
                                 </div>
-                                {/* Totals */}
+                                
+                                {/* Totals with Breakdown */}
                                 <div className="bg-gray-50 p-4 rounded-2xl space-y-2">
+                                    <div className="flex justify-between text-xs text-gray-500">
+                                        <span>Zboží:</span>
+                                        <span>{editingOrder.totalPrice} Kč</span>
+                                    </div>
+                                    {editingOrder.appliedDiscounts?.map(d => (
+                                        <div key={d.code} className="flex justify-between text-xs text-green-600">
+                                            <span>Sleva ({d.code}):</span>
+                                            <span>-{d.amount} Kč</span>
+                                        </div>
+                                    ))}
+                                    {editingOrder.packagingFee > 0 && (
+                                        <div className="flex justify-between text-xs text-gray-500">
+                                            <span>Balné:</span>
+                                            <span>{editingOrder.packagingFee} Kč</span>
+                                        </div>
+                                    )}
+                                    {editingOrder.deliveryFee > 0 && (
+                                        <div className="flex justify-between text-xs text-gray-500">
+                                            <span>Doprava:</span>
+                                            <span>{editingOrder.deliveryFee} Kč</span>
+                                        </div>
+                                    )}
                                     <div className="flex justify-between items-center pt-2 border-t border-gray-200 mt-2">
                                         <span className="font-bold text-sm">CELKEM:</span>
                                         <span className="font-bold text-lg text-accent">{Math.max(0, editingOrder.totalPrice - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0)) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0)} Kč</span>
