@@ -91,7 +91,9 @@ if (process.env.SMTP_HOST) {
         if (error) {
             console.error('❌ SMTP Connection Error:', error);
         } else {
-            console.log('✅ SMTP Server is ready.');
+            console.log(`✅ SMTP Server is ready.`);
+            console.log(`   Auth User: ${process.env.SMTP_USER}`);
+            console.log(`   Sender (From): ${process.env.EMAIL_FROM}`);
         }
     });
 } else {
@@ -187,7 +189,6 @@ const loadFonts = async () => {
         boldFontBase64 = boldBuffer.toString('base64');
     } catch (e) {
         console.error("Failed to load fonts for PDF (using fallback):", e.message);
-        // Do not throw, allow PDF generation without custom fonts
     }
 };
 
@@ -216,7 +217,6 @@ const calculateCzIban = (accountString) => {
 };
 
 // Gets VOP buffer ONLY from local file. 
-// REMOVED dynamic PDF generation to prevent "550 5.7.1 Command rejected" due to malformed PDF structure.
 const getVopPdfBuffer = async () => {
     const vopPath = process.env.VOP_PATH;
     
@@ -256,12 +256,10 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
         ? (o.finalInvoiceDate || new Date().toISOString()) 
         : o.createdAt;
 
-    // Use Safe Strings (no nulls)
     const s = (str) => str || '';
 
     // Header
     doc.setFontSize(18);
-    // If custom font loaded, use bold, else normal
     if(boldFontBase64) doc.setFont("Roboto", "bold");
     doc.text(headerTitle, 105, 20, { align: "center" });
     
@@ -328,7 +326,6 @@ const generateInvoicePdf = async (o, type = 'proforma', settings) => {
 
     let maxItemVatRate = 0;
     
-    // Items
     (o.items || []).forEach(item => {
         const itemTotal = item.price * item.quantity;
         const vatRate = item.vatRateTakeaway || 12; 
@@ -718,7 +715,16 @@ app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
     if (rows.length > 0 && transporter) {
         const token = Buffer.from(`${email}-${Date.now()}`).toString('base64');
         const link = `${process.env.VITE_APP_URL || 'https://eshop.4gracie.cz'}/#/reset-password?token=${token}`;
-        await transporter.sendMail({ from: process.env.SMTP_FROM, to: email, subject: 'Obnova hesla', html: `<a href="${link}">Resetovat heslo</a>` });
+        
+        const fromAddress = process.env.EMAIL_FROM || process.env.SMTP_USER;
+        
+        await transporter.sendMail({ 
+            from: fromAddress,
+            replyTo: fromAddress, 
+            to: email, 
+            subject: 'Obnova hesla', 
+            html: `<a href="${link}">Resetovat heslo</a>` 
+        });
     }
     res.json({ success: true, message: 'Email odeslán.' });
 }));
@@ -745,8 +751,10 @@ app.post('/api/orders', withDb(async (req, res, db) => {
     const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
     const settings = settingsRows.length ? parseJsonCol(settingsRows[0]) : {};
     
-    // Determine operator email
-    const operatorEmail = settings.companyDetails?.email || process.env.SMTP_USER;
+    const operatorEmail = settings.companyDetails?.email || 'info@4gracie.cz';
+    
+    // Sender configuration from .env
+    const fromAddress = process.env.EMAIL_FROM || process.env.SMTP_USER;
 
     try {
         await conn.beginTransaction();
@@ -769,7 +777,7 @@ app.post('/api/orders', withDb(async (req, res, db) => {
 
         // --- EMAIL NOTIFICATION FOR NEW ORDER ---
         if (transporter && o.status === 'created') {
-            console.log(`📧 Attempting to send creation emails for #${o.id}...`);
+            console.log(`📧 Attempting to send creation emails for #${o.id} using sender: ${fromAddress}`);
             try {
                 // 1. Email to Customer (With Attachments)
                 const [userRows] = await db.query('SELECT email FROM users WHERE id = ?', [o.userId]);
@@ -779,16 +787,15 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                     console.log(`📄 Generating PDF attachments...`);
                     const attachments = [];
                     
-                    // 1. Invoice (Generated safely)
+                    // 1. Invoice
                     try {
                         const invoicePdf = await generateInvoicePdf(o, 'proforma', settings);
                         attachments.push({ filename: `zalohova_faktura_${o.id}.pdf`, content: invoicePdf });
                     } catch (pdfErr) {
                         console.error('Failed to generate invoice PDF:', pdfErr);
-                        // Continue without attachment
                     }
 
-                    // 2. VOP (Static file load)
+                    // 2. VOP
                     try {
                         const vopPdf = await getVopPdfBuffer();
                         if (vopPdf) {
@@ -800,7 +807,8 @@ app.post('/api/orders', withDb(async (req, res, db) => {
 
                     console.log(`📨 Sending customer email to ${userEmail}...`);
                     await transporter.sendMail({
-                        from: process.env.SMTP_FROM, // Important: Use authenticated sender
+                        from: fromAddress,
+                        replyTo: fromAddress,
                         to: userEmail,
                         subject: `Potvrzení objednávky #${o.id}`,
                         html: `
@@ -810,7 +818,7 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                             <p>V příloze naleznete zálohovou fakturu a obchodní podmínky.</p>
                             <p>S pozdravem,<br>4Gracie</p>
                         `,
-                        attachments // Safely constructed attachments
+                        attachments
                     });
                     console.log(`✅ Customer email sent to ${userEmail}`);
                 } else {
@@ -824,7 +832,8 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                     
                     console.log(`📨 Sending operator email to ${operatorEmail}...`);
                     await transporter.sendMail({
-                        from: process.env.SMTP_FROM,
+                        from: fromAddress,
+                        replyTo: userEmail || fromAddress, // Allow operator to reply to customer
                         to: operatorEmail,
                         subject: `Nová objednávka #${o.id} (${o.userName})`,
                         html: `
@@ -844,7 +853,9 @@ app.post('/api/orders', withDb(async (req, res, db) => {
 
             } catch (emailErr) {
                 console.error("❌ Failed to send order emails (SMTP):", emailErr);
-                // Non-blocking error
+                if (emailErr.response) {
+                    console.error("❌ SMTP Response:", emailErr.response);
+                }
             }
         }
 
@@ -882,6 +893,8 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
     // Fetch settings for PDF generation if needed
     const [settingsRows] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
     const settings = settingsRows.length ? parseJsonCol(settingsRows[0]) : {};
+    
+    const fromAddress = process.env.EMAIL_FROM || process.env.SMTP_USER;
 
     const placeholders = ids.map(() => '?').join(',');
     let sql = `UPDATE orders SET status=?, full_json=JSON_SET(full_json, '$.status', ?)`;
@@ -904,7 +917,6 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
             if (row.email) {
                 try {
                     const o = parseJsonCol(row, 'full_json');
-                    // Ensure finalInvoiceDate is present in object if DB has it
                     if (row.final_invoice_date) o.finalInvoiceDate = row.final_invoice_date;
 
                     const attachments = [];
@@ -925,7 +937,8 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                     emailBody += `<p>S pozdravem,<br>4Gracie</p>`;
 
                     await transporter.sendMail({ 
-                        from: process.env.SMTP_FROM, 
+                        from: fromAddress, 
+                        replyTo: fromAddress,
                         to: row.email, 
                         subject: `Změna stavu objednávky #${o.id}`, 
                         html: emailBody,
@@ -934,6 +947,9 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                     console.log(`✅ Status update email sent to ${row.email} for order #${o.id}`);
                 } catch (emailErr) {
                     console.error(`❌ Failed to send status email for order ${row.id || '?'}:`, emailErr);
+                    if (emailErr.response) {
+                        console.error("❌ SMTP Response:", emailErr.response);
+                    }
                 }
             }
         }
