@@ -348,7 +348,7 @@ export const Cart: React.FC = () => {
                                             className={`p-3 rounded-lg border cursor-pointer flex justify-between items-center ${selectedPickupLocationId === loc.id ? 'border-accent bg-yellow-50/30' : 'border-gray-200 hover:border-gray-300'}`}
                                         >
                                             <div>
-                                                <div className="font-bold text-sm flex items-center"><Store size={14} className="mr-1 text-gray-400"/> {loc.name}</div>
+                                                <div className="font-bold text-sm flex items-center"><Store size={14} className="mr-1 text-gray-400"/> {tData(loc, 'name')}</div>
                                                 <div className="text-xs text-gray-500 ml-5">{loc.street}, {loc.city}</div>
                                             </div>
                                             {selectedPickupLocationId === loc.id && <CheckCircle size={16} className="text-accent"/>}

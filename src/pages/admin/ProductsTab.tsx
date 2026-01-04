@@ -4,14 +4,82 @@ import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { ALLERGENS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
-import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages } from 'lucide-react';
+import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe } from 'lucide-react';
+
+const TranslationViewModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    item: Product | null;
+}> = ({ isOpen, onClose, item }) => {
+    if (!isOpen || !item || !item.translations) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+            <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                <div className="flex justify-between items-center mb-6 border-b pb-4">
+                    <h3 className="text-xl font-serif font-bold text-primary flex items-center">
+                        <Globe className="mr-2 text-accent" size={24}/> 
+                        Překlady
+                    </h3>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition"><X size={20}/></button>
+                </div>
+
+                <div className="space-y-6">
+                    {/* English Section */}
+                    <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100">
+                        <h4 className="font-bold text-blue-800 mb-3 flex items-center">
+                            <span className="bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded mr-2">EN</span> 
+                            English
+                        </h4>
+                        <div className="space-y-3">
+                            <div>
+                                <span className="text-[10px] font-bold text-blue-400 uppercase block mb-1">Name</span>
+                                <p className="text-sm font-medium text-gray-800">{item.translations.en?.name || '-'}</p>
+                            </div>
+                            <div>
+                                <span className="text-[10px] font-bold text-blue-400 uppercase block mb-1">Description</span>
+                                <p className="text-sm text-gray-600 leading-relaxed">{item.translations.en?.description || '-'}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* German Section */}
+                    <div className="bg-yellow-50/50 rounded-xl p-4 border border-yellow-100">
+                        <h4 className="font-bold text-yellow-800 mb-3 flex items-center">
+                            <span className="bg-yellow-500 text-white text-[10px] font-bold px-2 py-0.5 rounded mr-2">DE</span> 
+                            Deutsch
+                        </h4>
+                        <div className="space-y-3">
+                            <div>
+                                <span className="text-[10px] font-bold text-yellow-500 uppercase block mb-1">Name</span>
+                                <p className="text-sm font-medium text-gray-800">{item.translations.de?.name || '-'}</p>
+                            </div>
+                            <div>
+                                <span className="text-[10px] font-bold text-yellow-500 uppercase block mb-1">Beschreibung</span>
+                                <p className="text-sm text-gray-600 leading-relaxed">{item.translations.de?.description || '-'}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-6 pt-4 border-t flex justify-end">
+                    <button onClick={onClose} className="bg-gray-100 hover:bg-gray-200 text-gray-800 px-6 py-2 rounded-lg font-bold text-sm transition">Zavřít</button>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 export const ProductsTab: React.FC = () => {
-    const { products, t, addProduct, updateProduct, deleteProduct, settings } = useStore();
+    const { products, t, addProduct, updateProduct, deleteProduct, settings, uploadImage } = useStore();
     const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<{type: string, id: string, name?: string} | null>(null);
     const [isTranslating, setIsTranslating] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    
+    // Translation View State
+    const [viewingTranslations, setViewingTranslations] = useState<Product | null>(null);
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
@@ -19,7 +87,11 @@ export const ProductsTab: React.FC = () => {
     const saveProduct = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingProduct) return;
-        setIsTranslating(true);
+        
+        if (settings.enableAiTranslation) {
+            setIsTranslating(true);
+        }
+        
         const prod = { ...editingProduct } as Product;
         if (!prod.id) prod.id = Date.now().toString();
         
@@ -32,12 +104,14 @@ export const ProductsTab: React.FC = () => {
         prod.workload = Number(prod.workload ?? 0);
         prod.workloadOverhead = Number(prod.workloadOverhead ?? 0);
         
-        // Generate Translations
-        const translations = await generateTranslations({ 
-            name: prod.name, 
-            description: prod.description 
-        });
-        prod.translations = translations;
+        // Generate Translations if enabled
+        if (settings.enableAiTranslation) {
+            const translations = await generateTranslations({ 
+                name: prod.name, 
+                description: prod.description 
+            });
+            prod.translations = translations;
+        }
 
         if (products.some(p => p.id === prod.id)) await updateProduct(prod);
         else await addProduct(prod);
@@ -45,15 +119,24 @@ export const ProductsTab: React.FC = () => {
         setIsProductModalOpen(false);
     };
 
-    const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file && editingProduct) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64 = reader.result as string;
-                setEditingProduct(prev => ({ ...prev, images: [...(prev?.images || []), base64] }));
-            };
-            reader.readAsDataURL(file);
+            setIsUploading(true);
+            try {
+                const reader = new FileReader();
+                reader.onloadend = async () => {
+                    const base64 = reader.result as string;
+                    // UPLOAD TO SERVER INSTEAD OF LOCAL STORAGE
+                    const imageUrl = await uploadImage(base64, file.name);
+                    setEditingProduct(prev => ({ ...prev, images: [...(prev?.images || []), imageUrl] }));
+                    setIsUploading(false);
+                };
+                reader.readAsDataURL(file);
+            } catch (error) {
+                console.error("Upload failed", error);
+                setIsUploading(false);
+            }
         }
     };
 
@@ -93,10 +176,15 @@ export const ProductsTab: React.FC = () => {
                         <td className="px-6 py-4 font-bold">
                             {p.name}
                             {p.translations && (
-                                <div className="flex gap-1 mt-1">
-                                    <span className="text-[8px] px-1 bg-blue-100 rounded text-blue-700">EN</span>
-                                    <span className="text-[8px] px-1 bg-yellow-100 rounded text-yellow-700">DE</span>
-                                </div>
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); setViewingTranslations(p); }}
+                                    className="flex gap-1 mt-1 cursor-pointer hover:bg-gray-100 p-1 rounded -ml-1 transition items-center w-fit"
+                                    title="Zobrazit překlady"
+                                >
+                                    <Languages size={10} className="text-gray-400" />
+                                    <span className="text-[8px] px-1 bg-blue-100 rounded text-blue-700 font-bold">EN</span>
+                                    <span className="text-[8px] px-1 bg-yellow-100 rounded text-yellow-700 font-bold">DE</span>
+                                </button>
                             )}
                         </td>
                         <td className="px-6 py-4">{getCategoryName(p.category)}</td>
@@ -111,6 +199,12 @@ export const ProductsTab: React.FC = () => {
                 </tbody>
                 </table>
             </div>
+
+            <TranslationViewModal 
+                isOpen={!!viewingTranslations} 
+                onClose={() => setViewingTranslations(null)} 
+                item={viewingTranslations} 
+            />
 
             {isProductModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
@@ -189,8 +283,9 @@ export const ProductsTab: React.FC = () => {
                                     </div>
                                 ))}
                                 <label className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition">
-                                    <Plus size={24} />
-                                    <input type="file" className="hidden" onChange={handleImageFileChange} />
+                                    {isUploading ? <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400"></div> : <Plus size={24} />}
+                                    <span className="text-[10px] mt-1">{isUploading ? 'Nahrávám...' : 'Nahrát'}</span>
+                                    <input type="file" className="hidden" onChange={handleImageFileChange} disabled={isUploading} />
                                 </label>
                             </div>
                         </div>
@@ -198,7 +293,7 @@ export const ProductsTab: React.FC = () => {
 
                     <div className="flex gap-2 pt-4 border-t">
                     <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
-                    <button type="submit" disabled={isTranslating} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
+                    <button type="submit" disabled={isTranslating || isUploading} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
                         {isTranslating ? <><Languages size={14} className="mr-2 animate-pulse"/> Překládám...</> : t('common.save')}
                     </button>
                     </div>

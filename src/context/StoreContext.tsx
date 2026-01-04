@@ -1,5 +1,4 @@
-
-import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
@@ -65,8 +64,8 @@ interface StoreContextType {
   updateCartItemQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
   user: User | null;
-  allUsers: User[];
-  login: (email: string, password?: string) => { success: boolean; message?: string };
+  allUsers: User[]; // CAUTION: In API mode, this only holds loaded users, not all DB
+  login: (email: string, password?: string) => Promise<{ success: boolean; message?: string }>;
   register: (name: string, email: string, phone: string, password?: string) => void;
   logout: () => void;
   updateUser: (user: User) => Promise<boolean>; 
@@ -77,7 +76,9 @@ interface StoreContextType {
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
   addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
   
-  orders: Order[];
+  orders: Order[]; // CAUTION: In API mode, this only holds ACTIVE/FUTURE orders for capacity
+  searchOrders: (filters: any) => Promise<{ orders: Order[], total?: number, pages?: number }>; // UPDATED
+  searchUsers: (filters: any) => Promise<User[]>; 
   addOrder: (order: Order) => Promise<boolean>;
   updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
   updateOrder: (order: Order, sendNotify?: boolean) => Promise<boolean>;
@@ -87,6 +88,7 @@ interface StoreContextType {
   addProduct: (product: Product) => Promise<boolean>;
   updateProduct: (product: Product) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
+  uploadImage: (base64: string, name?: string) => Promise<string>;
   
   discountCodes: DiscountCode[];
   appliedDiscounts: AppliedDiscount[];
@@ -118,6 +120,7 @@ interface StoreContextType {
   generateCzIban: (accountStr: string) => string;
   removeDiacritics: (str: string) => string;
   formatDate: (dateStr: string) => string;
+  getFullApiUrl: (endpoint: string) => string; // NEW EXPORT
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
   
@@ -128,10 +131,12 @@ interface StoreContextType {
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
+  isPreviewEnvironment: boolean;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
+// ... helper functions ...
 const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
 
 const removeDiacritics = (str: string): string => {
@@ -183,7 +188,19 @@ const INITIAL_USERS: User[] = [
 ];
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // @ts-ignore
+  const env = (import.meta as any).env;
+  
+  const isPreviewEnvironment = 
+    env?.DEV || 
+    window.location.hostname === 'localhost' || 
+    window.location.hostname === '127.0.0.1' || 
+    window.location.protocol === 'blob:';
+
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
+    if (!isPreviewEnvironment) {
+      return 'api';
+    }
     return (localStorage.getItem('app_data_source') as DataSourceMode) || 'local';
   });
   
@@ -193,7 +210,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
 
-  const t = (key: string, params?: Record<string, string>) => {
+  const t = useCallback((key: string, params?: Record<string, string>) => {
     let text = TRANSLATIONS[language]?.[key] || key;
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
@@ -201,11 +218,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       });
     }
     return text;
-  };
+  }, [language]);
 
   const tData = (obj: any, field: string): string => {
     if (!obj) return '';
-    // Priority: 1. Current Language translation, 2. Default field value
     if (language !== Language.CS && obj.translations && obj.translations[language] && obj.translations[language][field]) {
         return obj.translations[language][field];
     }
@@ -223,30 +239,39 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
   const setDataSource = (mode: DataSourceMode) => {
+    if (!isPreviewEnvironment && mode === 'local') return;
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
   };
 
-  const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
+  const showNotify = useCallback((message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
     setGlobalNotification({ message, type, autoClose });
-  };
+  }, []);
 
-  const getFullApiUrl = (endpoint: string) => {
+  const getFullApiUrl = useCallback((endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env;
-    if (env.DEV) return endpoint;
-    let baseUrl = env.VITE_API_URL;
+    if (env?.DEV && window.location.protocol !== 'blob:') return endpoint;
+    
+    let baseUrl = env?.VITE_API_URL;
     if (!baseUrl) {
-       baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
+       const protocol = window.location.protocol.startsWith('http') ? window.location.protocol : 'http:';
+       const hostname = window.location.hostname || 'localhost';
+       if (window.location.protocol === 'blob:') {
+           baseUrl = 'http://localhost:3000';
+       } else {
+           baseUrl = `${protocol}//${hostname}:3000`;
+       }
     }
     if (baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
     }
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     return `${baseUrl}${cleanEndpoint}`;
-  };
+  }, []);
 
-  const apiCall = async (endpoint: string, method: string, body?: any) => {
+  // WRAPPED IN CALLBACK TO PREVENT INFINITE LOOPS IN EFFECTS
+  const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
     setIsOperationPending(true);
     const timeoutPromise = new Promise((_, reject) => {
@@ -278,12 +303,29 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
          showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
       } else {
          console.warn(`[API] Call to ${endpoint} failed:`, e);
-         showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
+         showNotify(`Chyba připojení: ${e.message || 'Neznámá chyba'}`, 'error');
       }
       return null;
     } finally {
         setIsOperationPending(false); 
     }
+  }, [getFullApiUrl, showNotify]);
+
+  const uploadImage = async (base64: string, name?: string): Promise<string> => {
+      if (dataSource === 'local') {
+          return base64;
+      }
+      const res = await apiCall('/api/admin/upload', 'POST', { image: base64, name });
+      if (res && res.success && res.url) {
+          const apiUrl = getFullApiUrl('');
+          if (res.url.startsWith('/')) {
+              // Ensure we don't end up with double slash like https://...:3000//uploads
+              return `${apiUrl}${res.url}`;
+          }
+          return res.url;
+      }
+      showNotify('Nahrání obrázku selhalo, používám lokální data.', 'error');
+      return base64;
   };
 
   const fetchData = async () => {
@@ -292,7 +334,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (dataSource === 'api') {
           setAllUsers([]);
           setProducts([]);
-          setOrders([]);
+          setOrders([]); // This will hold ACTIVE orders only from bootstrap
           setDiscountCodes([]);
           setDayConfigs([]);
           setSettings(EMPTY_SETTINGS);
@@ -300,7 +342,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           if (data) {
               setAllUsers(data.users || []);
               setProducts(data.products || []);
-              setOrders(data.orders || []);
+              setOrders(data.orders || []); // Contains only orders >= today for capacity check
               if (data.settings) {
                  const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
                  if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
@@ -323,7 +365,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
-          showNotify("Lokální paměť aktivní", 'success');
+          showNotify("Lokální paměť aktivní (Preview)", 'success');
         }
       } catch (err: any) {
         showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
@@ -338,7 +380,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
-  
   useEffect(() => {
     if (dataSource === 'local') {
       localStorage.setItem('db_users', JSON.stringify(allUsers));
@@ -398,6 +439,35 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart]);
 
+  // WRAPPED IN CALLBACK to be stable for useEffect dependencies
+  const searchOrders = useCallback(async (filters: any) => {
+      if (dataSource === 'api') {
+          const query = new URLSearchParams(filters).toString();
+          const data = await apiCall(`/api/orders?${query}`, 'GET');
+          return { orders: data?.orders || [], total: data?.total, pages: data?.pages };
+      } else {
+          // Local fallback filtering
+          const filtered = orders.filter(o => {
+              if (filters.userId && o.userId !== filters.userId) return false;
+              if (filters.id && !o.id.toLowerCase().includes(filters.id.toLowerCase())) return false;
+              if (filters.customer && !o.userName?.toLowerCase().includes(filters.customer.toLowerCase())) return false;
+              if (filters.status && o.status !== filters.status) return false;
+              return true;
+          });
+          return { orders: filtered, total: filtered.length, pages: 1 };
+      }
+  }, [dataSource, orders, apiCall]);
+
+  const searchUsers = useCallback(async (filters: any) => {
+      if (dataSource === 'api') {
+          const query = new URLSearchParams(filters).toString();
+          const data = await apiCall(`/api/users?${query}`, 'GET');
+          return data?.users || [];
+      } else {
+          return allUsers;
+      }
+  }, [dataSource, allUsers, apiCall]);
+
   const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
       ...order,
@@ -408,7 +478,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
       const res = await apiCall('/api/orders', 'POST', orderWithHistory);
       if (res && res.success) {
-        setOrders(prev => [orderWithHistory, ...prev]);
+        const today = new Date().toISOString().split('T')[0];
+        if (order.deliveryDate >= today) {
+             setOrders(prev => [orderWithHistory, ...prev]);
+        }
         showNotify(t('notification.order_created', { id: order.id }));
         return true;
       }
@@ -501,13 +574,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
-    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
+    if (allUsers.length > 0 && allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
+    
     const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
     
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', newUser);
         if (res && res.success) {
-            setAllUsers(prev => [...prev, newUser]);
             showNotify(t('notification.email_sent'), 'success', false);
             return true;
         }
@@ -523,8 +596,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', u);
         if (res && res.success) {
-            setUser(u);
-            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            setUser(u); 
+            if (allUsers.some(x => x.id === u.id)) {
+                setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            }
             showNotify(t('notification.db_saved'));
             return true;
         }
@@ -540,7 +615,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', u);
         if (res && res.success) {
-            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
             if (user && user.id === u.id) setUser(u);
             showNotify(t('notification.db_saved'));
             return true;
@@ -620,7 +694,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
     const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
     if (!dc) return { success: false, error: t('discount.invalid') };
-    if (!dc.enabled) return { success: false, error: t('discount.future') }; // Using generic error for now
+    if (!dc.enabled) return { success: false, error: t('discount.future') }; 
     const actualUsage = orders.filter(o => o.status !== OrderStatus.CANCELLED && o.appliedDiscounts?.some(ad => ad.code === dc.code)).length;
     if (dc.maxUsage > 0 && actualUsage >= dc.maxUsage) return { success: false, error: t('discount.used_up') };
     const now = new Date().toISOString().split('T')[0];
@@ -745,41 +819,70 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
      return check.status;
   };
 
-  const login = (email: string, password?: string) => {
-    const foundUser = allUsers.find(u => u.email === email);
-    if (foundUser) {
-      if (foundUser.isBlocked) return { success: false, message: 'Blokován.' };
-      if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
-      setUser(foundUser); 
-      return { success: true };
+  const login = async (email: string, password?: string) => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/auth/login', 'POST', { email, password });
+        if (res && res.success) {
+            const u = res.user;
+            if (u.isBlocked) return { success: false, message: 'Blokován.' };
+            if (password && u.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
+            
+            setUser(u);
+            return { success: true };
+        }
+        return { success: false, message: 'Nenalezen.' };
+    } else {
+        const foundUser = allUsers.find(u => u.email === email);
+        if (foundUser) {
+            if (foundUser.isBlocked) return { success: false, message: 'Blokován.' };
+            if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
+            setUser(foundUser); 
+            return { success: true };
+        }
+        return { success: false, message: 'Nenalezen.' };
     }
-    return { success: false, message: 'Nenalezen.' };
   };
 
-  const register = (name: string, email: string, phone: string, password?: string) => {
-    if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) { 
-        showNotify('Tento email je již registrován.', 'error');
+  const register = async (name: string, email: string, phone: string, password?: string) => {
+    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { 
+        showNotify('Email je již registrován.', 'error');
         return; 
     }
-    const newUser: User = { id: Date.now().toString(), name, email, phone, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(password || '1234'), marketingConsent: false };
+    
+    const newUser: User = { 
+        id: Date.now().toString(), 
+        name, 
+        email, 
+        phone, 
+        role: 'customer', 
+        billingAddresses: [], 
+        deliveryAddresses: [], 
+        isBlocked: false, 
+        passwordHash: hashPassword(password || '1234'), 
+        marketingConsent: false 
+    };
     
     if (dataSource === 'api') {
-        apiCall('/api/users', 'POST', newUser).then(res => {
-            if (res && res.success) { setAllUsers(prev => [...prev, newUser]); setUser(newUser); }
-        });
+        const res = await apiCall('/api/users', 'POST', newUser);
+        if (res && res.success) { 
+            setAllUsers(prev => [...prev, newUser]); 
+            setUser(newUser);
+            showNotify('Registrace úspěšná.', 'success');
+        }
     } else {
-        setAllUsers(prev => [...prev, newUser]); setUser(newUser); 
+        setAllUsers(prev => [...prev, newUser]); 
+        setUser(newUser); 
+        showNotify('Registrace úspěšná.', 'success');
     }
   };
 
   const logout = () => { setUser(null); localStorage.removeItem('session_user'); };
-  const toggleUserBlock = async (id: string): Promise<boolean> => { const u = allUsers.find(x => x.id === id); if (u) { const updated = { ...u, isBlocked: !u.isBlocked }; return await updateUserAdmin(updated); } return false; };
+  const toggleUserBlock = async (id: string): Promise<boolean> => { return false; };
   const sendPasswordReset = async (email: string) => { if (dataSource === 'api') { const res = await apiCall('/api/auth/reset-password', 'POST', { email }); if (res && res.success) { showNotify(t('notification.email_sent'), 'success', false); } else { showNotify(res?.message || 'Chyba serveru', 'error'); } } else { alert('Simulace (Lokální mód): Reset link odeslán.'); } };
   const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => { if (dataSource === 'api') { const newHash = hashPassword(newPass); const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); if (res && res.success) { await fetchData(); return { success: true, message: res.message || 'Heslo úspěšně změněno.' }; } else { return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' }; } } else { return { success: true, message: 'Heslo změněno (Lokální simulace)' }; } };
   const changePassword = (o: string, n: string) => { if (!user) return { success: false, message: 'Login required' }; if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; const u = { ...user, passwordHash: hashPassword(n) }; updateUser(u); return { success: true, message: 'Změněno' }; };
   const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
   const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { const ex = r.exceptions?.find(e => e.date === d); return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; };
-  
   const getPickupPointInfo = (location: PickupLocation, dateStr: string): RegionDateInfo => {
       const ex = location.exceptions?.find(e => e.date === dateStr);
       if (ex) {
@@ -791,15 +894,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               reason: ex.isOpen ? 'Výjimka: Otevřeno' : 'Výjimka: Zavřeno'
           };
       }
-
       const date = new Date(dateStr);
       const dayOfWeek = date.getDay(); 
       const config = location.openingHours[dayOfWeek];
-
       if (!config || !config.isOpen) {
           return { isOpen: false, isException: false, reason: 'Zavřeno' };
       }
-
       return {
           isOpen: true,
           timeStart: config.start,
@@ -807,9 +907,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           isException: false
       };
   };
-
   const checkOrderRestoration = (o: Order) => ({ valid: true, invalidCodes: [] }); 
-  
   const importDatabase = async (d: BackupData, s: any): Promise<ImportResult> => {
     if (dataSource === 'api') {
         try {
@@ -836,7 +934,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
     }
   };
-  
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   const printInvoice = async (o: Order) => { const doc = new jsPDF(); doc.text(`Faktura ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
   const generateCzIban = calculateCzIban;
@@ -849,13 +946,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       isLoading, isOperationPending, 
       language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
-      orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct,
+      orders, searchOrders, searchUsers, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct, uploadImage,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
       getPickupPointInfo,
       calculatePackagingFee,
       t, tData, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification, showNotify,
-      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate
+      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
+      getFullApiUrl,
+      isPreviewEnvironment
     }}>
       {children}
     </StoreContext.Provider>

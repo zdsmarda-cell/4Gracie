@@ -3,17 +3,16 @@ import { Translations } from "../types";
 
 export const generateTranslations = async (sourceData: Record<string, string>): Promise<Translations> => {
   try {
-    // Construct the API URL to match the logic used in StoreContext (forcing port 3000 if not configured otherwise)
+    // Safely access env to prevent crash if import.meta is not fully supported in current context
     // @ts-ignore
-    const env = import.meta.env;
-    let baseUrl = env.VITE_API_URL;
+    const env = (import.meta as any).env;
+    let baseUrl = env?.VITE_API_URL;
 
     if (!baseUrl) {
-       // Default to current hostname on port 3000 as per infrastructure
+       // Default fallback
        baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
     }
 
-    // Remove trailing slash if present
     if (baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
     }

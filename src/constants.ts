@@ -143,7 +143,9 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
       { id: 'box-large', name: 'Velká krabice', volume: 3000, price: 60 }
     ],
     freeFrom: 5000
-  }
+  },
+  enabledLanguages: [Language.CS, Language.EN, Language.DE],
+  enableAiTranslation: true
 };
 
 export const EMPTY_SETTINGS: GlobalSettings = {
@@ -167,7 +169,9 @@ export const EMPTY_SETTINGS: GlobalSettings = {
   packaging: {
     types: [],
     freeFrom: 0
-  }
+  },
+  enabledLanguages: [],
+  enableAiTranslation: false
 };
 
 export const MOCK_ORDERS: Order[] = [

@@ -6,11 +6,16 @@ import { ShoppingCart, User, Menu as MenuIcon, X } from 'lucide-react';
 import { Language } from '../types';
 
 export const Navbar: React.FC = () => {
-  const { cart, language, setLanguage, user, t, logout, openAuthModal } = useStore();
+  const { cart, language, setLanguage, user, t, logout, openAuthModal, settings } = useStore();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
 
   const totalItems = cart.reduce((acc, item) => acc + item.quantity, 0);
+
+  // Fallback to all languages if settings not loaded or empty array (should not happen with default)
+  const availableLanguages = (settings.enabledLanguages && settings.enabledLanguages.length > 0) 
+    ? settings.enabledLanguages 
+    : Object.values(Language);
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
@@ -34,17 +39,19 @@ export const Navbar: React.FC = () => {
             )}
             
             {/* Language Switcher */}
-            <div className="flex space-x-2 text-sm">
-              {(Object.values(Language) as Language[]).map((lang) => (
-                <button
-                  key={lang}
-                  onClick={() => setLanguage(lang)}
-                  className={`px-2 py-1 rounded ${language === lang ? 'bg-gray-200 font-bold' : 'text-gray-500 hover:text-gray-900'}`}
-                >
-                  {lang.toUpperCase()}
-                </button>
-              ))}
-            </div>
+            {availableLanguages.length > 1 && (
+                <div className="flex space-x-2 text-sm">
+                {availableLanguages.map((lang) => (
+                    <button
+                    key={lang}
+                    onClick={() => setLanguage(lang)}
+                    className={`px-2 py-1 rounded ${language === lang ? 'bg-gray-200 font-bold' : 'text-gray-500 hover:text-gray-900'}`}
+                    >
+                    {lang.toUpperCase()}
+                    </button>
+                ))}
+                </div>
+            )}
 
             {/* Auth */}
             {user ? (

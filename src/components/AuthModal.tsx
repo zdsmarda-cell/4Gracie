@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useStore } from '../context/StoreContext';
 import { X, Mail, Lock, User, AlertCircle, ArrowLeft, Phone } from 'lucide-react';
@@ -22,12 +21,12 @@ export const AuthModal: React.FC = () => {
   const validatePhone = (phone: string) => /^[+]?[0-9]{9,}$/.test(phone.replace(/\s/g, ''));
   const validateName = (name: string) => name.trim().length >= 3;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (mode === 'login') {
-      const result = login(email, password);
+      const result = await login(email, password);
       if (result.success) {
         closeAuthModal();
       } else {

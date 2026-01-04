@@ -1,13 +1,21 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { DayConfig } from '../../types';
+import { DayConfig, CategoryCapacities } from '../../types';
 import { Plus, Edit, Trash2 } from 'lucide-react';
 
 export const CapacitiesTab: React.FC = () => {
     const { settings, updateSettings, dayConfigs, updateDayConfig, t, formatDate } = useStore();
     const [isDayConfigModalOpen, setIsDayConfigModalOpen] = useState(false);
     const [editingDayConfig, setEditingDayConfig] = useState<Partial<DayConfig> | null>(null);
+    
+    // Local state for global limits to prevent immediate DB saves
+    const [localCapacities, setLocalCapacities] = useState<CategoryCapacities>(settings.defaultCapacities);
+
+    // Sync from settings on load
+    useEffect(() => {
+        setLocalCapacities(settings.defaultCapacities);
+    }, [settings.defaultCapacities]);
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
 
@@ -18,6 +26,13 @@ export const CapacitiesTab: React.FC = () => {
         setIsDayConfigModalOpen(false);
     };
 
+    const saveGlobalLimits = async () => {
+        await updateSettings({
+            ...settings,
+            defaultCapacities: localCapacities
+        });
+    };
+
     return (
         <div className="animate-fade-in space-y-8">
             <div className="bg-white p-6 rounded-2xl border shadow-sm">
@@ -26,11 +41,16 @@ export const CapacitiesTab: React.FC = () => {
                 {sortedCategories.map(cat => (
                     <div key={cat.id}>
                     <label className="text-xs font-bold text-gray-400 block mb-1">{cat.name}</label>
-                    <input type="number" className="w-full border rounded p-2" value={settings.defaultCapacities[cat.id]} onChange={e => updateSettings({...settings, defaultCapacities: {...settings.defaultCapacities, [cat.id]: Number(e.target.value)}})} />
+                    <input 
+                        type="number" 
+                        className="w-full border rounded p-2" 
+                        value={localCapacities[cat.id] ?? ''} 
+                        onChange={e => setLocalCapacities({...localCapacities, [cat.id]: Number(e.target.value)})} 
+                    />
                     </div>
                 ))}
                 </div>
-                <button onClick={() => updateSettings(settings)} className="mt-4 bg-primary text-white px-4 py-2 rounded text-xs font-bold">Uložit globální limity</button>
+                <button onClick={saveGlobalLimits} className="mt-4 bg-primary text-white px-4 py-2 rounded text-xs font-bold">Uložit globální limity</button>
             </div>
 
             <div className="bg-white p-6 rounded-2xl border shadow-sm">

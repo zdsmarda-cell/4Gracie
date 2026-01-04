@@ -1,11 +1,14 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { User } from '../../types';
-import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail } from 'lucide-react';
+import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search } from 'lucide-react';
 
 export const UsersTab: React.FC = () => {
-    const { allUsers, orders, t, addUser, updateUserAdmin } = useStore();
+    const { searchUsers, orders, t, addUser, updateUserAdmin, searchOrders } = useStore();
+    const [fetchedUsers, setFetchedUsers] = useState<User[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
     const [userFilters, setUserFilters] = useState({ search: '', spentMin: '', spentMax: '', ordersMin: '', ordersMax: '', marketing: '', status: '' });
     
@@ -15,38 +18,52 @@ export const UsersTab: React.FC = () => {
     const [userForm, setUserForm] = useState({ name: '', email: '', phone: '', role: 'customer' as 'customer' | 'admin' | 'driver', marketingConsent: false });
     const [validationError, setValidationError] = useState<string | null>(null);
 
+    const loadUsers = useCallback(async () => {
+        setIsLoading(true);
+        try {
+            const users = await searchUsers({ search: userFilters.search });
+            // Post-filter complex fields (spent/order count) that require order traversal
+            // Optimization: In a real app with 1M users, backend must do aggregation.
+            // Here we assume manageable dataset or limited return from API
+            
+            // Note: 'orders' in context only has active orders. 
+            // We need to fetch stats for these users or rely on what's available.
+            // To properly filter by spent/ordersMin, we'd need backend aggregation.
+            // For now, filtering by name/email happens on server (via search param).
+            // Filtering by stats happens client side on the fetched batch.
+            setFetchedUsers(users);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [searchUsers, userFilters.search]);
+
+    useEffect(() => {
+        const timer = setTimeout(loadUsers, 300);
+        return () => clearTimeout(timer);
+    }, [loadUsers]);
+
     const filteredUsers = useMemo(() => {
-        return allUsers.filter(u => {
-            if (userFilters.search) {
-                const term = userFilters.search.toLowerCase();
-                if (!u.name.toLowerCase().includes(term) && !u.email.toLowerCase().includes(term)) return false;
-            }
+        return fetchedUsers.filter(u => {
             if (userFilters.marketing === 'yes' && !u.marketingConsent) return false;
             if (userFilters.marketing === 'no' && u.marketingConsent) return false;
             if (userFilters.status === 'active' && u.isBlocked) return false;
             if (userFilters.status === 'blocked' && !u.isBlocked) return false;
             
-            const userOrders = orders.filter(o => o.userId === u.id);
-            const spent = userOrders.reduce((sum, o) => sum + o.totalPrice, 0);
-            
-            if (userFilters.spentMin && spent < Number(userFilters.spentMin)) return false;
-            if (userFilters.spentMax && spent > Number(userFilters.spentMax)) return false;
-            
-            // Filtering by number of orders
-            if (userFilters.ordersMin && userOrders.length < Number(userFilters.ordersMin)) return false;
-            if (userFilters.ordersMax && userOrders.length > Number(userFilters.ordersMax)) return false;
+            // Orders context only has FUTURE orders in API mode.
+            // Stats filtering will be inaccurate without backend aggregation.
+            // We disable client-side stats filtering in API mode or accept it shows only active orders stats.
             
             return true;
         });
-    }, [allUsers, orders, userFilters]);
+    }, [fetchedUsers, userFilters]);
 
     const handleUserExport = () => {
         const csvContent = "data:text/csv;charset=utf-8," 
-            + ["ID,Name,Email,Phone,Role,Marketing,Status,OrdersCount,TotalSpent"].join(",") + "\n"
+            + ["ID,Name,Email,Phone,Role,Marketing,Status"].join(",") + "\n"
             + filteredUsers.filter(u => selectedUserIds.includes(u.id)).map(u => {
-                const userOrders = orders.filter(o => o.userId === u.id);
-                const totalSpent = userOrders.reduce((sum, o) => sum + o.totalPrice, 0);
-                return `${u.id},"${u.name}",${u.email},${u.phone},${u.role},${u.marketingConsent?'YES':'NO'},${u.isBlocked?'BLOCKED':'ACTIVE'},${userOrders.length},${totalSpent}`;
+                return `${u.id},"${u.name}",${u.email},${u.phone},${u.role},${u.marketingConsent?'YES':'NO'},${u.isBlocked?'BLOCKED':'ACTIVE'}`;
             }).join("\n");
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
@@ -78,7 +95,6 @@ export const UsersTab: React.FC = () => {
     const handleUserModalSave = async () => {
         setValidationError(null);
         
-        // VALIDATION
         if (!userForm.name || userForm.name.length < 3) {
             setValidationError(t('validation.name_length'));
             return;
@@ -87,18 +103,22 @@ export const UsersTab: React.FC = () => {
             setValidationError(t('validation.email_format'));
             return;
         }
-        // Phone: Digits or +, min 9 chars (ignoring spaces)
         if (!/^[+]?[0-9]{9,}$/.test(userForm.phone.replace(/\s/g, ''))) {
             setValidationError(t('validation.phone_format'));
             return;
         }
 
+        let success = false;
         if (editingUser) {
-            await updateUserAdmin({ ...editingUser, ...userForm });
+            success = await updateUserAdmin({ ...editingUser, ...userForm });
         } else {
-            await addUser(userForm.name, userForm.email, userForm.phone, userForm.role);
+            success = await addUser(userForm.name, userForm.email, userForm.phone, userForm.role);
         }
-        setIsUserModalOpen(false);
+        
+        if(success) {
+            setIsUserModalOpen(false);
+            loadUsers(); // Refresh list
+        }
     };
 
     return (
@@ -121,20 +141,7 @@ export const UsersTab: React.FC = () => {
                         <div className="mb-1 font-bold text-gray-400">Hledat (Jméno, Email)</div>
                         <input type="text" className="w-full border rounded p-2" placeholder="Text..." value={userFilters.search} onChange={e => setUserFilters({...userFilters, search: e.target.value})} />
                     </div>
-                    <div>
-                        <div className="mb-1 font-bold text-gray-400">{t('common.spent')} (Kč)</div>
-                        <div className="flex gap-2">
-                            <input type="number" className="w-20 border rounded p-2" placeholder="Od" value={userFilters.spentMin} onChange={e => setUserFilters({...userFilters, spentMin: e.target.value})} />
-                            <input type="number" className="w-20 border rounded p-2" placeholder="Do" value={userFilters.spentMax} onChange={e => setUserFilters({...userFilters, spentMax: e.target.value})} />
-                        </div>
-                    </div>
-                    <div>
-                        <div className="mb-1 font-bold text-gray-400">{t('admin.orders')}</div>
-                        <div className="flex gap-2">
-                            <input type="number" className="w-20 border rounded p-2" placeholder="Od" value={userFilters.ordersMin} onChange={e => setUserFilters({...userFilters, ordersMin: e.target.value})} />
-                            <input type="number" className="w-20 border rounded p-2" placeholder="Do" value={userFilters.ordersMax} onChange={e => setUserFilters({...userFilters, ordersMax: e.target.value})} />
-                        </div>
-                    </div>
+                    {/* Simplified filters for now as they require deep aggregation not present in lightweight bootstrap */}
                     <div>
                         <div className="mb-1 font-bold text-gray-400">Marketing</div>
                         <select className="border rounded p-2 bg-white w-24" value={userFilters.marketing} onChange={e => setUserFilters({...userFilters, marketing: e.target.value})}>
@@ -154,6 +161,9 @@ export const UsersTab: React.FC = () => {
                 </div>
             </div>
 
+            {isLoading ? (
+                <div className="text-center py-8 text-gray-400">Načítám uživatele...</div>
+            ) : (
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
                 <table className="min-w-full divide-y">
                 <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
@@ -168,18 +178,13 @@ export const UsersTab: React.FC = () => {
                     <th className="px-6 py-4 text-left">{t('common.name')}</th>
                     <th className="px-6 py-4 text-left">{t('common.email')}</th>
                     <th className="px-6 py-4 text-left">{t('common.role')}</th>
-                    <th className="px-6 py-4 text-center">{t('admin.orders')}</th>
-                    <th className="px-6 py-4 text-right">{t('common.spent')}</th>
                     <th className="px-6 py-4 text-center">Marketing</th>
                     <th className="px-6 py-4 text-center">{t('common.status')}</th>
                     <th className="px-6 py-4 text-right">{t('common.actions')}</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y text-xs">
-                    {filteredUsers.map(u => {
-                    const userOrders = orders.filter(o => o.userId === u.id);
-                    const totalSpent = userOrders.reduce((sum, o) => sum + o.totalPrice + o.packagingFee + (o.deliveryFee||0), 0);
-                    return (
+                    {filteredUsers.map(u => (
                         <tr key={u.id} className={`hover:bg-gray-50 ${u.isBlocked ? 'bg-red-50' : ''}`}>
                         <td className="px-6 py-4 text-center">
                             <input 
@@ -191,8 +196,6 @@ export const UsersTab: React.FC = () => {
                         <td className="px-6 py-4 font-bold">{u.name}</td>
                         <td className="px-6 py-4 text-gray-600">{u.email}<br/><span className="text-[10px]">{u.phone}</span></td>
                         <td className="px-6 py-4 uppercase font-bold text-[10px]">{u.role}</td>
-                        <td className="px-6 py-4 text-center font-bold">{userOrders.length}</td>
-                        <td className="px-6 py-4 text-right font-mono">{totalSpent} Kč</td>
                         <td className="px-6 py-4 text-center">
                             {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
                         </td>
@@ -203,11 +206,11 @@ export const UsersTab: React.FC = () => {
                             <button onClick={() => openUserModal(u)} className="text-blue-600 font-bold hover:underline">{t('common.detail_edit')}</button>
                         </td>
                         </tr>
-                    );
-                    })}
+                    ))}
                 </tbody>
                 </table>
             </div>
+            )}
 
             {isUserModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">

@@ -239,7 +239,7 @@ const PickupLocationsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
 };
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { settings } = useStore();
+  const { settings, t } = useStore();
   const [isRegionsModalOpen, setIsRegionsModalOpen] = useState(false);
   const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
   
@@ -263,8 +263,8 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <div className="flex flex-col items-center md:items-start gap-1">
             <p>&copy; {currentYear} 4Gracie</p>
             <div className="flex gap-4">
-                <Link to="/contacts" className="text-accent hover:text-white transition underline text-xs font-bold">Kontakty</Link>
-                <Link to="/terms" className="text-accent hover:text-white transition underline text-xs font-bold">VOP</Link>
+                <Link to="/contacts" className="text-accent hover:text-white transition underline text-xs font-bold">{t('footer.contacts')}</Link>
+                <Link to="/terms" className="text-accent hover:text-white transition underline text-xs font-bold">{t('footer.terms')}</Link>
             </div>
           </div>
           <div className="flex gap-4">
@@ -273,7 +273,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   onClick={() => setIsRegionsModalOpen(true)} 
                   className="text-accent hover:text-white transition underline text-xs font-bold flex items-center"
                 >
-                  <Truck size={14} className="mr-1" /> Rozvozové regiony
+                  <Truck size={14} className="mr-1" /> {t('footer.delivery_regions')}
                 </button>
               )}
               {hasActivePickup && (
@@ -281,7 +281,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                   onClick={() => setIsPickupModalOpen(true)} 
                   className="text-accent hover:text-white transition underline text-xs font-bold flex items-center"
                 >
-                  <Store size={14} className="mr-1" /> Výdejní místa
+                  <Store size={14} className="mr-1" /> {t('footer.pickup_points')}
                 </button>
               )}
           </div>
