@@ -125,7 +125,7 @@ interface StoreContextType {
   getFullApiUrl: (endpoint: string) => string; 
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
-  refreshData: () => Promise<void>; // EXPOSED for manual refresh
+  refreshData: (silent?: boolean) => Promise<void>; 
   
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
@@ -277,7 +277,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
-    setIsOperationPending(true);
+    
+    // Only set pending if it's a write operation or explicit check needed
+    const isWrite = method !== 'GET';
+    if (isWrite) setIsOperationPending(true);
+    
     const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
             controller.abort();
@@ -303,6 +307,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
+          // If 304, fetch might return opaque/empty body sometimes if browser handles cache?
+          if (res.status === 304) {
+             return { success: true, notModified: true }; 
+          }
           throw new Error("Server vrátil neplatná data (HTML místo JSON).");
       }
       
@@ -321,7 +329,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       return null;
     } finally {
-        setIsOperationPending(false); 
+        if (isWrite) setIsOperationPending(false); 
     }
   }, [getFullApiUrl, showNotify]);
 
@@ -347,21 +355,25 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return base64;
   };
 
-  const fetchData = useCallback(async () => {
-      setIsLoading(true);
+  const fetchData = useCallback(async (silent = false) => {
+      if (!silent) setIsLoading(true);
       try {
         if (dataSource === 'api') {
-          setAllUsers([]);
-          setProducts([]);
-          setOrders([]); 
-          setDiscountCodes([]);
-          setDayConfigs([]);
-          setSettings(EMPTY_SETTINGS);
+          // Optimization: If silent refresh, we might not want to clear states first to avoid flickering
+          if (!silent) {
+              setAllUsers([]);
+              setProducts([]);
+              setOrders([]); 
+              setDiscountCodes([]);
+              setDayConfigs([]);
+              setSettings(EMPTY_SETTINGS);
+          }
+          
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data) {
-              setAllUsers(data.users || []);
-              setProducts(data.products || []);
-              setOrders(data.orders || []);
+              if (data.users) setAllUsers(data.users);
+              if (data.products) setProducts(data.products);
+              if (data.orders) setOrders(data.orders);
               if (data.settings) {
                  const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
                  if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
@@ -373,8 +385,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
                  setSettings(mergedSettings); 
               }
-              setDiscountCodes(data.discountCodes || []);
-              setDayConfigs(data.dayConfigs || []);
+              if (data.discountCodes) setDiscountCodes(data.discountCodes);
+              if (data.dayConfigs) setDayConfigs(data.dayConfigs);
           }
         } else {
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
@@ -388,17 +400,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
-          showNotify("Lokální paměť aktivní (Preview)", 'success');
+          
+          if (!silent) showNotify("Lokální paměť aktivní (Preview)", 'success');
         }
       } catch (err: any) {
         showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
       } finally {
-        setIsLoading(false);
+        if (!silent) setIsLoading(false);
       }
   }, [dataSource, apiCall, showNotify]);
 
   useEffect(() => {
-    fetchData();
+    fetchData(false); // Initial load is blocking
   }, [fetchData]);
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
@@ -966,7 +979,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         try {
             const res = await apiCall('/api/admin/import', 'POST', { data: d, selection: s });
             if (res && res.success) {
-                await fetchData(); 
+                await fetchData(false); 
                 return { success: true };
             }
             return { success: false, message: res?.error || 'Import failed on server.' };
@@ -1142,7 +1155,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       getFullApiUrl,
       isPreviewEnvironment,
-      refreshData: fetchData // Exported for manual refresh
+      refreshData: (silent = true) => fetchData(silent)
     }}>
       {children}
     </StoreContext.Provider>

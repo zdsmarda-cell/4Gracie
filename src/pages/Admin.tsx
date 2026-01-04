@@ -40,7 +40,7 @@ export const Admin: React.FC = () => {
     
     // Refresh data when tab changes to ensure fresh DB content
     useEffect(() => {
-        refreshData();
+        refreshData(true);
     }, [activeTab, refreshData]);
     
     // Navigation State (Load -> Orders)
