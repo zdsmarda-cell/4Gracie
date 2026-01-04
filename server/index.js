@@ -306,6 +306,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/api/bootstrap', withDb(async (req, res, db) => {
+    console.log('API: Bootstrap called');
     try {
         const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
         const products = prodRows.map(row => ({
@@ -343,7 +344,7 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
             discountCodes: discounts.map(r => ({...parseJsonCol(r), id: r.id})),
             dayConfigs: calendar.map(r => ({...parseJsonCol(r), date: r.date})),
             orders: mergedOrders,
-            users: []
+            users: [] // EMPTY USERS ARRAY TO PREVENT HEAVY LOAD
         });
     } catch (e) {
         console.error("Bootstrap error:", e);

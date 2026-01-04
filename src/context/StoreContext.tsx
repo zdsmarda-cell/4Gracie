@@ -323,10 +323,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [getFullApiUrl]);
 
-  // FIX: STOP LOADING ALL USERS IN BOOTSTRAP
+  // FIX: STOP LOADING ALL USERS IN BOOTSTRAP, DO NOT BLOCK UI WITH ISLOADING
   const fetchData = useCallback(async (force: boolean = false) => {
-      // Intentionally NOT setting isLoading(true) here to keep UI mounted during background refreshes. 
-      // Only initial load (state default true) blocks UI.
       try {
         if (dataSource === 'api') {
           const data = await apiCall('/api/bootstrap', 'GET');
