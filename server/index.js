@@ -49,18 +49,26 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- STATIC FILES ---
-const uploadDir = path.join(__dirname, 'uploads', 'images');
-console.log(`📂 Ensuring upload directory exists at: ${uploadDir}`);
-if (!fs.existsSync(uploadDir)) {
+// --- STATIC FILES & UPLOAD CONFIG ---
+// Use process.cwd() to target the PROJECT ROOT, not the server subdirectory
+const UPLOAD_ROOT = path.join(process.cwd(), 'uploads');
+const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
+
+console.log(`📂 Upload Root configured at: ${UPLOAD_ROOT}`);
+console.log(`📂 Images Directory configured at: ${UPLOAD_IMAGES_DIR}`);
+
+// Ensure directories exist
+if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
     try {
-        fs.mkdirSync(uploadDir, { recursive: true, mode: 0o755 });
-        console.log(`✅ Created upload directory.`);
+        fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursive: true, mode: 0o777 }); // 777 to ensure write permissions
+        console.log(`✅ Created upload directories.`);
     } catch (e) {
         console.error(`❌ Failed to create upload directory: ${e.message}`);
     }
 }
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Serve static files from the project root 'uploads' folder
+app.use('/uploads', express.static(UPLOAD_ROOT));
 
 // --- EMAIL ---
 let transporter = null;
@@ -277,9 +285,6 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
 
 app.post('/api/products', withDb(async (req, res, db) => {
     const p = req.body;
-    // Log incoming product size to verify it's not too huge
-    // console.log(`Saving product ${p.id}, images count: ${p.images?.length}`);
-    
     const fullJson = JSON.stringify(p);
     const mainImage = p.images && p.images.length > 0 ? p.images[0] : null;
 
@@ -558,18 +563,23 @@ app.post('/api/admin/upload', async (req, res) => {
     const imageBuffer = Buffer.from(matches[2], 'base64');
     const safeName = name ? name.replace(/[^a-z0-9]/gi, '_') : 'img';
     const fileName = `${Date.now()}_${safeName}.jpg`;
-    const fullPath = path.join(uploadDir, fileName);
+    
+    // Construct path using the ROOT directory defined above
+    const fullPath = path.join(UPLOAD_IMAGES_DIR, fileName);
     
     console.log(`💾 Writing ${imageBuffer.length} bytes to: ${fullPath}`);
     
-    fs.writeFile(fullPath, imageBuffer, (err) => {
-        if (err) {
-            console.error("❌ Write Error:", err);
-            return res.status(500).json({ error: 'Save failed' });
-        }
-        console.log(`✅ File saved: /uploads/images/${fileName}`);
+    try {
+        // Use synchronous write to ensure file exists before response
+        fs.writeFileSync(fullPath, imageBuffer);
+        console.log(`✅ File successfully saved.`);
+        
+        // Return URL relative to static mount point
         res.json({ success: true, url: `/uploads/images/${fileName}` });
-    });
+    } catch (err) {
+        console.error("❌ File Write Error:", err);
+        return res.status(500).json({ error: 'Save failed', details: err.message });
+    }
 });
 
 // --- SERVER START ---

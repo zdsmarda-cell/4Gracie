@@ -6,7 +6,7 @@ import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETT
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 
-// ... (keep all interfaces) ...
+// ... (interfaces remain same) ...
 interface CheckResult {
   allowed: boolean;
   reason?: string;
@@ -336,10 +336,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           const res = await apiCall('/api/admin/upload', 'POST', { image: base64, name });
           if (res && res.success && res.url) {
               const apiUrl = getFullApiUrl('');
-              if (res.url.startsWith('/')) {
-                  return `${apiUrl}${res.url}`;
-              }
-              return res.url;
+              const cleanBase = apiUrl.replace(/\/+$/, ''); // Remove trailing slash
+              const cleanPath = res.url.replace(/^\/+/, ''); // Remove leading slash
+              return `${cleanBase}/${cleanPath}`;
           }
           console.warn('Upload API did not return success/url, using base64 fallback');
       } catch (e) {
@@ -350,8 +349,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return base64;
   };
 
+  // ... (rest of context implementation stays the same) ...
+  // Re-exporting functions for brevity
   const fetchData = async () => {
-      // ... existing implementation ...
+      // ... same ...
       setIsLoading(true);
       try {
         if (dataSource === 'api') {
@@ -377,7 +378,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               showNotify(t('notification.db_saved'), 'success');
           }
         } else {
-          // ... local loading ...
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
           setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
@@ -463,7 +463,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart]);
 
-  // ... (rest of the context functions are mostly same, abbreviated for brevity, assuming they work) ...
   // Keeping essential exports for functionality
   
   const searchOrders = useCallback(async (filters: any) => {
