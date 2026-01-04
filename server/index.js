@@ -52,6 +52,12 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Ensure no caching for API
+app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    next();
+});
+
 // --- STATIC FILES & UPLOAD CONFIG ---
 const UPLOAD_ROOT = path.resolve(__dirname, '..', 'uploads');
 const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
@@ -300,44 +306,49 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/api/bootstrap', withDb(async (req, res, db) => {
-    const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
-    const products = prodRows.map(row => ({
-        ...parseJsonCol(row, 'full_json'),
-        id: row.id,
-        name: row.name,
-        description: row.description,
-        price: Number(row.price),
-        unit: row.unit,
-        category: row.category,
-        workload: row.workload,
-        workloadOverhead: row.workload_overhead,
-        vatRateInner: Number(row.vat_rate_inner),
-        vatRateTakeaway: Number(row.vat_rate_takeaway),
-        volume: Number(parseJsonCol(row, 'full_json').volume || 0),
-        images: row.image_url ? [row.image_url, ...(parseJsonCol(row, 'full_json').images || []).slice(1)] : []
-    }));
+    try {
+        const [prodRows] = await db.query('SELECT * FROM products WHERE is_deleted = FALSE');
+        const products = prodRows.map(row => ({
+            ...parseJsonCol(row, 'full_json'),
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            price: Number(row.price),
+            unit: row.unit,
+            category: row.category,
+            workload: row.workload,
+            workloadOverhead: row.workload_overhead,
+            vatRateInner: Number(row.vat_rate_inner),
+            vatRateTakeaway: Number(row.vat_rate_takeaway),
+            volume: Number(parseJsonCol(row, 'full_json').volume || 0),
+            images: row.image_url ? [row.image_url, ...(parseJsonCol(row, 'full_json').images || []).slice(1)] : []
+        }));
 
-    const [settings] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
-    const [discounts] = await db.query('SELECT * FROM discounts');
-    const [calendar] = await db.query('SELECT * FROM calendar_exceptions');
-    
-    const today = new Date().toISOString().split('T')[0];
-    const [activeOrders] = await db.query('SELECT full_json, final_invoice_date FROM orders WHERE delivery_date >= ? AND status != "cancelled"', [today]);
+        const [settings] = await db.query('SELECT * FROM app_settings WHERE key_name = "global"');
+        const [discounts] = await db.query('SELECT * FROM discounts');
+        const [calendar] = await db.query('SELECT * FROM calendar_exceptions');
+        
+        const today = new Date().toISOString().split('T')[0];
+        const [activeOrders] = await db.query('SELECT full_json, final_invoice_date FROM orders WHERE delivery_date >= ? AND status != "cancelled"', [today]);
 
-    const mergedOrders = activeOrders.map(r => {
-        const json = parseJsonCol(r, 'full_json');
-        if (r.final_invoice_date) json.finalInvoiceDate = r.final_invoice_date;
-        return json;
-    });
+        const mergedOrders = activeOrders.map(r => {
+            const json = parseJsonCol(r, 'full_json');
+            if (r.final_invoice_date) json.finalInvoiceDate = r.final_invoice_date;
+            return json;
+        });
 
-    res.json({
-        products,
-        settings: settings.length ? parseJsonCol(settings[0]) : null,
-        discountCodes: discounts.map(r => ({...parseJsonCol(r), id: r.id})),
-        dayConfigs: calendar.map(r => ({...parseJsonCol(r), date: r.date})),
-        orders: mergedOrders,
-        users: []
-    });
+        res.json({
+            products,
+            settings: settings.length ? parseJsonCol(settings[0]) : null,
+            discountCodes: discounts.map(r => ({...parseJsonCol(r), id: r.id})),
+            dayConfigs: calendar.map(r => ({...parseJsonCol(r), date: r.date})),
+            orders: mergedOrders,
+            users: []
+        });
+    } catch (e) {
+        console.error("Bootstrap error:", e);
+        res.status(500).json({ error: e.message });
+    }
 }));
 
 app.post('/api/products', withDb(async (req, res, db) => {

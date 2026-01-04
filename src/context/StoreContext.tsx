@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback, useRef } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
@@ -233,6 +233,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [user, setUser] = useState<User | null>(() => loadFromStorage('session_user', null));
+  
+  // Ref for user to avoid loops in useEffects
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [discountCodes, setDiscountCodes] = useState<DiscountCode[]>([]);
@@ -280,13 +285,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
 
     try {
-      // Prevent 304 caching loops by appending timestamp to GET requests
-      let url = getFullApiUrl(endpoint);
-      if (method === 'GET') {
-          const separator = url.includes('?') ? '&' : '?';
-          url = `${url}${separator}_t=${Date.now()}`;
-      }
-
+      const url = getFullApiUrl(endpoint);
       const res: any = await Promise.race([
         fetch(url, {
           method,
@@ -296,6 +295,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }),
         timeoutPromise
       ]);
+      
+      // Handle No Content explicitly to avoid JSON parsing error
+      if (res.status === 204) {
+          return null; 
+      }
+
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
           throw new Error("Server vrátil neplatná data (HTML místo JSON).");
@@ -315,14 +320,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [getFullApiUrl]);
 
-  // FIX: Memoize fetchData to prevent infinite loops in Admin useEffect
+  // FIX: Stable fetchData with minimal dependencies to prevent loop
   const fetchData = useCallback(async (force: boolean = false) => {
       setIsLoading(true);
       try {
         if (dataSource === 'api') {
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data) {
-              if (user?.role === 'admin') {
+              // Use Ref for role check to avoid function recreation
+              if (userRef.current?.role === 'admin') {
                   const usersRes = await apiCall('/api/users', 'GET');
                   setAllUsers(usersRes?.users || []);
               } else {
@@ -339,10 +345,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
-              // removed showNotify for silent refresh
           } else {
-              // API returned null/undefined (e.g. error caught in apiCall)
-              // Explicitly notify user about connection failure in production
+              // Connection failed (204 or caught error returned null)
               showNotify('Nepodařilo se načíst data ze serveru. Zkontrolujte připojení.', 'error', false);
           }
         } else {
@@ -357,19 +361,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
-          // removed showNotify for silent refresh
         }
       } catch (err: any) {
         showNotify('Chyba při načítání aplikace: ' + err.message, 'error');
       } finally {
         setIsLoading(false);
       }
-  }, [dataSource, apiCall, user?.role, t]);
+  }, [dataSource, apiCall]); // Removed 'user' and 't' to prevent loop
 
-  // Initial load
+  // Initial load only
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+  }, [dataSource]); // Only trigger on dataSource change or initial mount
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
