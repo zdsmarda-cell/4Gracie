@@ -84,73 +84,76 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursi
 
 console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 
-// --- FILE SERVING HANDLER ---
-const handleFileRequest = (req, res) => {
+// --- ROBUST FILE SERVING HANDLER ---
+// Using app.use() allows us to bypass strict routing regex issues.
+// When mounted, req.path contains only the part AFTER the mount point.
+const serveStaticFile = (req, res) => {
+    // Only serve GET requests
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return res.status(405).end();
+    }
+
     try {
-        // Express Regex routes capture the group in req.params[0]
-        const rawRelativePath = req.params[0];
+        // req.path starts with /, e.g., "/images/photo.jpg"
+        let relativePath = req.path;
         
-        console.log(`🔍 [FILE] Request for: '${rawRelativePath}'`);
-
-        if (!rawRelativePath) {
-            console.warn(`   ⚠️ Empty path`);
-            return res.status(404).send('File not found');
-        }
-
-        // Prevent directory traversal
-        if (rawRelativePath.includes('..')) {
-            console.warn(`   ⚠️ Access Denied (Traversal)`);
-            return res.status(403).send('Access Denied');
-        }
-
-        // Safe Decode
-        let safeRelative;
+        // Decode URI (e.g. %20 -> space)
         try {
-            safeRelative = decodeURIComponent(rawRelativePath);
+            relativePath = decodeURIComponent(relativePath);
         } catch (e) {
-            console.warn(`   ⚠️ Failed to decode URI component: ${rawRelativePath}`);
-            safeRelative = rawRelativePath; // Fallback to raw
+            // If decode fails, use raw path
         }
 
-        const fullPath = path.join(UPLOAD_ROOT, safeRelative);
+        // Security: Prevent directory traversal
+        const normalized = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, '');
         
-        // Verify the file is actually inside our upload root
+        // Construct full path
+        const fullPath = path.join(UPLOAD_ROOT, normalized);
+
+        // Security: Ensure path is still within UPLOAD_ROOT
         if (!fullPath.startsWith(UPLOAD_ROOT)) {
-            console.warn(`   ⚠️ Access Denied (Path outside root): ${fullPath}`);
+            console.warn(`   ⚠️ Access Denied (Path Traversal): ${fullPath}`);
             return res.status(403).send('Access Denied');
         }
 
+        // Check existence
         if (fs.existsSync(fullPath)) {
-            // Check if directory
-            if (fs.statSync(fullPath).isDirectory()) {
-                console.warn(`   ⚠️ Access Denied (Is directory)`);
-                return res.status(403).send('Access Denied');
+            // Check if it's a file (not a directory)
+            const stats = fs.statSync(fullPath);
+            if (stats.isDirectory()) {
+                return res.status(404).send('Not a file');
             }
+
+            // Cache headers for images
+            res.set('Cache-Control', 'public, max-age=86400');
             
-            // Set cache headers for images
-            res.set('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
-            
+            // Send file
             res.sendFile(fullPath, (err) => {
                 if (err) {
-                    console.error(`   ❌ Error sending file: ${err.message}`);
-                    if (!res.headersSent) res.status(500).end(); 
+                    if (!res.headersSent) {
+                        // Don't log "Aborted" or "Connection reset" as errors, they are normal
+                        if (err.code !== 'ECONNABORTED' && err.code !== 'EPIPE') {
+                            console.error(`   ❌ Error sending file: ${err.message}`);
+                            res.status(500).end();
+                        }
+                    }
                 }
             });
         } else {
-            console.error(`   ❌ File NOT FOUND on disk: ${fullPath}`);
+            console.warn(`   ⚠️ File Not Found: ${fullPath}`);
             res.status(404).send('File not found');
         }
-    } catch (error) {
-        console.error('CRITICAL ERROR in file handler:', error);
-        if (!res.headersSent) res.status(500).send('Internal Server Error');
+    } catch (err) {
+        console.error('CRITICAL FILE SERVER ERROR:', err);
+        if (!res.headersSent) res.status(500).send('Server Error');
     }
 };
 
-// --- FILE ROUTES ---
-// Using Regex routes to support Express 5 and avoiding "path-to-regexp" errors
-// Matches /api/uploads/ANYTHING and /uploads/ANYTHING
-app.get(/^\/api\/uploads\/(.+)$/, handleFileRequest);
-app.get(/^\/uploads\/(.+)$/, handleFileRequest);
+// --- MOUNT FILE ROUTES ---
+// This is the key fix: app.use() bypasses the "Missing parameter name" regex error
+// It mounts the handler to the prefix, so the handler receives the rest of the path.
+app.use('/api/uploads', serveStaticFile);
+app.use('/uploads', serveStaticFile);
 
 
 // --- DATABASE CONNECTION ---
