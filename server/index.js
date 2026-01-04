@@ -66,14 +66,14 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Global headers
 app.use((req, res, next) => {
-    // Disable cache for API, but allow for images (handled in image route)
+    // Disable cache for API, but allow for images (handled in static middleware)
     if (req.path.startsWith('/api') && !req.path.includes('/uploads/')) {
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     }
     next();
 });
 
-// --- STATIC FILES & UPLOAD CONFIG ---
+// --- STATIC FILES CONFIG ---
 // Resolve upload root relative to this file (server/index.js) -> up one level -> uploads
 const UPLOAD_ROOT = path.resolve(__dirname, '..', 'uploads');
 const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
@@ -84,76 +84,28 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursi
 
 console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 
-// --- ROBUST FILE SERVING HANDLER ---
-// Using app.use() allows us to bypass strict routing regex issues.
-// When mounted, req.path contains only the part AFTER the mount point.
-const serveStaticFile = (req, res) => {
-    // Only serve GET requests
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-        return res.status(405).end();
-    }
+// --- STATIC FILE SERVING (FIXED) ---
+// Using express.static is the standard, safest way to serve files in Express 5.
+// It avoids manual path parsing errors and stream handling crashes (502s).
 
-    try {
-        // req.path starts with /, e.g., "/images/photo.jpg"
-        let relativePath = req.path;
-        
-        // Decode URI (e.g. %20 -> space)
-        try {
-            relativePath = decodeURIComponent(relativePath);
-        } catch (e) {
-            // If decode fails, use raw path
-        }
-
-        // Security: Prevent directory traversal
-        const normalized = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, '');
-        
-        // Construct full path
-        const fullPath = path.join(UPLOAD_ROOT, normalized);
-
-        // Security: Ensure path is still within UPLOAD_ROOT
-        if (!fullPath.startsWith(UPLOAD_ROOT)) {
-            console.warn(`   ⚠️ Access Denied (Path Traversal): ${fullPath}`);
-            return res.status(403).send('Access Denied');
-        }
-
-        // Check existence
-        if (fs.existsSync(fullPath)) {
-            // Check if it's a file (not a directory)
-            const stats = fs.statSync(fullPath);
-            if (stats.isDirectory()) {
-                return res.status(404).send('Not a file');
-            }
-
-            // Cache headers for images
-            res.set('Cache-Control', 'public, max-age=86400');
-            
-            // Send file
-            res.sendFile(fullPath, (err) => {
-                if (err) {
-                    if (!res.headersSent) {
-                        // Don't log "Aborted" or "Connection reset" as errors, they are normal
-                        if (err.code !== 'ECONNABORTED' && err.code !== 'EPIPE') {
-                            console.error(`   ❌ Error sending file: ${err.message}`);
-                            res.status(500).end();
-                        }
-                    }
-                }
-            });
-        } else {
-            console.warn(`   ⚠️ File Not Found: ${fullPath}`);
-            res.status(404).send('File not found');
-        }
-    } catch (err) {
-        console.error('CRITICAL FILE SERVER ERROR:', err);
-        if (!res.headersSent) res.status(500).send('Server Error');
+const staticOptions = {
+    dotfiles: 'ignore', // Ignore dotfiles
+    etag: true,
+    extensions: ['jpg', 'jpeg', 'png', 'gif', 'svg'],
+    index: false, // Don't serve index.html
+    maxAge: '1d', // Cache for 1 day
+    redirect: false,
+    setHeaders: function (res, path, stat) {
+        res.set('x-timestamp', Date.now().toString());
     }
 };
 
-// --- MOUNT FILE ROUTES ---
-// This is the key fix: app.use() bypasses the "Missing parameter name" regex error
-// It mounts the handler to the prefix, so the handler receives the rest of the path.
-app.use('/api/uploads', serveStaticFile);
-app.use('/uploads', serveStaticFile);
+// Mount the uploads directory to BOTH paths to ensure compatibility
+// 1. /api/uploads/images/foo.jpg -> maps to UPLOAD_ROOT/images/foo.jpg
+app.use('/api/uploads', express.static(UPLOAD_ROOT, staticOptions));
+
+// 2. /uploads/images/foo.jpg -> maps to UPLOAD_ROOT/images/foo.jpg (fallback)
+app.use('/uploads', express.static(UPLOAD_ROOT, staticOptions));
 
 
 // --- DATABASE CONNECTION ---
