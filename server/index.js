@@ -78,10 +78,13 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) {
 }
 
 // Explicitly serve uploads using res.sendFile for robustness
-// FIXED: Express 5 syntax requires named parameter for wildcard with valid regex: :path(.*)
-app.get('/uploads/:path(.*)', (req, res) => {
+// FIXED: Use Regex object routing to bypass Express 5 string parser issues.
+// Matches /uploads/ followed by any character sequence (captured in group 0)
+app.get(/^\/uploads\/(.+)$/, (req, res) => {
     try {
-        const relativePath = req.params.path;
+        // In regex routes, capture groups are mapped to req.params[0], req.params[1], etc.
+        const relativePath = req.params[0];
+        
         if (!relativePath || relativePath.includes('..')) {
             return res.status(403).send('Access Denied');
         }
