@@ -16,7 +16,6 @@ export const Driver: React.FC = () => {
         o.status !== OrderStatus.CANCELLED
       )
       .sort((a, b) => {
-        // Sort by status (pending first), then time logic if available, else by creation
         if (a.status === OrderStatus.DELIVERED && b.status !== OrderStatus.DELIVERED) return 1;
         if (a.status !== OrderStatus.DELIVERED && b.status === OrderStatus.DELIVERED) return -1;
         return 0;
@@ -35,17 +34,9 @@ export const Driver: React.FC = () => {
     }
   };
 
-  // Helper to extract phone from address string if stored there
-  const getPhone = (address: string) => {
-    const match = address.match(/[+]?[\d\s]{9,}/);
-    return match ? match[0].replace(/\s/g, '') : '';
-  };
-
-  const getMapLink = (address: string) => {
-    // Basic cleanup to remove name/phone lines for better map search
-    const lines = address.split('\n');
-    const cleanAddr = lines.filter(l => !l.includes('Tel:')).slice(1).join(', ');
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cleanAddr || address)}`;
+  const getMapLink = (street: string, city: string) => {
+    const query = `${street}, ${city}`;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
   };
 
   return (
@@ -78,8 +69,8 @@ export const Driver: React.FC = () => {
         ) : (
           deliveryOrders.map(order => {
             const isDelivered = order.status === OrderStatus.DELIVERED;
-            const phone = getPhone(order.deliveryAddress || '');
-            const mapLink = getMapLink(order.deliveryAddress || '');
+            const phone = order.deliveryPhone;
+            const mapLink = getMapLink(order.deliveryStreet || '', order.deliveryCity || '');
             const total = order.totalPrice + order.packagingFee + order.deliveryFee;
             
             return (
@@ -100,7 +91,11 @@ export const Driver: React.FC = () => {
                   <div className="space-y-3 mb-4">
                     <div className="flex items-start">
                       <div className="min-w-[24px] pt-1"><MapPin size={16} className="text-gray-400"/></div>
-                      <div className="text-sm whitespace-pre-line">{order.deliveryAddress}</div>
+                      <div className="text-sm">
+                          <div className="font-bold">{order.deliveryName}</div>
+                          <div>{order.deliveryStreet}</div>
+                          <div>{order.deliveryZip} {order.deliveryCity}</div>
+                      </div>
                     </div>
                     {order.note && (
                       <div className="bg-yellow-50 p-2 rounded text-xs text-yellow-800 border border-yellow-100">

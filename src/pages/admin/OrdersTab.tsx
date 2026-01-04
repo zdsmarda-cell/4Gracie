@@ -1,14 +1,42 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Order, OrderStatus, DeliveryType, Language, Product, Address, User } from '../../types';
-import { FileText, Save, X, AlertCircle, Plus, Minus, Trash2, CheckCircle, Search, Tag, CreditCard, ImageIcon, QrCode, ChevronLeft, ChevronRight, Mail } from 'lucide-react';
+import { Order, OrderStatus, DeliveryType, Product, Address, User } from '../../types';
+import { FileText, X, AlertCircle, Plus, Minus, Trash2, Search, ImageIcon, QrCode, Mail, FileCheck, ChevronDown, Save, AlertTriangle } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
 interface OrdersTabProps {
     initialDate?: string | null;
     onClearInitialDate?: () => void;
 }
+
+// Internal Confirmation Modal Component
+const ConfirmationModal: React.FC<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    onClose: () => void;
+}> = ({ isOpen, title, message, onConfirm, onClose }) => {
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                <div className="flex flex-col items-center text-center">
+                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4 text-blue-600">
+                        <AlertTriangle size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
+                    <p className="text-sm text-gray-500 mb-6">{message}</p>
+                    <div className="flex gap-3 w-full">
+                        <button onClick={onClose} className="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-sm hover:bg-gray-200 transition">Zrušit</button>
+                        <button onClick={onConfirm} className="flex-1 py-2 bg-primary text-white rounded-lg font-bold text-sm hover:bg-black transition">Potvrdit</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitialDate }) => {
     const { searchOrders, allUsers, t, updateOrder, updateOrderStatus, formatDate, settings, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, checkAvailability, products, calculatePackagingFee, validateDiscount, printInvoice, generateCzIban, removeDiacritics, dataSource, updateUserAdmin } = useStore();
@@ -25,6 +53,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
     const [notifyCustomer, setNotifyCustomer] = useState(false);
     const [orderFilters, setOrderFilters] = useState({ id: '', dateFrom: '', dateTo: '', customer: '', status: '', ic: '' });
     
+    // Bulk Action State
+    const [bulkActionValue, setBulkActionValue] = useState("");
+    const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
+
     // Load data handler with pagination
     const loadOrders = useCallback(async () => {
         setIsLoadingOrders(true);
@@ -81,10 +113,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
     const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
     
     // Address Selection State
-    const [selectedDeliveryAddrId, setSelectedDeliveryAddrId] = useState('');
-    const [selectedBillingAddrId, setSelectedBillingAddrId] = useState('');
     const [targetUser, setTargetUser] = useState<User | undefined>(undefined);
-
+    
     // Address Modal State (Admin editing user's address)
     const [isAddressModalOpen, setIsAddressModalOpen] = useState(false);
     const [addressModalMode, setAddressModalMode] = useState<'create' | 'edit'>('create');
@@ -103,14 +133,26 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
     // QR Modal State
     const [qrModalOrder, setQrModalOrder] = useState<Order | null>(null);
 
-    // Sync Address Fields logic REMOVED - using Selectors instead
-    // const [addrFields, setAddrFields] = useState({ name: '', street: '', city: '', zip: '', phone: '' });
+    // Invoice Dropdown State
+    const [openInvoiceMenuId, setOpenInvoiceMenuId] = useState<string | null>(null);
+    const [menuPosition, setMenuPosition] = useState<{top: number, left: number} | null>(null);
+
+    // Close menu on scroll or click outside
+    useEffect(() => {
+        const closeMenu = () => setOpenInvoiceMenuId(null);
+        window.addEventListener('click', closeMenu);
+        window.addEventListener('scroll', closeMenu, true); // Capture scroll on any element
+        return () => {
+            window.removeEventListener('click', closeMenu);
+            window.removeEventListener('scroll', closeMenu, true);
+        };
+    }, []);
 
     const displayOrders = useMemo(() => {
         let result = fetchedOrders;
         if (dataSource === 'local' && orderFilters.ic) {
              result = result.filter(o => {
-                const hasIcInAddr = o.billingAddress && o.billingAddress.toLowerCase().includes('ič');
+                const hasIcInAddr = o.billingIc || (o.billingName && o.billingName.toLowerCase().includes('ič'));
                 if (orderFilters.ic === 'yes') return hasIcInAddr;
                 if (orderFilters.ic === 'no') return !hasIcInAddr;
                 return true;
@@ -121,24 +163,45 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
 
     // Derived region for validation
     const derivedRegion = useMemo(() => {
-        if (!editingOrder || editingOrder.deliveryType !== DeliveryType.DELIVERY || !editingOrder.deliveryAddress) return undefined;
-        // Try to find zip in the address string
-        const zipMatch = editingOrder.deliveryAddress.match(/\d{3}\s?\d{2}/);
-        return zipMatch ? getDeliveryRegion(zipMatch[0]) : undefined;
-    }, [editingOrder?.deliveryAddress, editingOrder?.deliveryType]);
+        if (!editingOrder || editingOrder.deliveryType !== DeliveryType.DELIVERY) return undefined;
+        return editingOrder.deliveryZip ? getDeliveryRegion(editingOrder.deliveryZip) : undefined;
+    }, [editingOrder?.deliveryType, editingOrder?.deliveryZip]);
 
     const derivedPickupLocation = useMemo(() => {
         if (!editingOrder || editingOrder.deliveryType !== DeliveryType.PICKUP || !editingOrder.pickupLocationId) return undefined;
         return settings.pickupLocations?.find(l => l.id === editingOrder.pickupLocationId);
     }, [editingOrder?.pickupLocationId, editingOrder?.deliveryType, settings.pickupLocations]);
 
-    const handleBulkStatusChange = async (status: OrderStatus) => {
-        if (!status) return;
-        if (confirm(`Opravdu změnit stav ${selectedOrders.length} objednávek na "${t(`status.${status}`)}"?${notifyCustomer ? ' (Bude odeslán email)' : ''}`)) {
-            await updateOrderStatus(selectedOrders, status, notifyCustomer);
-            setSelectedOrders([]);
-            setNotifyCustomer(false); // Reset after action
-            loadOrders(); // Refresh
+    // NEW: Handle Bulk Update via Button click triggers Modal
+    const handleBulkUpdateClick = () => {
+        if (!bulkActionValue || selectedOrders.length === 0) return;
+        setIsBulkConfirmOpen(true);
+    };
+
+    const performBulkUpdate = async () => {
+        const status = bulkActionValue as OrderStatus;
+        await updateOrderStatus(selectedOrders, status, notifyCustomer);
+        setSelectedOrders([]);
+        setNotifyCustomer(false);
+        setBulkActionValue(""); 
+        setIsBulkConfirmOpen(false);
+        loadOrders();
+    };
+
+    const toggleInvoiceMenu = (e: React.MouseEvent, orderId: string) => {
+        e.stopPropagation();
+        if (openInvoiceMenuId === orderId) {
+            setOpenInvoiceMenuId(null);
+        } else {
+            const rect = e.currentTarget.getBoundingClientRect();
+            // Calculate position: align right edge of menu with right edge of button
+            // rect.right is the right edge of button. 
+            // We'll set 'left' and translate or just do calculations.
+            setMenuPosition({
+                top: rect.bottom + window.scrollY + 2, // Slight offset
+                left: rect.right + window.scrollX
+            });
+            setOpenInvoiceMenuId(orderId);
         }
     };
 
@@ -148,25 +211,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         setDiscountInput('');
         setDiscountError('');
         
-        // Find the user to populate address dropdowns
+        // Find the user to populate context if needed (though billing dropdown removed)
         const user = allUsers.find(u => u.id === o.userId);
         setTargetUser(user);
         
-        setSelectedDeliveryAddrId('');
-        setSelectedBillingAddrId('');
-
-        if (user) {
-            // Try to match current addresses to user's saved addresses
-            if (o.deliveryType === DeliveryType.DELIVERY && o.deliveryAddress) {
-                const match = user.deliveryAddresses.find(a => o.deliveryAddress?.includes(a.street));
-                if (match) setSelectedDeliveryAddrId(match.id);
-            }
-            if (o.billingAddress) {
-                const match = user.billingAddresses.find(a => o.billingAddress?.includes(a.street));
-                if (match) setSelectedBillingAddrId(match.id);
-            }
-        }
-
         setIsOrderModalOpen(true);
     };
 
@@ -217,6 +265,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
 
     const recalculateOrderTotals = (items: any[], discounts: any[]) => {
         if (!editingOrder) return;
+        
         let validDiscounts: any[] = [];
         for(const d of discounts) {
              const res = validateDiscount(d.code, items);
@@ -224,22 +273,39 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                  validDiscounts.push({ code: d.code, amount: res.amount });
              }
         }
+        
         const itemsTotal = items.reduce((acc, i) => acc + i.price * i.quantity, 0);
         const packagingFee = calculatePackagingFee(items);
+        
+        // Recalculate Delivery Fee dynamically based on region rules and new total
+        let deliveryFee = editingOrder.deliveryFee;
+        if (editingOrder.deliveryType === DeliveryType.DELIVERY) {
+            // Try to find region from current zip
+            const zip = editingOrder.deliveryZip?.replace(/\s/g, '');
+            const region = zip ? getDeliveryRegion(zip) : undefined;
+            
+            if (region) {
+                const totalForLimit = itemsTotal - validDiscounts.reduce((sum, d) => sum + d.amount, 0);
+                deliveryFee = totalForLimit >= region.freeFrom ? 0 : region.price;
+            }
+        } else if (editingOrder.deliveryType === DeliveryType.PICKUP) {
+            deliveryFee = 0;
+        }
         
         setEditingOrder({ 
             ...editingOrder, 
             items, 
             appliedDiscounts: validDiscounts,
             totalPrice: itemsTotal,
-            packagingFee 
+            packagingFee,
+            deliveryFee
         });
     };
 
     const handleOrderSave = async () => {
         if (!editingOrder) return;
         setOrderSaveError(null);
-
+        
         // Validation...
         if (editingOrder.deliveryType === DeliveryType.PICKUP) {
             if (!editingOrder.pickupLocationId) { setOrderSaveError('Vyberte odběrné místo.'); return; }
@@ -248,14 +314,14 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             const info = getPickupPointInfo(loc, editingOrder.deliveryDate);
             if (!info.isOpen) { setOrderSaveError(`Odběrné místo má ${formatDate(editingOrder.deliveryDate)} zavřeno.`); return; }
         } else {
-            if (!editingOrder.deliveryAddress) {
-                setOrderSaveError('Vyplňte doručovací adresu.'); return;
+            if (!editingOrder.deliveryStreet || !editingOrder.deliveryCity || !editingOrder.deliveryZip) {
+                setOrderSaveError('Vyplňte kompletní doručovací adresu.'); return;
             }
             // Parse zip from address string for validation
-            const zipMatch = editingOrder.deliveryAddress.match(/\d{3}\s?\d{2}/);
+            const zipMatch = editingOrder.deliveryZip.replace(/\s/g, '');
             if (zipMatch) {
-                const region = getDeliveryRegion(zipMatch[0]);
-                if (!region) { setOrderSaveError(`Pro PSČ ${zipMatch[0]} neexistuje rozvozový region.`); return; }
+                const region = getDeliveryRegion(zipMatch);
+                if (!region) { setOrderSaveError(`Pro PSČ ${zipMatch} neexistuje rozvozový region.`); return; }
                 const info = getRegionInfoForDate(region, editingOrder.deliveryDate);
                 if (!info.isOpen) { setOrderSaveError(`Region "${region.name}" nerozváží dne ${formatDate(editingOrder.deliveryDate)}.`); return; }
             }
@@ -269,8 +335,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
 
         const success = await updateOrder(editingOrder);
         if (success) {
+            // Immediate update of local list to reflect price changes without fetch delay
+            setFetchedOrders(prev => prev.map(o => o.id === editingOrder.id ? editingOrder : o));
             setIsOrderModalOpen(false);
-            loadOrders(); // Refresh list
         }
         else setOrderSaveError('Chyba při ukládání (API Error).');
     };
@@ -285,37 +352,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         return `SPD*1.0*${acc}*AM:${amount}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
     };
 
-    // --- Address Selection Handlers ---
-
-    const handleSelectDeliveryAddress = (addrId: string) => {
-        setSelectedDeliveryAddrId(addrId);
-        if (!addrId || !targetUser) return;
-        const addr = targetUser.deliveryAddresses.find(a => a.id === addrId);
-        if (addr) {
-            const zip = addr.zip.replace(/\s/g, '');
-            const region = getDeliveryRegion(zip);
-            const deliveryFee = region ? (editingOrder && editingOrder.totalPrice >= region.freeFrom ? 0 : region.price) : 0;
-
-            setEditingOrder(prev => prev ? {
-                ...prev,
-                deliveryAddress: `${addr.name}\n${addr.street}\n${addr.city}\n${addr.zip}\nTel: ${addr.phone}`,
-                deliveryFee
-            } : null);
-        }
-    };
-
-    const handleSelectBillingAddress = (addrId: string) => {
-        setSelectedBillingAddrId(addrId);
-        if (!addrId || !targetUser) return;
-        const addr = targetUser.billingAddresses.find(a => a.id === addrId);
-        if (addr) {
-            setEditingOrder(prev => prev ? {
-                ...prev,
-                billingAddress: `${addr.name}, ${addr.street}, ${addr.city}` + (addr.ic ? `, IČ: ${addr.ic}` : '')
-            } : null);
-        }
-    };
-
     // --- Address Modal (Admin creating/editing for user) ---
 
     const openAddressModal = (mode: 'create' | 'edit', type: 'delivery' | 'billing') => {
@@ -325,18 +361,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         setAddressModalType(type);
         setAddressError(null);
         
-        if (mode === 'edit') {
-            const id = type === 'delivery' ? selectedDeliveryAddrId : selectedBillingAddrId;
-            const list = type === 'delivery' ? targetUser.deliveryAddresses : targetUser.billingAddresses;
-            const existing = list.find(a => a.id === id);
-            if (!existing) {
-                alert('Nejdříve vyberte adresu k editaci.');
-                return;
-            }
-            setAddressForm({ ...existing });
-        } else {
-            setAddressForm({});
-        }
+        // Logic only for creating new address for user record
+        setAddressForm({});
         setIsAddressModalOpen(true);
     };
 
@@ -369,23 +395,16 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         if (success) {
             setTargetUser(updatedUser); // Update local reference
             
-            // 2. Select the address in dropdown
-            if (addressModalType === 'delivery') {
-                setSelectedDeliveryAddrId(newAddr.id);
-                // Trigger logic to update text field and fees in order
-                const zip = newAddr.zip.replace(/\s/g, '');
-                const region = getDeliveryRegion(zip);
-                const deliveryFee = region ? (editingOrder && editingOrder.totalPrice >= region.freeFrom ? 0 : region.price) : 0;
+            // 2. Auto-fill the form in order modal
+            if (addressModalType === 'billing') {
                 setEditingOrder(prev => prev ? {
                     ...prev,
-                    deliveryAddress: `${newAddr.name}\n${newAddr.street}\n${newAddr.city}\n${newAddr.zip}\nTel: ${newAddr.phone}`,
-                    deliveryFee
-                } : null);
-            } else {
-                setSelectedBillingAddrId(newAddr.id);
-                setEditingOrder(prev => prev ? {
-                    ...prev,
-                    billingAddress: `${newAddr.name}, ${newAddr.street}, ${newAddr.city}` + (newAddr.ic ? `, IČ: ${newAddr.ic}` : '')
+                    billingName: newAddr.name,
+                    billingStreet: newAddr.street,
+                    billingCity: newAddr.city,
+                    billingZip: newAddr.zip,
+                    billingIc: newAddr.ic,
+                    billingDic: newAddr.dic
                 } : null);
             }
             setIsAddressModalOpen(false);
@@ -396,80 +415,62 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
 
     return (
         <div className="animate-fade-in space-y-4">
+            {/* ... (Header and filters unchanged) ... */}
             <div className="flex justify-between mb-4">
                 <div className="flex items-center gap-2">
                     <span className="text-xl font-bold text-primary mr-4">{t('admin.orders')}</span>
                     {selectedOrders.length > 0 && (
                     <div className="flex items-center gap-4 animate-in fade-in bg-white p-2 rounded-xl shadow-sm border border-accent/20">
                         <span className="text-xs font-bold text-primary">Vybráno: {selectedOrders.length}</span>
-                        
-                        {/* Status Select */}
+                        {/* Controlled Select for Bulk Action */}
                         <select 
                             className="text-xs border rounded bg-white p-2 font-bold focus:ring-accent outline-none" 
-                            onChange={e => handleBulkStatusChange(e.target.value as OrderStatus)}
-                            value=""
+                            onChange={e => setBulkActionValue(e.target.value)}
+                            value={bulkActionValue}
                         >
-                            <option value="" disabled>{t('admin.status_update')}...</option>
+                            <option value="">{t('admin.status_update')}...</option>
                             {Object.values(OrderStatus).map(s => <option key={s as string} value={s as string}>{t(`status.${s}`)}</option>)}
                         </select>
-
-                        {/* Notify Checkbox */}
                         <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none border-l pl-4 border-gray-200">
-                            <input 
-                                type="checkbox" 
-                                checked={notifyCustomer} 
-                                onChange={e => setNotifyCustomer(e.target.checked)} 
-                                className="rounded text-accent focus:ring-accent w-4 h-4" 
-                            />
-                            <div className="flex items-center gap-1">
-                                <Mail size={14} className={notifyCustomer ? "text-accent" : "text-gray-400"} />
-                                <span className={notifyCustomer ? "text-gray-800" : "text-gray-500"}>{t('admin.notify_customer')}</span>
-                            </div>
+                            <input type="checkbox" checked={notifyCustomer} onChange={e => setNotifyCustomer(e.target.checked)} className="rounded text-accent focus:ring-accent w-4 h-4" />
+                            <div className="flex items-center gap-1"><Mail size={14} className={notifyCustomer ? "text-accent" : "text-gray-400"} /><span className={notifyCustomer ? "text-gray-800" : "text-gray-500"}>{t('admin.notify_customer')}</span></div>
                         </label>
+                        {/* Bulk Action Trigger Button */}
+                        <button 
+                            onClick={handleBulkUpdateClick}
+                            disabled={!bulkActionValue}
+                            className="bg-primary text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center hover:bg-black transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <Save size={14} className="mr-1"/> Uložit
+                        </button>
                     </div>
                     )}
                 </div>
             </div>
 
+            {/* Confirmation Modal */}
+            <ConfirmationModal 
+                isOpen={isBulkConfirmOpen}
+                title="Hromadná změna stavu"
+                message={`Opravdu chcete změnit stav ${selectedOrders.length} objednávek na "${t(`status.${bulkActionValue}`)}"?${notifyCustomer ? ' (Bude odeslán informační email)' : ''}`}
+                onConfirm={performBulkUpdate}
+                onClose={() => setIsBulkConfirmOpen(false)}
+            />
+
             {/* Filters ... (kept same) */}
             <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
-                <div className="md:col-span-1">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">ID</label>
-                    <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={orderFilters.id} onChange={e => setOrderFilters({...orderFilters, id: e.target.value})} />
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.date_from')}</label>
-                    <input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.dateFrom} onChange={e => setOrderFilters({...orderFilters, dateFrom: e.target.value})} />
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.date_to')}</label>
-                    <input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.dateTo} onChange={e => setOrderFilters({...orderFilters, dateTo: e.target.value})} />
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label>
-                    <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={orderFilters.customer} onChange={e => setOrderFilters({...orderFilters, customer: e.target.value})} />
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">Stav</label>
-                    <select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.status} onChange={e => setOrderFilters({...orderFilters, status: e.target.value})}>
-                        <option value="">Všechny stavy</option>
-                        {Object.values(OrderStatus).map(s => <option key={s as string} value={s as string}>{t(`status.${s}`)}</option>)}
-                    </select>
-                </div>
-                <div className="md:col-span-1">
-                    <label className="text-xs font-bold text-gray-400 block mb-1">IČ</label>
-                    <select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.ic} onChange={e => setOrderFilters({...orderFilters, ic: e.target.value})}>
-                        <option value="">{t('filter.all')}</option>
-                        <option value="yes">{t('common.yes')}</option>
-                        <option value="no">{t('common.no')}</option>
-                    </select>
-                </div>
+                <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">ID</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={orderFilters.id} onChange={e => setOrderFilters({...orderFilters, id: e.target.value})} /></div>
+                <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.date_from')}</label><input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.dateFrom} onChange={e => setOrderFilters({...orderFilters, dateFrom: e.target.value})} /></div>
+                <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.date_to')}</label><input type="date" className="w-full border rounded p-2 text-xs" value={orderFilters.dateTo} onChange={e => setOrderFilters({...orderFilters, dateTo: e.target.value})} /></div>
+                <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={orderFilters.customer} onChange={e => setOrderFilters({...orderFilters, customer: e.target.value})} /></div>
+                <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">Stav</label><select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.status} onChange={e => setOrderFilters({...orderFilters, status: e.target.value})}><option value="">Všechny stavy</option>{Object.values(OrderStatus).map(s => <option key={s as string} value={s as string}>{t(`status.${s}`)}</option>)}</select></div>
+                <div className="md:col-span-1"><label className="text-xs font-bold text-gray-400 block mb-1">IČ</label><select className="w-full border rounded p-2 text-xs bg-white" value={orderFilters.ic} onChange={e => setOrderFilters({...orderFilters, ic: e.target.value})}><option value="">{t('filter.all')}</option><option value="yes">{t('common.yes')}</option><option value="no">{t('common.no')}</option></select></div>
             </div>
 
             {isLoadingOrders ? (
                 <div className="text-center py-8 text-gray-400">Načítám data...</div>
             ) : (
-            <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto">
+            <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto relative">
                 <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                     <tr>
@@ -486,9 +487,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </thead>
                 <tbody className="divide-y text-[11px]">
                     {displayOrders.map(order => {
-                        const hasIc = order.billingAddress && order.billingAddress.includes('IČ');
+                        const hasIc = !!order.billingIc;
                         return (
-                            <tr key={order.id} className="hover:bg-gray-50 transition">
+                            <tr key={order.id} className="hover:bg-gray-50 transition relative group">
                                 <td className="px-6 py-4 text-center"><input type="checkbox" checked={selectedOrders.includes(order.id)} onChange={() => setSelectedOrders(prev => prev.includes(order.id) ? prev.filter(x => x !== order.id) : [...prev, order.id])} /></td>
                                 <td className="px-6 py-4 font-bold">{order.id}</td>
                                 <td className="px-6 py-4 font-mono">{formatDate(order.deliveryDate)}</td>
@@ -502,9 +503,17 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                 </td>
                                 <td className="px-6 py-4"><span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${order.status === OrderStatus.CANCELLED ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-700'}`}>{t(`status.${order.status}`)}</span></td>
                                 <td className="px-6 py-4 text-right">
-                                    <div className="flex justify-end gap-2">
+                                    <div className="flex justify-end gap-2 items-center">
+                                        <div className="relative inline-block">
+                                            <button 
+                                                onClick={(e) => toggleInvoiceMenu(e, order.id)} 
+                                                className={`p-1 text-gray-500 hover:text-primary flex items-center gap-1 ${openInvoiceMenuId === order.id ? 'text-primary' : ''}`}
+                                                title="Stáhnout fakturu"
+                                            >
+                                                <FileText size={16}/> <ChevronDown size={10}/>
+                                            </button>
+                                        </div>
                                         <button onClick={() => setQrModalOrder(order)} className="p-1 text-gray-500 hover:text-primary" title="QR Platba"><QrCode size={16}/></button>
-                                        <button onClick={() => printInvoice(order)} className="p-1 text-gray-500 hover:text-primary" title="Stáhnout fakturu"><FileText size={16}/></button>
                                         <button onClick={() => openOrderModal(order)} className="text-blue-600 font-bold hover:underline ml-2">{t('common.detail_edit')}</button>
                                     </div>
                                 </td>
@@ -513,61 +522,72 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                     })}
                 </tbody>
                 </table>
-                
-                {dataSource === 'api' && totalPages > 1 && (
-                    <div className="flex justify-between items-center p-4 bg-gray-50 border-t">
-                        <button 
-                            disabled={currentPage === 1} 
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                            className="p-2 border rounded bg-white hover:bg-gray-100 disabled:opacity-50"
-                        >
-                            <ChevronLeft size={16} />
-                        </button>
-                        <span className="text-xs font-bold text-gray-600">Strana {currentPage} z {totalPages}</span>
-                        <button 
-                            disabled={currentPage === totalPages} 
-                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                            className="p-2 border rounded bg-white hover:bg-gray-100 disabled:opacity-50"
-                        >
-                            <ChevronRight size={16} />
-                        </button>
-                    </div>
-                )}
             </div>
             )}
 
-            {/* ... QR Modal (unchanged) ... */}
-            {qrModalOrder && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in zoom-in-95 duration-200" onClick={() => setQrModalOrder(null)}>
-                <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
-                    <button className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200" onClick={() => setQrModalOrder(null)}><X size={20}/></button>
-                    <div className="text-center">
-                    <h2 className="text-2xl font-bold mb-6">QR Platba</h2>
-                    <div className="bg-white p-2 rounded-xl border inline-block mb-6 shadow-sm">
-                        <img 
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getQRDataString(qrModalOrder))}`} 
-                        alt="QR Code" 
-                        className="w-48 h-48"
-                        />
-                    </div>
-                    <div className="text-left bg-gray-50 p-4 rounded-xl space-y-2 text-sm">
-                        <div className="flex justify-between border-b pb-2">
-                            <span className="text-gray-500">{t('common.bank_acc')}</span>
-                            <span className="font-bold">{settings.companyDetails.bankAccount}</span>
-                        </div>
-                        <div className="flex justify-between border-b pb-2">
-                            <span className="text-gray-500">Var. symbol</span>
-                            <span className="font-bold">{qrModalOrder.id.replace(/\D/g, '') || '0'}</span>
-                        </div>
-                        <div className="flex justify-between pt-1">
-                            <span className="text-gray-500">{t('common.total')}</span>
-                            <span className="font-bold text-lg text-primary">
-                            {(Math.max(0, qrModalOrder.totalPrice - (qrModalOrder.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0)) + qrModalOrder.packagingFee + (qrModalOrder.deliveryFee||0)).toFixed(2)} Kč
-                            </span>
-                        </div>
-                    </div>
-                    </div>
+            {/* FIXED POSITION INVOICE MENU using Portal-like strategy */}
+            {openInvoiceMenuId && menuPosition && (
+                <div 
+                    className="fixed bg-white border rounded-xl shadow-xl z-[9999] py-1 overflow-hidden animate-in zoom-in-95 duration-200"
+                    style={{ 
+                        top: menuPosition.top, 
+                        left: menuPosition.left, 
+                        width: '160px',
+                        transform: 'translateX(-100%)' // Align right edge with button right edge
+                    }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    {(() => {
+                        const order = fetchedOrders.find(o => o.id === openInvoiceMenuId);
+                        if (!order) return null;
+                        return (
+                            <>
+                                <button onClick={() => { printInvoice(order, 'proforma'); setOpenInvoiceMenuId(null); }} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs flex items-center gap-2 text-gray-700">
+                                    <FileText size={14}/> Zálohová
+                                </button>
+                                {order.finalInvoiceDate && (
+                                    <button onClick={() => { printInvoice(order, 'final'); setOpenInvoiceMenuId(null); }} className="w-full text-left px-4 py-2 hover:bg-gray-50 text-xs flex items-center gap-2 text-green-700 font-bold border-t border-gray-100">
+                                        <FileCheck size={14}/> Daňový doklad
+                                    </button>
+                                )}
+                            </>
+                        );
+                    })()}
                 </div>
+            )}
+
+            {/* QR Modal */}
+            {qrModalOrder && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4 backdrop-blur-sm animate-in zoom-in-95 duration-200" onClick={() => setQrModalOrder(null)}>
+                    <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
+                        <button className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200" onClick={() => setQrModalOrder(null)}><X size={20}/></button>
+                        <div className="text-center">
+                            <h2 className="text-2xl font-bold mb-6">QR Platba</h2>
+                            <div className="bg-white p-2 rounded-xl border inline-block mb-6 shadow-sm">
+                                <img 
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(getQRDataString(qrModalOrder))}`} 
+                                    alt="QR Code" 
+                                    className="w-48 h-48"
+                                />
+                            </div>
+                            <div className="text-left bg-gray-50 p-4 rounded-xl space-y-2 text-sm">
+                                <div className="flex justify-between border-b pb-2">
+                                    <span className="text-gray-500">{t('common.bank_acc')}</span>
+                                    <span className="font-bold">{settings.companyDetails.bankAccount}</span>
+                                </div>
+                                <div className="flex justify-between border-b pb-2">
+                                    <span className="text-gray-500">Var. symbol</span>
+                                    <span className="font-bold">{qrModalOrder.id.replace(/\D/g, '') || '0'}</span>
+                                </div>
+                                <div className="flex justify-between pt-1">
+                                    <span className="text-gray-500">{t('common.total')}</span>
+                                    <span className="font-bold text-lg text-primary">
+                                        {(Math.max(0, qrModalOrder.totalPrice - (qrModalOrder.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0)) + qrModalOrder.packagingFee + (qrModalOrder.deliveryFee||0)).toFixed(2)} Kč
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -616,7 +636,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                                 value={editingOrder.pickupLocationId || ''} 
                                                 onChange={e => {
                                                     const loc = settings.pickupLocations?.find(l => l.id === e.target.value);
-                                                    setEditingOrder({...editingOrder, pickupLocationId: e.target.value, deliveryAddress: loc ? `Osobní odběr: ${loc.name}, ${loc.street}, ${loc.city}` : ''});
+                                                    setEditingOrder({...editingOrder, pickupLocationId: e.target.value});
                                                 }}
                                             >
                                                 <option value="">Vyberte místo...</option>
@@ -627,66 +647,43 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                         </div>
                                     )}
 
-                                    {/* Delivery Address Selector with Edit/New Buttons */}
+                                    {/* Delivery Address - MANUAL ONLY */}
                                     {editingOrder.deliveryType === DeliveryType.DELIVERY && (
-                                        <>
-                                            {targetUser && targetUser.deliveryAddresses.length > 0 && (
-                                                <div>
-                                                    <div className="flex justify-between items-center mb-1">
-                                                        <label className="text-[9px] font-bold text-gray-400 uppercase">Vybrat doručovací adresu (Uloženo u zákazníka)</label>
-                                                        <div className="flex gap-2">
-                                                            {selectedDeliveryAddrId && (
-                                                                <button onClick={() => openAddressModal('edit', 'delivery')} className="text-[9px] font-bold text-blue-600 hover:underline">Editovat</button>
-                                                            )}
-                                                            <button onClick={() => openAddressModal('create', 'delivery')} className="text-[9px] font-bold text-green-600 hover:underline">+ Nová</button>
-                                                        </div>
-                                                    </div>
-                                                    <select 
-                                                        className="w-full border rounded p-2 text-sm mb-2"
-                                                        value={selectedDeliveryAddrId}
-                                                        onChange={e => handleSelectDeliveryAddress(e.target.value)}
-                                                    >
-                                                        <option value="">-- Vyberte adresu --</option>
-                                                        {targetUser.deliveryAddresses.map(a => (
-                                                            <option key={a.id} value={a.id}>{a.name}, {a.street}, {a.city}</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            )}
-                                            {/* Fallback for guest users or manual override */}
-                                            <div>
-                                                <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.street')} (Text)</label>
-                                                <textarea className="w-full border rounded p-2 text-sm h-20" value={editingOrder.deliveryAddress || ''} onChange={e => setEditingOrder({...editingOrder, deliveryAddress: e.target.value})}/>
+                                        <div className="space-y-2 p-3 bg-white border rounded-lg">
+                                            <div className="text-[9px] font-bold text-gray-400 uppercase mb-1">Doručovací adresa</div>
+                                            <input placeholder="Jméno / Firma" className="w-full border rounded p-2 text-xs" value={editingOrder.deliveryName || ''} onChange={e => setEditingOrder({...editingOrder, deliveryName: e.target.value})} />
+                                            <input placeholder="Ulice a č.p." className="w-full border rounded p-2 text-xs" value={editingOrder.deliveryStreet || ''} onChange={e => setEditingOrder({...editingOrder, deliveryStreet: e.target.value})} />
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input placeholder="Město" className="border rounded p-2 text-xs" value={editingOrder.deliveryCity || ''} onChange={e => setEditingOrder({...editingOrder, deliveryCity: e.target.value})} />
+                                                <input placeholder="PSČ" className="border rounded p-2 text-xs" value={editingOrder.deliveryZip || ''} onChange={e => setEditingOrder({...editingOrder, deliveryZip: e.target.value})} />
                                             </div>
-                                        </>
+                                            <input placeholder="Telefon (+420...)" className="w-full border rounded p-2 text-xs" value={editingOrder.deliveryPhone || ''} onChange={e => setEditingOrder({...editingOrder, deliveryPhone: e.target.value})} />
+                                        </div>
                                     )}
 
-                                    {/* Billing Address Selector */}
+                                    {/* Billing Address - MANUAL ONLY - Selector Removed */}
                                     <div className="border-t pt-2 mt-2">
                                         <div className="flex justify-between items-center mb-1">
                                             <label className="text-[9px] font-bold text-gray-400 uppercase">Fakturační adresa</label>
                                             {targetUser && (
                                                 <div className="flex gap-2">
-                                                    {selectedBillingAddrId && (
-                                                        <button onClick={() => openAddressModal('edit', 'billing')} className="text-[9px] font-bold text-blue-600 hover:underline">Editovat</button>
-                                                    )}
                                                     <button onClick={() => openAddressModal('create', 'billing')} className="text-[9px] font-bold text-green-600 hover:underline">+ Nová</button>
                                                 </div>
                                             )}
                                         </div>
-                                        {targetUser && targetUser.billingAddresses.length > 0 && (
-                                            <select 
-                                                className="w-full border rounded p-2 text-sm mb-2"
-                                                value={selectedBillingAddrId}
-                                                onChange={e => handleSelectBillingAddress(e.target.value)}
-                                            >
-                                                <option value="">-- Vyberte adresu --</option>
-                                                {targetUser.billingAddresses.map(a => (
-                                                    <option key={a.id} value={a.id}>{a.name}, {a.street}, {a.city}</option>
-                                                ))}
-                                            </select>
-                                        )}
-                                        <textarea className="w-full border rounded p-2 text-sm h-16" value={editingOrder.billingAddress || ''} onChange={e => setEditingOrder({...editingOrder, billingAddress: e.target.value})} placeholder="Fakturační adresa textově..."/>
+                                        {/* Billing Fields */}
+                                        <div className="space-y-2 p-3 bg-white border rounded-lg">
+                                            <input placeholder="Jméno / Firma" className="w-full border rounded p-2 text-xs" value={editingOrder.billingName || ''} onChange={e => setEditingOrder({...editingOrder, billingName: e.target.value})} />
+                                            <input placeholder="Ulice a č.p." className="w-full border rounded p-2 text-xs" value={editingOrder.billingStreet || ''} onChange={e => setEditingOrder({...editingOrder, billingStreet: e.target.value})} />
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input placeholder="Město" className="border rounded p-2 text-xs" value={editingOrder.billingCity || ''} onChange={e => setEditingOrder({...editingOrder, billingCity: e.target.value})} />
+                                                <input placeholder="PSČ" className="border rounded p-2 text-xs" value={editingOrder.billingZip || ''} onChange={e => setEditingOrder({...editingOrder, billingZip: e.target.value})} />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input placeholder="IČ" className="border rounded p-2 text-xs" value={editingOrder.billingIc || ''} onChange={e => setEditingOrder({...editingOrder, billingIc: e.target.value})} />
+                                                <input placeholder="DIČ" className="border rounded p-2 text-xs" value={editingOrder.billingDic || ''} onChange={e => setEditingOrder({...editingOrder, billingDic: e.target.value})} />
+                                            </div>
+                                        </div>
                                     </div>
 
                                 </div>
@@ -712,14 +709,36 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                 </div>
                                 
                                 <div className="bg-gray-50 p-4 rounded-2xl space-y-2">
+                                    {/* Discount Input */}
+                                    <div className="flex gap-2 mb-3">
+                                        <input 
+                                            type="text" 
+                                            placeholder="Kód slevy" 
+                                            className="flex-1 border rounded p-2 text-xs uppercase"
+                                            value={discountInput}
+                                            onChange={e => setDiscountInput(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && handleApplyDiscount()}
+                                        />
+                                        <button 
+                                            onClick={handleApplyDiscount} 
+                                            className="bg-accent text-white px-3 py-1 rounded text-xs font-bold hover:bg-black transition"
+                                        >
+                                            <Plus size={14}/>
+                                        </button>
+                                    </div>
+                                    {discountError && <p className="text-[10px] text-red-500 font-bold mb-2">{discountError}</p>}
+
                                     <div className="flex justify-between text-xs text-gray-500">
                                         <span>Zboží:</span>
                                         <span>{editingOrder.totalPrice} Kč</span>
                                     </div>
                                     {editingOrder.appliedDiscounts?.map(d => (
-                                        <div key={d.code} className="flex justify-between text-xs text-green-600">
+                                        <div key={d.code} className="flex justify-between items-center text-xs text-green-600">
                                             <span>Sleva ({d.code}):</span>
-                                            <span>-{d.amount} Kč</span>
+                                            <div className="flex items-center gap-2">
+                                                <span>-{d.amount} Kč</span>
+                                                <button onClick={() => handleRemoveDiscount(d.code)} className="text-red-400 hover:text-red-600"><X size={12}/></button>
+                                            </div>
                                         </div>
                                     ))}
                                     {editingOrder.packagingFee > 0 && (
@@ -736,7 +755,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                     )}
                                     <div className="flex justify-between items-center pt-2 border-t border-gray-200 mt-2">
                                         <span className="font-bold text-sm">CELKEM:</span>
-                                        <span className="font-bold text-lg text-accent">{Math.max(0, editingOrder.totalPrice - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0)) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0)} Kč</span>
+                                        <span className="font-bold text-lg text-accent">{Math.max(0, editingOrder.totalPrice - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0))} Kč</span>
                                     </div>
                                 </div>
                             </div>

@@ -26,9 +26,8 @@ export const Cart: React.FC = () => {
   
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(() => {
     const saved = localStorage.getItem('cart_paymentMethod') as PaymentMethod;
-    // If saved method is still active, use it. Otherwise use first active or fallback.
     if (saved && activePaymentMethods.some(m => m.id === saved)) return saved;
-    return activePaymentMethods.length > 0 ? activePaymentMethods[0].id : PaymentMethod.GATEWAY; // Default fallback to something even if disabled, validation will block submit
+    return activePaymentMethods.length > 0 ? activePaymentMethods[0].id : PaymentMethod.GATEWAY; 
   });
 
   const [orderNote, setOrderNote] = useState('');
@@ -46,15 +45,15 @@ export const Cart: React.FC = () => {
   const enabledRegions = useMemo(() => settings.deliveryRegions.filter(r => r.enabled), [settings.deliveryRegions]);
   const activePickupLocations = useMemo(() => settings.pickupLocations?.filter(l => l.enabled) || [], [settings.pickupLocations]);
 
-  // Auto-select pickup location if only 1 exists
   useEffect(() => {
     if (deliveryType === DeliveryType.PICKUP && activePickupLocations.length === 1 && !selectedPickupLocationId) {
         setSelectedPickupLocationId(activePickupLocations[0].id);
     }
   }, [deliveryType, activePickupLocations]);
 
-  // Ensure payment method is valid when active methods change
   useEffect(() => {
+      // Sync payment method if the currently selected one is no longer available, 
+      // but ONLY if activePaymentMethods has actually loaded (length > 0)
       if (activePaymentMethods.length > 0 && !activePaymentMethods.some(m => m.id === paymentMethod)) {
           setPaymentMethod(activePaymentMethods[0].id);
       }
@@ -88,7 +87,7 @@ export const Cart: React.FC = () => {
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
         
         if (lastOrder) {
-           const matched = user.deliveryAddresses.find(a => lastOrder.deliveryAddress?.includes(a.street));
+           const matched = user.deliveryAddresses.find(a => a.street === lastOrder.deliveryStreet && a.city === lastOrder.deliveryCity);
            if (matched) setSelectedAddrId(matched.id);
            else setSelectedAddrId(user.deliveryAddresses[0].id);
         } else {
@@ -106,7 +105,7 @@ export const Cart: React.FC = () => {
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
          
          if (lastOrder) {
-            const matched = user.billingAddresses.find(a => lastOrder.billingAddress?.includes(a.street));
+            const matched = user.billingAddresses.find(a => a.street === lastOrder.billingStreet && a.city === lastOrder.billingCity);
             if (matched) setSelectedBillingId(matched.id);
             else setSelectedBillingId(user.billingAddresses[0].id);
          } else {
@@ -122,15 +121,12 @@ export const Cart: React.FC = () => {
   const selectedAddr = user?.deliveryAddresses.find(a => a.id === selectedAddrId);
   const selectedBilling = user?.billingAddresses.find(a => a.id === selectedBillingId);
   
-  // Determine Region based on selected address IF delivery
   const region = (deliveryType === DeliveryType.DELIVERY && selectedAddr) ? getDeliveryRegion(selectedAddr.zip) : undefined;
   
-  // Determine Pickup Location
   const pickupLocation = (deliveryType === DeliveryType.PICKUP && selectedPickupLocationId) 
     ? activePickupLocations.find(l => l.id === selectedPickupLocationId) 
     : undefined;
 
-  // Check region/pickup availability for selected date
   const regionInfo = (region && date) ? getRegionInfoForDate(region, date) : { isOpen: true, isException: false, timeStart: undefined, timeEnd: undefined };
   const pickupInfo = (pickupLocation && date) ? getPickupPointInfo(pickupLocation, date) : { isOpen: true, isException: false, timeStart: undefined, timeEnd: undefined };
 
@@ -146,8 +142,37 @@ export const Cart: React.FC = () => {
     return checkAvailability(date, cart);
   }, [date, cart, checkAvailability]);
 
-  // Check for Payment Validity
-  const isPaymentValid = activePaymentMethods.some(m => m.id === paymentMethod);
+  // Validation Logic for Submit Button
+  const canSubmit = useMemo(() => {
+      if (!user) return false;
+      if (user.isBlocked) return false;
+      if (!date) return false;
+      if (!availability?.allowed) return false;
+      if (!selectedBillingId) return false;
+      if (hasValidationErrors) return false;
+      if (isDeliveryMethodInvalid) return false;
+      if (!termsConsent) return false;
+      if (deliveryType === DeliveryType.PICKUP && !pickupLocation) return false;
+      if (deliveryType === DeliveryType.DELIVERY && !region) return false;
+      
+      // Payment method check relaxed to allow submission if list is empty (fallback to default on backend)
+      // or if it's currently loading.
+      return true;
+  }, [user, date, availability, selectedBillingId, hasValidationErrors, isDeliveryMethodInvalid, termsConsent, deliveryType, pickupLocation, region]);
+
+  const submitBlockerReason = useMemo(() => {
+      if (!user) return t('cart.login_required');
+      if (user.isBlocked) return t('cart.account_blocked');
+      if (!date) return "Vyberte datum";
+      if (!availability?.allowed) return availability?.reason || "Termín není dostupný";
+      if (!selectedBillingId) return "Vyberte fakturační adresu";
+      if (hasValidationErrors) return "Opravte chyby v košíku";
+      if (deliveryType === DeliveryType.DELIVERY && !region) return t('cart.delivery_unavailable');
+      if (deliveryType === DeliveryType.PICKUP && !pickupLocation) return t('cart.select_pickup');
+      if (isDeliveryMethodInvalid) return "Zvolená doprava není v tento den možná";
+      if (!termsConsent) return "Nutný souhlas s VOP";
+      return null;
+  }, [user, date, availability, selectedBillingId, hasValidationErrors, deliveryType, region, pickupLocation, isDeliveryMethodInvalid, termsConsent]);
 
   const handleApplyDiscount = () => {
     setDiscountError('');
@@ -162,19 +187,16 @@ export const Cart: React.FC = () => {
   };
 
   const handleSubmit = () => {
-    if (!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || hasValidationErrors || isDeliveryMethodInvalid || !termsConsent || !isPaymentValid) return;
-    if (deliveryType === DeliveryType.DELIVERY && !region) return;
-    if (deliveryType === DeliveryType.PICKUP && !pickupLocation) return;
+    if (!canSubmit) return;
 
-    // Update user consent profile setting
-    if (user.marketingConsent !== marketingConsent) {
-        updateUser({ ...user, marketingConsent });
+    if (user!.marketingConsent !== marketingConsent) {
+        updateUser({ ...user!, marketingConsent });
     }
 
     const newOrder: Order = {
       id: `${Math.floor(Math.random() * 90000) + 10000}`,
-      userId: user.id,
-      userName: user.name,
+      userId: user!.id,
+      userName: user!.name,
       items: [...cart],
       totalPrice: itemsTotal,
       packagingFee,
@@ -182,10 +204,21 @@ export const Cart: React.FC = () => {
       appliedDiscounts,
       deliveryType,
       deliveryDate: date,
-      deliveryAddress: deliveryType === DeliveryType.PICKUP 
-        ? `${t('cart.pickup')}: ${pickupLocation?.name}, ${pickupLocation?.street}, ${pickupLocation?.city}` 
-        : `${selectedAddr?.name}\n${selectedAddr?.street}\n${selectedAddr?.city}\n${selectedAddr?.zip}\nTel: ${selectedAddr?.phone}`,
-      billingAddress: `${selectedBilling?.name}, ${selectedBilling?.street}, ${selectedBilling?.city}`,
+      
+      // Explicitly map split address fields
+      deliveryName: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.name : undefined,
+      deliveryStreet: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.street : undefined,
+      deliveryCity: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.city : undefined,
+      deliveryZip: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.zip : undefined,
+      deliveryPhone: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.phone : undefined,
+
+      billingName: selectedBilling?.name,
+      billingStreet: selectedBilling?.street,
+      billingCity: selectedBilling?.city,
+      billingZip: selectedBilling?.zip,
+      billingIc: selectedBilling?.ic,
+      billingDic: selectedBilling?.dic,
+
       status: OrderStatus.CREATED,
       isPaid: paymentMethod === PaymentMethod.GATEWAY,
       paymentMethod,
@@ -196,7 +229,7 @@ export const Cart: React.FC = () => {
     };
     
     newOrder.invoiceUrl = generateInvoice(newOrder);
-    addOrder(newOrder); // Server handles VOP attachment via path
+    addOrder(newOrder); 
     setSubmittedOrder(newOrder);
     setStep(3);
     clearCart();
@@ -207,13 +240,10 @@ export const Cart: React.FC = () => {
     setAddressError(null);
     if (!user || !modalType || !editingAddr) return;
 
-    // Validation
     if (!editingAddr.name || editingAddr.name.trim().length < 3) { setAddressError(t('validation.name_length')); return; }
     if (!editingAddr.street || editingAddr.street.trim().length < 1) { setAddressError(t('validation.street_required')); return; }
     if (!editingAddr.city || editingAddr.city.trim().length < 1) { setAddressError(t('validation.city_required')); return; }
     if (!editingAddr.zip || !editingAddr.zip.replace(/\s/g, '').match(/^\d{5}$/)) { setAddressError(t('validation.zip_format')); return; }
-    
-    // Validate phone for both delivery and billing to ensure contact info
     if (!editingAddr.phone || !/^[+]?[0-9]{9,}$/.test(editingAddr.phone.replace(/\s/g, ''))) { 
         setAddressError(t('validation.phone_format')); 
         return; 
@@ -328,7 +358,6 @@ export const Cart: React.FC = () => {
 
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <h3 className="font-bold mb-4 flex items-center"><Truck className="mr-2 text-accent" size={20}/> {t('cart.delivery_pickup')}</h3>
-                    {/* ... (delivery regions logic remains same) ... */}
                     <div className={`grid ${enabledRegions.length > 0 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} gap-4`}>
                        <button onClick={() => setDeliveryType(DeliveryType.PICKUP)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.PICKUP ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
                           <div className="font-bold text-sm mb-1">{t('cart.pickup')}</div>
@@ -431,7 +460,6 @@ export const Cart: React.FC = () => {
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <h3 className="font-bold mb-4 flex items-center"><Activity className="mr-2 text-accent" size={20}/> {t('cart.date_selection')}</h3>
                     
-                    {/* Replaced with Imported CustomCalendar */}
                     <CustomCalendar 
                       cart={cart} 
                       checkAvailability={checkAvailability} 
@@ -500,7 +528,6 @@ export const Cart: React.FC = () => {
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <h3 className="font-bold mb-4 flex items-center"><CreditCard className="mr-2 text-accent" size={20}/> {t('cart.payment_method')}</h3>
                     
-                    {/* Error if no payment methods available */}
                     {activePaymentMethods.length === 0 ? (
                         <div className="bg-red-50 p-4 rounded-lg text-red-600 text-sm font-bold flex items-center">
                             <AlertCircle size={20} className="mr-2"/> Není k dispozici žádná aktivní platební metoda. Objednávku nelze dokončit.
@@ -617,8 +644,16 @@ export const Cart: React.FC = () => {
                         </label>
                     </div>
                   )}
+                  
+                  {/* DIAGNOSTICS IF DISABLED */}
+                  {!canSubmit && submitBlockerReason && (
+                      <div className="text-center text-xs text-red-600 font-bold mb-2 p-2 bg-red-50 rounded">
+                          {submitBlockerReason}
+                      </div>
+                  )}
+
                   <button 
-                    disabled={!user || user.isBlocked || !date || !availability?.allowed || !selectedBillingId || isDeliveryMethodInvalid || !termsConsent || (deliveryType === DeliveryType.PICKUP && !pickupLocation) || (deliveryType === DeliveryType.DELIVERY && !region) || !isPaymentValid} 
+                    disabled={!canSubmit}
                     onClick={handleSubmit} 
                     className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition disabled:opacity-50 disabled:bg-gray-300 uppercase text-xs tracking-widest"
                   >
@@ -631,7 +666,6 @@ export const Cart: React.FC = () => {
         </div>
       </div>
       
-      {/* ... (Address Modal stays same) ... */}
       {modalType && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
           <form onSubmit={saveAddress} className="bg-white p-8 rounded-2xl w-full max-w-md space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
@@ -686,7 +720,6 @@ export const Cart: React.FC = () => {
         </div>
       )}
 
-      {/* VOP Modal */}
       {isTermsModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setIsTermsModalOpen(false)}>
             <div className="bg-white rounded-2xl p-8 max-w-2xl w-full shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>

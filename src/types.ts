@@ -55,7 +55,7 @@ export interface Address {
   street: string;
   city: string;
   zip: string;
-  phone: string; // Added mandatory phone
+  phone: string; 
   ic?: string;
   dic?: string;
 }
@@ -212,10 +212,25 @@ export interface Order {
   packagingFee: number;
   deliveryFee: number;
   appliedDiscounts?: AppliedDiscount[];
+  
   deliveryType: DeliveryType;
   deliveryDate: string;
-  deliveryAddress?: string;
-  billingAddress?: string;
+  
+  // Split Delivery Address Attributes
+  deliveryName?: string;
+  deliveryStreet?: string;
+  deliveryCity?: string;
+  deliveryZip?: string;
+  deliveryPhone?: string;
+
+  // Split Billing Address Attributes
+  billingName?: string;
+  billingStreet?: string;
+  billingCity?: string;
+  billingZip?: string;
+  billingIc?: string;
+  billingDic?: string;
+
   status: OrderStatus;
   statusHistory?: OrderStatusHistory[];
   isPaid: boolean;
@@ -226,6 +241,7 @@ export interface Order {
   companyDetailsSnapshot?: CompanyDetails;
   language: Language;
   pickupLocationId?: string; 
+  finalInvoiceDate?: string; // New field for Tax Document date
 }
 
 export type CategoryCapacities = Record<string, number>; 
@@ -257,7 +273,7 @@ export interface GlobalSettings {
   };
   enabledLanguages: Language[]; 
   enableAiTranslation: boolean;
-  sqlDebug: boolean; // NEW FIELD
+  sqlDebug: boolean; 
 }
 
 export interface BackupData {

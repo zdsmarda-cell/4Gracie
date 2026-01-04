@@ -218,6 +218,7 @@ const initDb = async () => {
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
         `);
 
+        // UPDATED: Orders table with separated address columns and final_invoice_date
         await db.query(`
             CREATE TABLE IF NOT EXISTS orders (
                 id VARCHAR(50) PRIMARY KEY,
@@ -231,18 +232,38 @@ const initDb = async () => {
                 payment_method VARCHAR(50),
                 is_paid BOOLEAN DEFAULT FALSE,
                 delivery_type VARCHAR(50),
-                delivery_address TEXT,
-                billing_address TEXT,
+                
+                delivery_name VARCHAR(100),
+                delivery_street VARCHAR(255),
+                delivery_city VARCHAR(100),
+                delivery_zip VARCHAR(20),
+                delivery_phone VARCHAR(20),
+                
+                billing_name VARCHAR(100),
+                billing_street VARCHAR(255),
+                billing_city VARCHAR(100),
+                billing_zip VARCHAR(20),
+                billing_ic VARCHAR(20),
+                billing_dic VARCHAR(20),
+
                 note TEXT,
                 pickup_location_id VARCHAR(100),
                 language VARCHAR(10),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                final_invoice_date TIMESTAMP NULL,
                 full_json JSON,
                 INDEX idx_date (delivery_date),
                 INDEX idx_status (status),
                 INDEX idx_user (user_id)
             ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
         `);
+        
+        // Ensure column exists (migration for existing DBs)
+        try {
+            await db.query(`ALTER TABLE orders ADD COLUMN final_invoice_date TIMESTAMP NULL AFTER created_at`);
+        } catch (e) {
+            // Ignore if column already exists
+        }
 
         await db.query(`
             CREATE TABLE IF NOT EXISTS order_items (
@@ -342,14 +363,21 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
     const [calendar] = await db.query('SELECT * FROM calendar_exceptions');
     
     const today = new Date().toISOString().split('T')[0];
-    const [activeOrders] = await db.query('SELECT full_json FROM orders WHERE delivery_date >= ? AND status != "cancelled"', [today]);
+    const [activeOrders] = await db.query('SELECT full_json, final_invoice_date FROM orders WHERE delivery_date >= ? AND status != "cancelled"', [today]);
+
+    // Merge final_invoice_date from DB column into JSON for client
+    const mergedOrders = activeOrders.map(r => {
+        const json = parseJsonCol(r, 'full_json');
+        if (r.final_invoice_date) json.finalInvoiceDate = r.final_invoice_date;
+        return json;
+    });
 
     res.json({
         products,
         settings: settings.length ? parseJsonCol(settings[0]) : null,
         discountCodes: discounts.map(r => ({...parseJsonCol(r), id: r.id})),
         dayConfigs: calendar.map(r => ({...parseJsonCol(r), date: r.date})),
-        orders: activeOrders.map(r => parseJsonCol(r, 'full_json')),
+        orders: mergedOrders,
         users: [] // Don't send all users in bootstrap for security/performance
     });
 }));
@@ -524,6 +552,10 @@ app.post('/api/orders', withDb(async (req, res, db) => {
     delete dbOrder.vopPdf; 
     const deliveryDate = formatToMysqlDate(dbOrder.deliveryDate);
     const createdAt = formatToMysqlDateTime(dbOrder.createdAt);
+    // If status is delivered already (e.g. sync), ensure final date is set
+    const finalDate = (dbOrder.status === 'delivered' && dbOrder.finalInvoiceDate) 
+        ? formatToMysqlDateTime(dbOrder.finalInvoiceDate) 
+        : null;
 
     const conn = await db.getConnection();
     try {
@@ -532,19 +564,31 @@ app.post('/api/orders', withDb(async (req, res, db) => {
             INSERT INTO orders (
                 id, user_id, user_name, delivery_date, status, total_price, 
                 delivery_fee, packaging_fee, payment_method, is_paid, 
-                delivery_type, delivery_address, billing_address, note, 
-                pickup_location_id, language, created_at, full_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                delivery_type, 
+                delivery_name, delivery_street, delivery_city, delivery_zip, delivery_phone,
+                billing_name, billing_street, billing_city, billing_zip, billing_ic, billing_dic,
+                note, pickup_location_id, language, created_at, final_invoice_date, full_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE 
                 status=?, total_price=?, delivery_date=?, user_name=?, 
-                is_paid=?, delivery_address=?, full_json=?
+                is_paid=?, delivery_type=?, delivery_name=?, delivery_street=?, 
+                delivery_city=?, delivery_zip=?, delivery_phone=?, 
+                billing_name=?, billing_street=?, billing_city=?, billing_zip=?, 
+                billing_ic=?, billing_dic=?, final_invoice_date=?, full_json=?
         `, [
             dbOrder.id, dbOrder.userId, dbOrder.userName, deliveryDate, dbOrder.status, dbOrder.totalPrice,
             dbOrder.deliveryFee, dbOrder.packagingFee, dbOrder.paymentMethod, dbOrder.isPaid,
-            dbOrder.deliveryType, dbOrder.deliveryAddress, dbOrder.billingAddress, dbOrder.note,
-            dbOrder.pickupLocationId, dbOrder.language, createdAt, JSON.stringify(dbOrder),
+            dbOrder.deliveryType, 
+            dbOrder.deliveryName, dbOrder.deliveryStreet, dbOrder.deliveryCity, dbOrder.deliveryZip, dbOrder.deliveryPhone,
+            dbOrder.billingName, dbOrder.billingStreet, dbOrder.billingCity, dbOrder.billingZip, dbOrder.billingIc, dbOrder.billingDic,
+            dbOrder.note, dbOrder.pickupLocationId, dbOrder.language, createdAt, finalDate, JSON.stringify(dbOrder),
+            
             dbOrder.status, dbOrder.totalPrice, deliveryDate, dbOrder.userName,
-            dbOrder.isPaid, dbOrder.deliveryAddress, JSON.stringify(dbOrder)
+            dbOrder.isPaid, dbOrder.deliveryType,
+            dbOrder.deliveryName, dbOrder.deliveryStreet, dbOrder.deliveryCity, dbOrder.deliveryZip, dbOrder.deliveryPhone,
+            dbOrder.billingName, dbOrder.billingStreet, dbOrder.billingCity, dbOrder.billingZip, dbOrder.billingIc, dbOrder.billingDic,
+            finalDate,
+            JSON.stringify(dbOrder)
         ]);
 
         await conn.query('DELETE FROM order_items WHERE order_id = ?', [dbOrder.id]);
@@ -562,7 +606,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
         }
         await conn.commit();
 
-        // Email logic can be placed here if needed for creation, similar to status update below
         res.json({ success: true, id: dbOrder.id });
     } catch (e) {
         await conn.rollback();
@@ -575,7 +618,7 @@ app.post('/api/orders', withDb(async (req, res, db) => {
 app.get('/api/orders', withDb(async (req, res, db) => {
     const { id, dateFrom, dateTo, userId, status, customer, page = 1, limit = 50 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
-    let query = 'SELECT full_json FROM orders WHERE 1=1';
+    let query = 'SELECT full_json, final_invoice_date FROM orders WHERE 1=1';
     const params = [];
 
     if (id) { query += ' AND id LIKE ?'; params.push(`%${id}%`); }
@@ -585,7 +628,7 @@ app.get('/api/orders', withDb(async (req, res, db) => {
     if (status) { query += ' AND status = ?'; params.push(status); }
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
 
-    const [cnt] = await db.query(query.replace('SELECT full_json', 'SELECT COUNT(*) as t'), params);
+    const [cnt] = await db.query(query.replace('SELECT full_json, final_invoice_date', 'SELECT COUNT(*) as t'), params);
     
     query += ' ORDER BY delivery_date DESC, created_at DESC LIMIT ? OFFSET ?';
     params.push(Number(limit), Number(offset));
@@ -593,7 +636,12 @@ app.get('/api/orders', withDb(async (req, res, db) => {
     const [rows] = await db.query(query, params);
     res.json({ 
         success: true, 
-        orders: rows.map(r => parseJsonCol(r, 'full_json')), 
+        orders: rows.map(r => {
+            const json = parseJsonCol(r, 'full_json');
+            // Merge actual DB column back into JSON if missing/outdated
+            if (r.final_invoice_date) json.finalInvoiceDate = r.final_invoice_date;
+            return json;
+        }), 
         total: cnt[0].t, 
         page: Number(page), 
         pages: Math.ceil(cnt[0].t / Number(limit)) 
@@ -605,7 +653,27 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
     if (!ids || ids.length === 0) return res.status(400).json({ error: "No IDs provided" });
 
     const placeholders = ids.map(() => '?').join(',');
-    await db.query(`UPDATE orders SET status=?, full_json=JSON_SET(full_json, '$.status', ?) WHERE id IN (${placeholders})`, [status, status, ...ids]);
+    
+    // Logic: If status becomes 'delivered', set final_invoice_date to NOW() if it is currently NULL.
+    // Also update JSON to reflect this date.
+    let updateSql = `UPDATE orders SET status=?, full_json=JSON_SET(full_json, '$.status', ?)`;
+    const params = [status, status];
+
+    if (status === 'delivered') {
+        // Only set date if not already set. 
+        // We also need to sync this date into the JSON blob so subsequent GETs have it inside the object structure immediately.
+        // Complex SQL to inject date into JSON: JSON_SET(json, '$.finalInvoiceDate', DATE_FORMAT(NOW(), ...))
+        // Since we update multiple rows, using SQL logic is better than fetching-updating-saving in loop.
+        updateSql += `, 
+            final_invoice_date = IF(final_invoice_date IS NULL, NOW(), final_invoice_date),
+            full_json = JSON_SET(full_json, '$.finalInvoiceDate', DATE_FORMAT(IF(final_invoice_date IS NULL, NOW(), final_invoice_date), '%Y-%m-%dT%H:%i:%s.000Z'))
+        `;
+    }
+
+    updateSql += ` WHERE id IN (${placeholders})`;
+    params.push(...ids);
+
+    await db.query(updateSql, params);
 
     if (notifyCustomer && transporter) {
         try {
