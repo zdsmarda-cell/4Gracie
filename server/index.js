@@ -108,6 +108,31 @@ const getDb = async () => {
   }
 };
 
+// --- HELPER FUNCTIONS ---
+// Fix for "Incorrect date format" errors in MySQL
+const formatToMysqlDateTime = (isoDateString) => {
+    if (!isoDateString) return new Date().toISOString().slice(0, 19).replace('T', ' ');
+    try {
+        // If it's already in simple format (length 10 like YYYY-MM-DD), return as is (DB handles it or we append time)
+        if (isoDateString.length === 10) return isoDateString; 
+        
+        // Remove 'T' and 'Z' and milliseconds for standard SQL format 'YYYY-MM-DD HH:MM:SS'
+        return new Date(isoDateString).toISOString().slice(0, 19).replace('T', ' ');
+    } catch (e) {
+        console.warn("Date formatting failed for:", isoDateString);
+        return new Date().toISOString().slice(0, 19).replace('T', ' ');
+    }
+};
+
+const formatToMysqlDate = (dateString) => {
+    if (!dateString) return new Date().toISOString().split('T')[0];
+    try {
+        return new Date(dateString).toISOString().split('T')[0];
+    } catch (e) {
+        return dateString; // Fallback
+    }
+};
+
 // --- INITIALIZATION & SEEDING ---
 const initDb = async () => {
     const db = await getDb();
@@ -426,7 +451,10 @@ app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
     // 3. Send Email
     if (transporter) {
         try {
-            const link = `${process.env.VITE_APP_URL || 'http://localhost:5173'}/#/reset-password?token=${token}`;
+            // FIX: Use VITE_APP_URL or fallback to Origin header to generate correct link
+            const appUrl = process.env.VITE_APP_URL || req.headers.origin || 'http://localhost:5173';
+            const link = `${appUrl}/#/reset-password?token=${token}`;
+            
             await transporter.sendMail({
                 from: process.env.SMTP_FROM || '"4Gracie" <info@4gracie.cz>',
                 to: email,
@@ -445,7 +473,9 @@ app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
             return res.status(500).json({ error: 'Chyba při odesílání emailu.' });
         }
     } else {
-        console.warn("⚠️ SMTP not configured, printing reset link:", `${process.env.VITE_APP_URL || 'http://localhost:5173'}/#/reset-password?token=${token}`);
+        // For development/debugging when no SMTP is set
+        const appUrl = process.env.VITE_APP_URL || req.headers.origin || 'http://localhost:5173';
+        console.warn("⚠️ SMTP not configured, printing reset link:", `${appUrl}/#/reset-password?token=${token}`);
     }
 
     res.json({ success: true, message: 'Instrukce byly odeslány na váš email.' });
@@ -462,6 +492,10 @@ app.post('/api/orders', withDb(async (req, res, db) => {
     const dbOrder = { ...o };
     delete dbOrder.vopPdf; 
 
+    // Date formatting to ensure MySQL compatibility (YYYY-MM-DD HH:MM:SS)
+    const deliveryDate = formatToMysqlDate(dbOrder.deliveryDate);
+    const createdAt = formatToMysqlDateTime(dbOrder.createdAt);
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
@@ -476,11 +510,11 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 status=?, total_price=?, delivery_date=?, user_name=?, 
                 is_paid=?, delivery_address=?, full_json=?
         `, [
-            dbOrder.id, dbOrder.userId, dbOrder.userName, dbOrder.deliveryDate, dbOrder.status, dbOrder.totalPrice,
+            dbOrder.id, dbOrder.userId, dbOrder.userName, deliveryDate, dbOrder.status, dbOrder.totalPrice,
             dbOrder.deliveryFee, dbOrder.packagingFee, dbOrder.paymentMethod, dbOrder.isPaid,
             dbOrder.deliveryType, dbOrder.deliveryAddress, dbOrder.billingAddress, dbOrder.note,
-            dbOrder.pickupLocationId, dbOrder.language, dbOrder.createdAt || new Date(), JSON.stringify(dbOrder),
-            dbOrder.status, dbOrder.totalPrice, dbOrder.deliveryDate, dbOrder.userName,
+            dbOrder.pickupLocationId, dbOrder.language, createdAt, JSON.stringify(dbOrder),
+            dbOrder.status, dbOrder.totalPrice, deliveryDate, dbOrder.userName,
             dbOrder.isPaid, dbOrder.deliveryAddress, JSON.stringify(dbOrder)
         ]);
 
