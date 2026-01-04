@@ -50,15 +50,22 @@ for (const p of pathsToCheck) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// --- GLOBAL REQUEST LOGGER ---
+// This will help us see exactly what URL is hitting the node server
+app.use((req, res, next) => {
+    console.log(`📡 [${req.method}] ${req.url}`);
+    next();
+});
+
 // --- MIDDLEWARE ---
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Global headers - Be careful not to block images
+// Global headers
 app.use((req, res, next) => {
-    // Only disable caching for API endpoints, allow it for uploads
-    if (req.path.startsWith('/api')) {
+    // Disable cache for API, but allow for images (handled in image route)
+    if (req.path.startsWith('/api') && !req.path.includes('/uploads/')) {
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     }
     next();
@@ -75,16 +82,24 @@ if (!fs.existsSync(UPLOAD_IMAGES_DIR)) fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursi
 
 console.log(`📂 Serving static uploads from: ${UPLOAD_ROOT}`);
 
-// FIXED: Use REGEX routing to bypass Express 5 "path-to-regexp" syntax errors.
-// Matches any path starting with /uploads/ and captures the rest in params[0]
-app.get(/^\/uploads\/(.+)$/, (req, res) => {
+// --- FILE SERVING HANDLER ---
+// We define the handler function separately to use it on multiple routes
+const handleFileRequest = (req, res) => {
     try {
-        const relativePath = req.params[0];
-        console.log(`🔍 [READ Request] URL: ${req.originalUrl}`);
-        console.log(`   > Captured Relative: '${relativePath}'`);
+        // Extract the path after 'uploads/' regardless of prefix (/uploads or /api/uploads)
+        // Regex: Match everything after the last occurrence of 'uploads/'
+        const match = req.path.match(/uploads\/(.+)$/);
         
+        if (!match || !match[1]) {
+            console.warn(`   ⚠️ Invalid file path format: ${req.path}`);
+            return res.status(404).send('Invalid path');
+        }
+
+        const relativePath = match[1];
+        console.log(`🔍 [FILE READ] Request: ${req.url} -> Target: ${relativePath}`);
+
         // Prevent directory traversal
-        if (!relativePath || relativePath.includes('..')) {
+        if (relativePath.includes('..')) {
             console.warn(`   ⚠️ Access Denied (Directory Traversal attempt)`);
             return res.status(403).send('Access Denied');
         }
@@ -93,8 +108,6 @@ app.get(/^\/uploads\/(.+)$/, (req, res) => {
         const safeRelative = decodeURIComponent(relativePath);
         const fullPath = path.join(UPLOAD_ROOT, safeRelative);
         
-        console.log(`   > Target Absolute Path: '${fullPath}'`);
-
         // Verify the file is actually inside our upload root
         if (!fullPath.startsWith(UPLOAD_ROOT)) {
             console.warn(`   ⚠️ Access Denied (Path outside root)`);
@@ -108,27 +121,34 @@ app.get(/^\/uploads\/(.+)$/, (req, res) => {
                 return res.status(403).send('Access Denied');
             }
             
-            console.log(`   ✅ File FOUND. Streaming...`);
+            // Set cache headers for images
+            res.set('Cache-Control', 'public, max-age=86400'); // Cache for 1 day
             
-            // Explicitly use absolute path with root option disabled (since we provide absolute path)
-            // or just provide the absolute path string.
             res.sendFile(fullPath, (err) => {
                 if (err) {
                     console.error(`   ❌ Error sending file:`, err);
                     if (!res.headersSent) res.status(500).end(); 
                 } else {
-                    console.log(`   🚀 File sent successfully.`);
+                    // console.log(`   🚀 File sent successfully.`);
                 }
             });
         } else {
-            console.error(`   ❌ File NOT FOUND on disk.`);
+            console.error(`   ❌ File NOT FOUND on disk: ${fullPath}`);
             res.status(404).send('File not found');
         }
     } catch (error) {
         console.error('Server error serving file:', error);
         if (!res.headersSent) res.status(500).send('Internal Server Error');
     }
-});
+};
+
+// --- FILE ROUTES ---
+// 1. Listen on /api/uploads/... (This ensures it passes through Nginx/Apache API proxy rules)
+app.get('/api/uploads/*', handleFileRequest);
+
+// 2. Listen on /uploads/... (Legacy support, or if Nginx is configured to pass these too)
+app.get('/uploads/*', handleFileRequest);
+
 
 // --- DATABASE CONNECTION ---
 let pool = null;
@@ -516,7 +536,8 @@ app.post('/api/admin/upload', async (req, res) => {
     try { 
         fs.writeFileSync(fullPath, buffer);
         console.log(`✅ Image saved: ${fullPath} (${buffer.length} bytes)`);
-        res.json({ success: true, url: `/uploads/images/${fileName}` }); 
+        // IMPORTANT: Return URL with /api/uploads prefix so it bypasses Nginx static serving
+        res.json({ success: true, url: `/api/uploads/images/${fileName}` }); 
     } catch (err) { 
         console.error("❌ Save failed:", err);
         res.status(500).json({ error: 'Save failed' }); 
