@@ -14,20 +14,39 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- CONFIG LOADING ---
+console.log("--- 4Gracie Server Init ---");
+console.log(`[Debug] Script location: ${__dirname}`);
+console.log(`[Debug] CWD: ${process.cwd()}`);
+
 const pathsToCheck = [
-  path.resolve(__dirname, '.env'),
-  path.resolve(process.cwd(), '.env'),
-  path.resolve(__dirname, '..', '.env')
+  path.resolve(__dirname, '..', '.env'), // 1. Priority: Project Root (one level up from server/)
+  path.resolve(process.cwd(), '.env'),   // 2. Priority: Where the script was called from
+  path.resolve(__dirname, '.env')        // 3. Priority: Inside server/ directory
 ];
 
 let envLoaded = false;
 for (const p of pathsToCheck) {
+  console.log(`[Debug] Checking for .env at: ${p}`);
   if (fs.existsSync(p)) {
     console.log(`✅ FOUND config file at: ${p}`);
-    dotenv.config({ path: p });
-    envLoaded = true;
+    const result = dotenv.config({ path: p });
+    if (result.error) {
+        console.error(`❌ Error parsing .env:`, result.error);
+    } else {
+        envLoaded = true;
+        console.log(`✅ Loaded environment variables.`);
+    }
     break;
   }
+}
+
+if (!envLoaded) {
+    console.warn("⚠️ WARNING: No .env file found in standard locations. HTTPS and DB connections may fail.");
+} else {
+    // Log loaded critical vars (masked)
+    console.log(`[Debug] DB_HOST: ${process.env.DB_HOST || 'Not Set'}`);
+    console.log(`[Debug] SSL_KEY_PATH: ${process.env.SSL_KEY_PATH || 'Not Set'}`);
+    console.log(`[Debug] SSL_CERT_PATH: ${process.env.SSL_CERT_PATH || 'Not Set'}`);
 }
 
 const app = express();
@@ -49,7 +68,8 @@ app.use((req, res, next) => {
 });
 
 // --- STATIC FILES & UPLOAD CONFIG ---
-const UPLOAD_ROOT = path.join(process.cwd(), 'uploads');
+// Resolve uploads relative to project root (one level up from server/)
+const UPLOAD_ROOT = path.resolve(__dirname, '..', 'uploads');
 const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
 
 console.log(`📂 Upload Root configured at: ${UPLOAD_ROOT}`);
@@ -89,7 +109,7 @@ let sqlDebugMode = false; // GLOBAL DEBUG FLAG
 const getDb = async () => {
   if (pool) return pool;
   try {
-    if (!process.env.DB_HOST) throw new Error("DB_HOST missing");
+    if (!process.env.DB_HOST) throw new Error("DB_HOST missing from .env");
     pool = mysql.createPool({
       host: process.env.DB_HOST,
       user: process.env.DB_USER || 'root',
@@ -709,7 +729,13 @@ const startServer = async () => {
           const httpsOptions = { key: fs.readFileSync(sslKeyPath), cert: fs.readFileSync(sslCertPath) };
           https.createServer(httpsOptions, app).listen(PORT, () => console.log(`🚀 Secure Server on port ${PORT}`));
           return;
-      } catch (e) { console.error("HTTPS Fail", e); }
+      } catch (e) { 
+          console.error("❌ HTTPS Fail:", e.message); 
+      }
+  } else {
+      if (sslKeyPath || sslCertPath) {
+          console.warn("⚠️ SSL Paths defined but files not found. Falling back to HTTP.");
+      }
   }
   http.createServer(app).listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 };
