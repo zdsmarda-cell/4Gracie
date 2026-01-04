@@ -24,11 +24,17 @@ import { OperatorTab } from './admin/OperatorTab';
 import { PaymentsTab } from './admin/PaymentsTab';
 import { LoadTab } from './admin/LoadTab';
 import { SettingsTab } from './admin/SettingsTab';
+import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
     const { 
-        dataSource, setDataSource, t, isPreviewEnvironment 
+        dataSource, setDataSource, t, isPreviewEnvironment, user 
     } = useStore();
+
+    // Guard Clause: Redirect if not logged in or not admin
+    if (!user || user.role !== 'admin') {
+        return <Navigate to="/" replace />;
+    }
 
     const [activeTab, setActiveTab] = useState('orders');
     

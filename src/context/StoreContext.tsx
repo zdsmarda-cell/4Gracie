@@ -72,7 +72,7 @@ interface StoreContextType {
   updateUser: (user: User) => Promise<boolean>; 
   updateUserAdmin: (user: User) => Promise<boolean>; 
   toggleUserBlock: (userId: string) => Promise<boolean>;
-  sendPasswordReset: (email: string) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<{ success: boolean, message: string }>;
   resetPasswordByToken: (token: string, newPass: string) => Promise<PasswordChangeResult>;
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
   addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
@@ -80,7 +80,7 @@ interface StoreContextType {
   orders: Order[]; 
   searchOrders: (filters: any) => Promise<{ orders: Order[], total?: number, pages?: number }>; 
   searchUsers: (filters: any) => Promise<User[]>; 
-  addOrder: (order: Order, vopPdfBase64?: string) => Promise<boolean>; // UPDATED
+  addOrder: (order: Order, vopPdfBase64?: string) => Promise<boolean>;
   updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
   updateOrder: (order: Order, sendNotify?: boolean) => Promise<boolean>;
   checkOrderRestoration: (order: Order) => RestorationCheckResult;
@@ -137,7 +137,6 @@ interface StoreContextType {
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
-// ... helper functions ...
 const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
 
 const removeDiacritics = (str: string): string => {
@@ -439,6 +438,88 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const clearCart = () => setCart([]);
 
+  // --- HELPER FUNCTIONS MOVED UP FOR DEPENDENCY RESOLUTION ---
+
+  const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
+    const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
+    if (!dc) return { success: false, error: t('discount.invalid') };
+    if (!dc.enabled) return { success: false, error: 'Tento kód je již neaktivní.' };
+    const actualUsage = orders.filter(o => o.status !== OrderStatus.CANCELLED && o.appliedDiscounts?.some(ad => ad.code === dc.code)).length;
+    if (dc.maxUsage > 0 && actualUsage >= dc.maxUsage) return { success: false, error: t('discount.used_up') };
+    const now = new Date().toISOString().split('T')[0];
+    if (dc.validFrom && now < dc.validFrom) return { success: false, error: t('discount.future') };
+    if (dc.validTo && now > dc.validTo) return { success: false, error: t('discount.expired') };
+    
+    const cartTotal = currentCart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const applicableItems = dc.applicableCategories && dc.applicableCategories.length > 0 ? currentCart.filter(item => dc.applicableCategories!.includes(item.category)) : currentCart;
+    const applicableTotal = applicableItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    if (dc.applicableCategories && dc.applicableCategories.length > 0 && applicableTotal === 0) return { success: false, error: 'Sleva se nevztahuje na položky v košíku.' };
+    const valueToCheck = (dc.applicableCategories && dc.applicableCategories.length > 0) ? applicableTotal : cartTotal;
+    if (valueToCheck < dc.minOrderValue) return { success: false, error: t('discount.min_order', { min: dc.minOrderValue.toString() }) };
+
+    let calculatedAmount = 0;
+    if (dc.type === DiscountType.PERCENTAGE) calculatedAmount = Math.floor(applicableTotal * (dc.value / 100));
+    else calculatedAmount = Math.min(dc.value, applicableTotal);
+    return { success: true, discount: dc, amount: calculatedAmount };
+  };
+
+  // --- CORE USER FUNCTIONS MOVED UP ---
+
+  const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
+    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
+    
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', newUser);
+        if (res && res.success) {
+            setAllUsers(prev => [...prev, newUser]);
+            showNotify(`Uživatel ${name} vytvořen a email odeslán.`, 'success', false);
+            return true;
+        }
+        return false;
+    } else {
+        setAllUsers(prev => [...prev, newUser]);
+        showNotify(`Uživatel ${name} vytvořen.`);
+        return true;
+    }
+  };
+
+  const updateUser = async (u: User): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', u);
+        if (res && res.success) {
+            setUser(u);
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            showNotify('Uživatel aktualizován.');
+            return true;
+        }
+        return false;
+    } else {
+        setUser(u);
+        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+        return true;
+    }
+  };
+
+  const updateUserAdmin = async (u: User): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', u);
+        if (res && res.success) {
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            if (user && user.id === u.id) setUser(u);
+            showNotify('Uživatel aktualizován.');
+            return true;
+        }
+        return false;
+    } else {
+        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+        if (user && user.id === u.id) setUser(u);
+        return true;
+    }
+  };
+
+  // --- DEPENDENT USE EFFECTS ---
+
   useEffect(() => {
     if (appliedDiscounts.length === 0) return;
     let updatedDiscounts: AppliedDiscount[] = [];
@@ -457,6 +538,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (removedCodes.length > 0) showNotify(`Slevový kupon ${removedCodes.join(', ')} byl odebrán.`, 'error');
     }
   }, [cart]);
+
+  // --- DEPENDENT FUNCTIONS ---
 
   const searchOrders = useCallback(async (filters: any) => {
       if (dataSource === 'api') {
@@ -485,266 +568,44 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [dataSource, allUsers, apiCall]);
 
-  const addOrder = async (order: Order, vopPdfBase64?: string): Promise<boolean> => {
-    const orderWithHistory: Order = {
-      ...order,
-      language: language,
-      companyDetailsSnapshot: JSON.parse(JSON.stringify(settings.companyDetails)),
-      statusHistory: [{ status: order.status, date: new Date().toISOString() }]
-    };
-    if (dataSource === 'api') {
-      const payload = { ...orderWithHistory, vopPdf: vopPdfBase64 };
-      const res = await apiCall('/api/orders', 'POST', payload);
-      if (res && res.success) {
-        const today = new Date().toISOString().split('T')[0];
-        if (order.deliveryDate >= today) {
-             setOrders(prev => [orderWithHistory, ...prev]);
-        }
-        return true;
-      }
-      return false;
-    } else {
-      setOrders(prev => [orderWithHistory, ...prev]);
-      return true;
-    }
-  };
-
-  const updateOrder = async (order: Order, sendNotify?: boolean): Promise<boolean> => {
-    let updatedOrder = { ...order };
-    if (updatedOrder.items.length === 0) {
-      updatedOrder.status = OrderStatus.CANCELLED;
-      if (!updatedOrder.statusHistory?.some(h => h.status === OrderStatus.CANCELLED)) {
-         updatedOrder.statusHistory = [...(updatedOrder.statusHistory || []), { status: OrderStatus.CANCELLED, date: new Date().toISOString() }];
-      }
-    }
-    if (dataSource === 'api') {
-       const res = await apiCall('/api/orders', 'POST', updatedOrder);
-       if (res && res.success) {
-          setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-          return true;
-       }
-       return false;
-    } else {
-       setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-       return true;
-    }
-  };
-
-  const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean): Promise<boolean> => {
-    if (dataSource === 'api') {
-       const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify });
-       if (res && res.success) {
-          setOrders(prev => prev.map(o => {
-            if (ids.includes(o.id)) {
-              return { ...o, status, statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }] };
-            }
-            return o;
-          }));
-          if (notify) showNotify(t('notification.email_sent'), 'success', true);
-          return true;
-       }
-       return false;
-    } else {
-       setOrders(prev => prev.map(o => {
-          if (ids.includes(o.id)) {
-            return { ...o, status, statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }] };
-          }
-          return o;
-        }));
-        showNotify(`${t('admin.status_update')}: ${t(`status.${status}`)}`);
-        return true;
-    }
-  };
-
-  const addProduct = async (p: Product): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => [...prev, p]); return true; }
-        return false;
-    } else {
-        setProducts(prev => [...prev, p]); return true;
-    }
-  };
-
-  const updateProduct = async (p: Product): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true; }
-        return false;
-    } else {
-        setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
-    }
-  };
-
-  const deleteProduct = async (id: string): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); return true; }
-        return false;
-    } else {
-        setProducts(prev => prev.filter(x => x.id !== id)); return true;
-    }
-  };
-
-  const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
-    if (allUsers.length > 0 && allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
-    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
-    
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/users', 'POST', newUser);
-        if (res && res.success) {
-            showNotify(t('notification.email_sent'), 'success', false);
-            return true;
-        }
-        return false;
-    } else {
-        setAllUsers(prev => [...prev, newUser]);
-        showNotify(t('notification.saved'));
-        return true;
-    }
-  };
-
-  const updateUser = async (u: User): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/users', 'POST', u);
-        if (res && res.success) {
-            setUser(u); 
-            if (allUsers.some(x => x.id === u.id)) {
-                setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-            }
-            return true;
-        }
-        return false;
-    } else {
-        setUser(u);
-        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-        return true;
-    }
-  };
-
-  const updateUserAdmin = async (u: User): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/users', 'POST', u);
-        if (res && res.success) {
-            if (user && user.id === u.id) setUser(u);
-            return true;
-        }
-        return false;
-    } else {
-        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-        if (user && user.id === u.id) setUser(u);
-        return true;
-    }
-  };
-
-  const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/settings', 'POST', s);
-        if (res && res.success) { setSettings(s); return true; }
-        return false;
-    } else {
-        setSettings(s); return true;
-    }
-  };
-
-  const updateDayConfig = async (c: DayConfig): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/calendar', 'POST', c);
-        if (res && res.success) {
-            setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-            return true;
-        }
-        return false;
-    } else {
-        setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-        return true;
-    }
-  };
-
-  const removeDayConfig = async (date: string): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); return true; }
-        return false;
-    } else {
-        setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
-    }
-  };
-
-  const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/discounts', 'POST', c);
-        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); return true; }
-        return false;
-    } else {
-        setDiscountCodes(prev => [...prev, c]); return true;
-    }
-  };
-
-  const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/discounts', 'POST', code);
-        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true; }
-        return false;
-    } else {
-        setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
-    }
-  };
-
-  const deleteDiscountCode = async (id: string): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true; }
-        return false;
-    } else {
-        setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
-    }
-  };
-
-  // --- MISSING FUNCTIONS ADDED HERE ---
-
   const login = async (email: string, password?: string) => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/auth/login', 'POST', { email, password });
         if (res && res.success) {
-            setUser(res.user);
-            return { success: true };
+             const u = res.user;
+             if (password && u.passwordHash !== hashPassword(password)) {
+                 return { success: false, message: 'Chybné heslo.' };
+             }
+             if (u.isBlocked) return { success: false, message: 'Blokován.' };
+             
+             setUser(u);
+             return { success: true };
         }
-        return { success: false, message: res?.message || 'Chyba přihlášení' };
+        return { success: false, message: res?.message || 'Nenalezen.' };
     } else {
         const foundUser = allUsers.find(u => u.email === email);
         if (foundUser) {
-            if (foundUser.isBlocked) return { success: false, message: 'Blokován.' };
-            if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
-            setUser(foundUser);
-            return { success: true };
+          if (foundUser.isBlocked) return { success: false, message: 'Blokován.' };
+          if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
+          setUser(foundUser); 
+          return { success: true };
         }
         return { success: false, message: 'Nenalezen.' };
     }
   };
 
-  const logout = () => { setUser(null); localStorage.removeItem('session_user'); };
+  const logout = () => { 
+      setUser(null); 
+      localStorage.removeItem('session_user'); 
+      window.location.hash = '/'; // Compatible with HashRouter, safe for preview mode
+  };
 
   const register = (name: string, email: string, phone: string, password?: string) => {
-    if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-        showNotify('Tento email je již registrován.', 'error');
-        return;
-    }
-    const newUser: User = { id: Date.now().toString(), name, email, phone, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(password || '1234'), marketingConsent: false };
-
-    if (dataSource === 'api') {
-        apiCall('/api/users', 'POST', newUser).then(res => {
-            if (res && res.success) { 
-                setAllUsers(prev => [...prev, newUser]); 
-                setUser(newUser); 
-                showNotify('Registrace úspěšná.');
-            }
-        });
-    } else {
-        setAllUsers(prev => [...prev, newUser]); 
-        setUser(newUser);
-        showNotify('Registrace úspěšná (Lokální).');
-    }
+      addUser(name, email, phone, 'customer').then(success => {
+          if (success) {
+              login(email, password);
+          }
+      });
   };
 
   const toggleUserBlock = async (id: string): Promise<boolean> => { 
@@ -756,25 +617,40 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return false; 
   };
 
-  const sendPasswordReset = async (email: string) => { 
-      // Simulation of sending password reset
-      showNotify('Email pro obnovu hesla odeslán (Simulace).', 'success');
+  const sendPasswordReset = async (email: string): Promise<{ success: boolean, message: string }> => { 
+      if (dataSource === 'api') { 
+          const res = await apiCall('/api/auth/reset-password', 'POST', { email });
+          if (res && res.success) {
+              return { success: true, message: 'Email s instrukcemi byl odeslán.' };
+          }
+          return { success: false, message: res?.error || 'Chyba serveru' };
+      } else { 
+          return { success: true, message: 'Simulace: Email s instrukcemi by byl odeslán.' };
+      } 
   };
 
   const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => { 
-      return { success: true, message: 'Heslo změněno (Simulace).' }; 
+      if (dataSource === 'api') { 
+          const newHash = hashPassword(newPass); 
+          const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); 
+          if (res && res.success) { 
+              return { success: true, message: res.message || 'Heslo úspěšně změněno.' }; 
+          } 
+          return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' }; 
+      } 
+      return { success: true, message: 'Heslo změněno (Simulace)' }; 
   };
 
   const changePassword = (o: string, n: string) => { 
       if (!user) return { success: false, message: 'Login required' }; 
-      if (dataSource === 'local' && hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; 
+      if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; 
       const u = { ...user, passwordHash: hashPassword(n) }; 
       updateUser(u); 
       return { success: true, message: 'Změněno' }; 
   };
 
   const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
-  
+
   const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { 
       const ex = r.exceptions?.find(e => e.date === d); 
       return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; 
@@ -792,9 +668,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           };
       }
       const date = new Date(dateStr);
-      const dayOfWeek = date.getDay(); // 0 = Sun
+      const dayOfWeek = date.getDay(); 
       const config = location.openingHours[dayOfWeek];
-
       if (!config || !config.isOpen) {
           return { isOpen: false, isException: false, reason: 'Zavřeno' };
       }
@@ -829,7 +704,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
     const load: Record<string, number> = {};
     (settings.categories || []).forEach(cat => load[cat.id] = 0);
-    
     Object.values(ProductCategory).forEach(c => { if (load[c] === undefined) load[c] = 0; });
 
     const usedProductIds = new Set<string>();
@@ -854,17 +728,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
-    if (targetDate < today) return { allowed: false, reason: 'Minulost.', status: 'past' };
+    if (targetDate < today) return { allowed: false, reason: t('error.past'), status: 'past' };
+    
     const categoriesInCart = new Set(items.map(i => i.category));
     const maxLeadTime = items.length > 0 ? Math.max(...items.map(i => i.leadTimeDays || 0)) : 0;
     const minPossibleDate = new Date(today); minPossibleDate.setDate(minPossibleDate.getDate() + maxLeadTime);
-    if (targetDate < minPossibleDate) return { allowed: false, reason: 'Příliš brzy.', status: 'too_soon' };
+    
+    if (targetDate < minPossibleDate) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
+    
     const config = dayConfigs.find(d => d.date === date);
     if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
     
     const load = getDailyLoad(date, excludeOrderId);
     
-    // Simulate adding current cart to load
     items.forEach(item => {
        const productDef = products.find(p => String(p.id) === String(item.id));
        const workload = Number(productDef?.workload) || Number(item.workload) || 0;
@@ -880,16 +756,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     for (const cat of catsToCheck) {
       if (items.length > 0 && !categoriesInCart.has(cat)) continue; 
-      
       const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
       const currentLoad = load[cat] || 0;
-      
-      if (currentLoad > limit) {
-          anyExceeds = true;
-      }
+      if (currentLoad > limit) anyExceeds = true;
     }
     
-    if (anyExceeds) return { allowed: false, reason: 'Kapacita vyčerpána.', status: 'exceeds' };
+    if (anyExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
     return { allowed: true, status: 'available' };
   };
 
@@ -898,38 +770,181 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
      return check.status;
   };
 
-  const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
-    const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
-    if (!dc) return { success: false, error: t('discount.invalid') };
-    if (!dc.enabled) return { success: false, error: t('discount.future') }; 
-    const actualUsage = orders.filter(o => o.status !== OrderStatus.CANCELLED && o.appliedDiscounts?.some(ad => ad.code === dc.code)).length;
-    if (dc.maxUsage > 0 && actualUsage >= dc.maxUsage) return { success: false, error: t('discount.used_up') };
-    const now = new Date().toISOString().split('T')[0];
-    if (dc.validFrom && now < dc.validFrom) return { success: false, error: t('discount.future') };
-    if (dc.validTo && now > dc.validTo) return { success: false, error: t('discount.expired') };
-    
-    const cartTotal = currentCart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const applicableItems = dc.applicableCategories && dc.applicableCategories.length > 0 ? currentCart.filter(item => dc.applicableCategories!.includes(item.category)) : currentCart;
-    const applicableTotal = applicableItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    if (dc.applicableCategories && dc.applicableCategories.length > 0 && applicableTotal === 0) return { success: false, error: 'Sleva se nevztahuje na položky v košíku.' };
-    const valueToCheck = (dc.applicableCategories && dc.applicableCategories.length > 0) ? applicableTotal : cartTotal;
-    if (valueToCheck < dc.minOrderValue) return { success: false, error: t('discount.min_order', { min: dc.minOrderValue.toString() }) };
+  const addOrder = async (order: Order, vopPdfBase64?: string): Promise<boolean> => {
+    const orderWithHistory: Order = {
+      ...order,
+      language: language,
+      companyDetailsSnapshot: JSON.parse(JSON.stringify(settings.companyDetails)),
+      statusHistory: [{ status: order.status, date: new Date().toISOString() }]
+    };
+    if (dataSource === 'api') {
+      const res = await apiCall('/api/orders', 'POST', { ...orderWithHistory, vopPdf: vopPdfBase64 });
+      if (res && res.success) {
+        setOrders(prev => [orderWithHistory, ...prev]);
+        showNotify(`Objednávka #${order.id} byla uložena.`);
+        return true;
+      }
+      return false;
+    } else {
+      setOrders(prev => [orderWithHistory, ...prev]);
+      showNotify(`Objednávka #${order.id} byla vytvořena (Lokálně).`);
+      return true;
+    }
+  };
 
-    let calculatedAmount = 0;
-    if (dc.type === DiscountType.PERCENTAGE) calculatedAmount = Math.floor(applicableTotal * (dc.value / 100));
-    else calculatedAmount = Math.min(dc.value, applicableTotal);
-    return { success: true, discount: dc, amount: calculatedAmount };
+  const updateOrder = async (order: Order, sendNotify?: boolean): Promise<boolean> => {
+    let updatedOrder = { ...order };
+    if (updatedOrder.items.length === 0) {
+      updatedOrder.status = OrderStatus.CANCELLED;
+      if (!updatedOrder.statusHistory?.some(h => h.status === OrderStatus.CANCELLED)) {
+         updatedOrder.statusHistory = [...(updatedOrder.statusHistory || []), { status: OrderStatus.CANCELLED, date: new Date().toISOString() }];
+      }
+    }
+    if (dataSource === 'api') {
+       const res = await apiCall('/api/orders', 'POST', updatedOrder);
+       if (res && res.success) {
+          setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+          showNotify(`Objednávka #${updatedOrder.id} aktualizována.`);
+          return true;
+       }
+       return false;
+    } else {
+       setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+       showNotify(`Objednávka #${updatedOrder.id} upravena.`);
+       return true;
+    }
+  };
+
+  const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean): Promise<boolean> => {
+    if (dataSource === 'api') {
+       const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify });
+       if (res && res.success) {
+          setOrders(prev => prev.map(o => {
+            if (ids.includes(o.id)) {
+              return { ...o, status, statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }] };
+            }
+            return o;
+          }));
+          const msg = notify ? `Stav změněn a emaily odeslány (${ids.length})` : `Stav objednávek (${ids.length}) změněn v DB.`;
+          showNotify(msg, 'success', !notify);
+          return true;
+       }
+       return false;
+    } else {
+       setOrders(prev => prev.map(o => {
+          if (ids.includes(o.id)) {
+            return { ...o, status, statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }] };
+          }
+          return o;
+        }));
+        showNotify(`Stav objednávek (${ids.length}) změněn na: ${t(`status.${status}`)}`);
+        return true;
+    }
+  };
+
+  const addProduct = async (p: Product): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/products', 'POST', p);
+        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify('Produkt uložen.'); return true; }
+        return false;
+    } else {
+        setProducts(prev => [...prev, p]); return true;
+    }
+  };
+
+  const updateProduct = async (p: Product): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/products', 'POST', p);
+        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify('Produkt aktualizován.'); return true; }
+        return false;
+    } else {
+        setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
+    }
+  };
+
+  const deleteProduct = async (id: string): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall(`/api/products/${id}`, 'DELETE');
+        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Produkt smazán.'); return true; }
+        return false;
+    } else {
+        setProducts(prev => prev.filter(x => x.id !== id)); return true;
+    }
+  };
+
+  const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/settings', 'POST', s);
+        if (res && res.success) { setSettings(s); showNotify('Nastavení uloženo.'); return true; }
+        return false;
+    } else {
+        setSettings(s); return true;
+    }
+  };
+
+  const updateDayConfig = async (c: DayConfig): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/calendar', 'POST', c);
+        if (res && res.success) {
+            setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
+            showNotify('Kalendář aktualizován.'); return true;
+        }
+        return false;
+    } else {
+        setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
+        return true;
+    }
+  };
+
+  const removeDayConfig = async (date: string): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
+        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify('Výjimka smazána.'); return true; }
+        return false;
+    } else {
+        setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
+    }
+  };
+
+  const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/discounts', 'POST', c);
+        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify('Slevový kód uložen.'); return true; }
+        return false;
+    } else {
+        setDiscountCodes(prev => [...prev, c]); return true;
+    }
+  };
+
+  const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/discounts', 'POST', code);
+        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify('Slevový kód aktualizován.'); return true; }
+        return false;
+    } else {
+        setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
+    }
+  };
+
+  const deleteDiscountCode = async (id: string): Promise<boolean> => {
+    if (dataSource === 'api') {
+        const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
+        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Slevový kód smazán.'); return true; }
+        return false;
+    } else {
+        setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
+    }
   };
 
   const applyDiscount = (code: string): { success: boolean; error?: string } => {
-    if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
+    if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: 'Kód již uplatněn.' };
     const result = calculateDiscountAmount(code, cart);
     if (result.success && result.discount && result.amount !== undefined) {
-      if (appliedDiscounts.length > 0 && !result.discount.isStackable) return { success: false, error: t('discount.not_stackable') };
+      if (appliedDiscounts.length > 0 && !result.discount.isStackable) return { success: false, error: 'Kód nelze kombinovat.' };
       setAppliedDiscounts([...appliedDiscounts, { code: result.discount.code, amount: result.amount }]);
       return { success: true };
     } else {
-      return { success: false, error: result.error || t('discount.invalid') };
+      return { success: false, error: result.error || 'Neplatný kód.' };
     }
   };
 
@@ -937,6 +952,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const validateDiscount = calculateDiscountAmount;
 
   const checkOrderRestoration = (o: Order) => ({ valid: true, invalidCodes: [] }); 
+  
   const importDatabase = async (d: BackupData, s: any): Promise<ImportResult> => {
     if (dataSource === 'api') {
         try {
@@ -963,6 +979,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
     }
   };
+  
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   const printInvoice = async (o: Order) => { const doc = new jsPDF(); doc.text(`Faktura ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
   const generateCzIban = calculateCzIban;

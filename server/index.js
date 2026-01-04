@@ -409,6 +409,48 @@ app.post('/api/auth/login', withDb(async (req, res, db) => {
     }
 }));
 
+// ADDED: Password Reset Endpoint
+app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
+    const { email } = req.body;
+    // 1. Check if user exists
+    const [rows] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    if (rows.length === 0) {
+        // Return success even if user not found to prevent enumeration
+        return res.json({ success: true, message: 'Pokud účet existuje, email byl odeslán.' });
+    }
+
+    // 2. Generate token (simplified for this example, use proper JWT or random string in prod)
+    const token = Buffer.from(`${email}-${Date.now()}`).toString('base64');
+    // Store token in DB (not implemented in this simplified schema, normally would go to password_resets table)
+
+    // 3. Send Email
+    if (transporter) {
+        try {
+            const link = `${process.env.VITE_APP_URL || 'http://localhost:5173'}/#/reset-password?token=${token}`;
+            await transporter.sendMail({
+                from: process.env.SMTP_FROM || '"4Gracie" <info@4gracie.cz>',
+                to: email,
+                subject: 'Obnova hesla - 4Gracie',
+                html: `
+                    <p>Dobrý den,</p>
+                    <p>Obdrželi jsme žádost o obnovu hesla.</p>
+                    <p>Klikněte na odkaz níže pro nastavení nového hesla:</p>
+                    <a href="${link}">${link}</a>
+                    <p>Pokud jste o změnu nežádali, tento email ignorujte.</p>
+                `
+            });
+            console.log(`📧 Reset email sent to ${email}`);
+        } catch (e) {
+            console.error("❌ Email send failed:", e);
+            return res.status(500).json({ error: 'Chyba při odesílání emailu.' });
+        }
+    } else {
+        console.warn("⚠️ SMTP not configured, printing reset link:", `${process.env.VITE_APP_URL || 'http://localhost:5173'}/#/reset-password?token=${token}`);
+    }
+
+    res.json({ success: true, message: 'Instrukce byly odeslány na váš email.' });
+}));
+
 // 3. ORDERS & STATS (Historical & Aggregated)
 app.post('/api/orders', withDb(async (req, res, db) => {
     const o = req.body;
