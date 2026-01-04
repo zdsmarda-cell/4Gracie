@@ -481,6 +481,40 @@ app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
     res.json({ success: true, message: 'Instrukce byly odeslány na váš email.' });
 }));
 
+// ADDED: Confirm Reset Endpoint
+app.post('/api/auth/reset-password-confirm', withDb(async (req, res, db) => {
+    const { token, newPasswordHash } = req.body;
+    
+    try {
+        if (!token || !newPasswordHash) throw new Error('Invalid payload');
+
+        // Decode token (Simulated logic: email-timestamp)
+        const decoded = Buffer.from(token, 'base64').toString('utf-8');
+        const lastDash = decoded.lastIndexOf('-');
+        if (lastDash === -1) throw new Error('Invalid token');
+        
+        const email = decoded.substring(0, lastDash);
+        const timestamp = parseInt(decoded.substring(lastDash + 1));
+
+        // Check expiration (e.g. 24 hours)
+        if (Date.now() - timestamp > 24 * 60 * 60 * 1000) {
+            return res.json({ success: false, message: 'Platnost odkazu vypršela.' });
+        }
+
+        // Update DB
+        const [result] = await db.query('UPDATE users SET password_hash = ? WHERE email = ?', [newPasswordHash, email]);
+        
+        if (result.affectedRows > 0) {
+            res.json({ success: true, message: 'Heslo úspěšně změněno.' });
+        } else {
+            res.json({ success: false, message: 'Uživatel nenalezen.' });
+        }
+    } catch (e) {
+        console.error(e);
+        res.status(400).json({ success: false, message: 'Neplatný požadavek.' });
+    }
+}));
+
 // 3. ORDERS & STATS (Historical & Aggregated)
 app.post('/api/orders', withDb(async (req, res, db) => {
     const o = req.body;
