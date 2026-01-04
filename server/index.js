@@ -100,6 +100,18 @@ if (process.env.SMTP_HOST) {
     console.warn('⚠️ SMTP Config Missing - Emails will not be sent.');
 }
 
+// --- CONSTANTS ---
+const STATUS_TRANSLATIONS = {
+    'created': 'Zadaná',
+    'confirmed': 'Potvrzená',
+    'preparing': 'Připravuje se',
+    'ready': 'Připravena',
+    'on_way': 'Na cestě',
+    'delivered': 'Doručena',
+    'not_picked_up': 'Nevyzvednuto',
+    'cancelled': 'Stornována'
+};
+
 // --- DATABASE CONNECTION ---
 let pool = null;
 let sqlDebugMode = false;
@@ -265,7 +277,7 @@ const generateEmailHtml = (order, title, introText) => {
             </table>
             
             <p style="margin-top: 30px; font-size: 0.8em; color: #888; text-align: center;">
-                4Gracie Catering<br>
+                4Gracie<br>
                 Toto je automaticky generovaná zpráva.
             </p>
         </div>
@@ -928,7 +940,8 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                         to: userEmail,
                         subject: `Potvrzení objednávky #${o.id}`,
                         html: fullHtml,
-                        attachments
+                        attachments,
+                        textEncoding: 'base64'
                     });
                     console.log(`✅ Customer email sent to ${userEmail}`);
                 } else {
@@ -944,7 +957,8 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                         replyTo: userEmail || fromAddress, // Operator replies to Customer
                         to: operatorEmail,
                         subject: `Nová objednávka #${o.id} (${o.userName})`,
-                        html: fullHtml 
+                        html: fullHtml,
+                        textEncoding: 'base64' 
                     });
                     console.log(`✅ Operator email sent to ${operatorEmail}`);
                 }
@@ -1019,7 +1033,8 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                     if (row.final_invoice_date) o.finalInvoiceDate = row.final_invoice_date;
 
                     // Use common HTML generator
-                    let emailBodyHtml = generateEmailHtml(o, `Změna stavu objednávky #${o.id}`, `Stav Vaší objednávky byl změněn na: <strong>${status}</strong>.`);
+                    const czStatus = STATUS_TRANSLATIONS[status] || status;
+                    let emailBodyHtml = generateEmailHtml(o, `Změna stavu objednávky #${o.id}`, `Stav Vaší objednávky byl změněn na: <strong>${czStatus}</strong>.`);
                     const attachments = [];
 
                     // If delivered, generate Final Invoice
@@ -1040,7 +1055,8 @@ app.put('/api/orders/status', withDb(async (req, res, db) => {
                         to: row.email, 
                         subject: `Změna stavu objednávky #${o.id}`, 
                         html: emailBodyHtml,
-                        attachments
+                        attachments,
+                        textEncoding: 'base64'
                     });
                     console.log(`✅ Status update email sent to ${row.email} for order #${o.id}`);
                 } catch (emailErr) {
@@ -1060,8 +1076,53 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: "Missing date" });
     const targetDate = formatToMysqlDate(date); 
-    const summaryQuery = `SELECT t.category, SUM(t.total_item_workload) as total_workload, SUM(t.overhead) as total_overhead, COUNT(DISTINCT t.order_id) as order_count FROM (SELECT o.id as order_id, COALESCE(p.category, oi.category, 'unknown') as category, (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload, COALESCE(p.workload_overhead, oi.workload_overhead, 0) as overhead FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON oi.product_id = p.id WHERE o.delivery_date = ? AND o.status != 'cancelled') t GROUP BY t.category`;
-    const detailQuery = `SELECT t.category, t.product_id, t.name, t.unit, SUM(t.quantity) as total_quantity, SUM(t.total_item_workload) as product_workload FROM (SELECT COALESCE(p.category, oi.category, 'unknown') as category, oi.product_id, COALESCE(p.name, oi.name) as name, COALESCE(p.unit, oi.unit) as unit, oi.quantity, (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON oi.product_id = p.id WHERE o.delivery_date = ? AND o.status != 'cancelled') t GROUP BY t.category, t.product_id, t.name, t.unit`;
+    
+    // Updated SQL Queries to robustly handle category and unit missing in relational columns by falling back to JSON data
+    
+    const summaryQuery = `
+        SELECT 
+            t.category, 
+            SUM(t.total_item_workload) as total_workload, 
+            SUM(t.overhead) as total_overhead, 
+            COUNT(DISTINCT t.order_id) as order_count 
+        FROM (
+            SELECT 
+                o.id as order_id, 
+                COALESCE(p.category, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.category')), oi.category, 'unknown') as category, 
+                (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload, 
+                COALESCE(p.workload_overhead, oi.workload_overhead, 0) as overhead 
+            FROM order_items oi 
+            JOIN orders o ON o.id = oi.order_id 
+            LEFT JOIN products p ON oi.product_id = p.id 
+            WHERE o.delivery_date = ? AND o.status != 'cancelled'
+        ) t 
+        GROUP BY t.category
+    `;
+
+    const detailQuery = `
+        SELECT 
+            t.category, 
+            t.product_id, 
+            t.name, 
+            t.unit, 
+            SUM(t.quantity) as total_quantity, 
+            SUM(t.total_item_workload) as product_workload 
+        FROM (
+            SELECT 
+                COALESCE(p.category, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.category')), oi.category, 'unknown') as category, 
+                oi.product_id, 
+                COALESCE(p.name, oi.name) as name, 
+                COALESCE(p.unit, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.unit')), oi.unit) as unit, 
+                oi.quantity, 
+                (oi.quantity * COALESCE(p.workload, oi.workload, 0)) as total_item_workload 
+            FROM order_items oi 
+            JOIN orders o ON o.id = oi.order_id 
+            LEFT JOIN products p ON oi.product_id = p.id 
+            WHERE o.delivery_date = ? AND o.status != 'cancelled'
+        ) t 
+        GROUP BY t.category, t.product_id, t.name, t.unit
+    `;
+
     const [summary] = await db.query(summaryQuery, [targetDate]);
     const [details] = await db.query(detailQuery, [targetDate]);
     res.json({ success: true, summary, details });

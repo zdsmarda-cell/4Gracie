@@ -84,6 +84,19 @@ export const ProductsTab: React.FC = () => {
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
 
+    const handleAddClick = () => {
+        // Initialize with sensible defaults to avoid NULL values
+        setEditingProduct({
+            category: sortedCategories[0]?.id || '', // Default to first category
+            unit: 'ks', // Default unit
+            visibility: { online: true, store: true, stand: true },
+            allergens: [],
+            images: [],
+            price: 0
+        });
+        setIsProductModalOpen(true);
+    };
+
     const saveProduct = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingProduct) return;
@@ -95,6 +108,9 @@ export const ProductsTab: React.FC = () => {
         const prod = { ...editingProduct } as Product;
         if (!prod.id) prod.id = Date.now().toString();
         
+        // Safety checks for required fields
+        if (!prod.category && sortedCategories.length > 0) prod.category = sortedCategories[0].id;
+        if (!prod.unit) prod.unit = 'ks';
         if (!prod.images) prod.images = [];
         if (!prod.visibility) prod.visibility = { online: true, store: true, stand: true };
         if (!prod.allergens) prod.allergens = [];
@@ -103,7 +119,7 @@ export const ProductsTab: React.FC = () => {
         prod.vatRateTakeaway = Number(prod.vatRateTakeaway ?? 0);
         prod.workload = Number(prod.workload ?? 0);
         prod.workloadOverhead = Number(prod.workloadOverhead ?? 0);
-        prod.volume = Number(prod.volume ?? 0); // Ensure volume is saved as number
+        prod.volume = Number(prod.volume ?? 0); 
         
         // Generate Translations if enabled
         if (settings.enableAiTranslation) {
@@ -154,7 +170,7 @@ export const ProductsTab: React.FC = () => {
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
-                <button onClick={() => { setEditingProduct({}); setIsProductModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
+                <button onClick={handleAddClick} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
             </div>
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
                 <table className="min-w-full divide-y">
@@ -223,13 +239,30 @@ export const ProductsTab: React.FC = () => {
                                 <label className="text-xs font-bold text-gray-400 block mb-1">Popis</label>
                                 <textarea className="w-full border rounded p-2 h-20" value={editingProduct?.description || ''} onChange={e => setEditingProduct({...editingProduct, description: e.target.value})} />
                             </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč)</label>
-                                <input type="number" required className="w-full border rounded p-2" value={editingProduct?.price || ''} onChange={e => setEditingProduct({...editingProduct, price: Number(e.target.value)})} />
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč)</label>
+                                    <input type="number" required className="w-full border rounded p-2" value={editingProduct?.price || ''} onChange={e => setEditingProduct({...editingProduct, price: Number(e.target.value)})} />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 block mb-1">Jednotka</label>
+                                    <select 
+                                        className="w-full border rounded p-2 bg-white" 
+                                        value={editingProduct?.unit || 'ks'} 
+                                        onChange={e => setEditingProduct({...editingProduct, unit: e.target.value as 'ks'|'kg'})}
+                                    >
+                                        <option value="ks">ks (Kusy)</option>
+                                        <option value="kg">kg (Kilogramy)</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div>
+                            <div className="col-span-2">
                                 <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie</label>
-                                <select className="w-full border rounded p-2" value={editingProduct?.category} onChange={e => setEditingProduct({...editingProduct, category: e.target.value})}>
+                                <select 
+                                    className="w-full border rounded p-2 bg-white" 
+                                    value={editingProduct?.category} 
+                                    onChange={e => setEditingProduct({...editingProduct, category: e.target.value})}
+                                >
                                     {sortedCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                             </div>
