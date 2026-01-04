@@ -323,21 +323,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [getFullApiUrl]);
 
-  // FIX: Removed setIsLoading(true) to prevent unmounting component tree during background refresh
+  // FIX: STOP LOADING ALL USERS IN BOOTSTRAP
   const fetchData = useCallback(async (force: boolean = false) => {
-      // Intentionally NOT setting isLoading(true) here to keep UI mounted. 
+      // Intentionally NOT setting isLoading(true) here to keep UI mounted during background refreshes. 
       // Only initial load (state default true) blocks UI.
       try {
         if (dataSource === 'api') {
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data) {
-              // Use Ref for role check to avoid function recreation
-              if (userRef.current?.role === 'admin') {
-                  const usersRes = await apiCall('/api/users', 'GET');
-                  setAllUsers(usersRes?.users || []);
-              } else {
-                  setAllUsers([]);
-              }
+              // We DO NOT fetch users here anymore. 
+              // Users are fetched on-demand in the Admin UsersTab via searchUsers.
+              setAllUsers([]); 
               
               setProducts(data.products || []);
               setOrders(data.orders || []);
@@ -350,10 +346,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
           } else {
-              // Connection failed (204 or caught error returned null)
               showNotify('Nepodařilo se načíst data ze serveru. Zkontrolujte připojení.', 'error', false);
           }
         } else {
+          // Local Mode: Load everything as before for development simulation
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
           setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));

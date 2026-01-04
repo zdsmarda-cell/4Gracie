@@ -38,12 +38,6 @@ export const Admin: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState('orders');
     
-    // Refresh data when tab changes to ensure fresh DB content
-    // STOP INFINITE LOOP: Removed refreshData from dependency array
-    useEffect(() => {
-        refreshData(true);
-    }, [activeTab]);
-    
     // Navigation State (Load -> Orders)
     const [filterDate, setFilterDate] = useState<string | null>(null);
 
