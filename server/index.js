@@ -87,6 +87,8 @@ if (process.env.SMTP_HOST) {
 
 // --- DATABASE CONNECTION ---
 let pool = null;
+let sqlDebugMode = false; // GLOBAL DEBUG FLAG
+
 const getDb = async () => {
   if (pool) return pool;
   try {
@@ -101,6 +103,17 @@ const getDb = async () => {
       queueLimit: 0,
       dateStrings: true 
     });
+
+    // MONKEY PATCH POOL.QUERY for Debugging
+    const originalQuery = pool.query;
+    pool.query = function (sql, params) {
+        if (sqlDebugMode) {
+            const sqlString = typeof sql === 'string' ? sql : sql.sql;
+            console.log(`\x1b[36m[SQL]\x1b[0m ${sqlString}`, params && params.length > 0 ? params : '');
+        }
+        return originalQuery.apply(this, arguments);
+    };
+
     return pool;
   } catch (err) {
     console.error(`❌ DB Connection Failed: ${err.message}`);
@@ -132,6 +145,10 @@ const formatToMysqlDate = (dateString) => {
     } catch (e) {
         return dateString; // Fallback
     }
+};
+
+const parseJsonCol = (row, colName = 'data') => {
+    return typeof row[colName] === 'string' ? JSON.parse(row[colName]) : (row[colName] || {});
 };
 
 // --- INITIALIZATION & SEEDING ---
@@ -254,6 +271,16 @@ const initDb = async () => {
             );
         }
 
+        // --- LOAD INITIAL DEBUG SETTING ---
+        const [settings] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
+        if (settings.length > 0) {
+            const data = parseJsonCol(settings[0], 'data');
+            if (data.sqlDebug) {
+                sqlDebugMode = true;
+                console.log("🔧 SQL Debug enabled on startup.");
+            }
+        }
+
         console.log("✅ Database schema initialized (Relational & Historical).");
     } catch (e) {
         console.error("❌ Init DB Error:", e);
@@ -269,10 +296,6 @@ const withDb = (handler) => async (req, res) => {
   } else {
     res.status(500).json({ error: 'DB Connection Failed' });
   }
-};
-
-const parseJsonCol = (row, colName = 'data') => {
-    return typeof row[colName] === 'string' ? JSON.parse(row[colName]) : (row[colName] || {});
 };
 
 // --- API ENDPOINTS ---
@@ -292,6 +315,7 @@ app.get('/api/bootstrap', withDb(async (req, res, db) => {
         workloadOverhead: row.workload_overhead,
         vatRateInner: Number(row.vat_rate_inner),
         vatRateTakeaway: Number(row.vat_rate_takeaway),
+        volume: Number(parseJsonCol(row, 'full_json').volume || 0), // Ensure volume is read
         images: row.image_url ? [row.image_url, ...(parseJsonCol(row, 'full_json').images || []).slice(1)] : []
     }));
 
@@ -447,12 +471,10 @@ app.post('/api/auth/reset-password', withDb(async (req, res, db) => {
 
     // 2. Generate token (simplified for this example, use proper JWT or random string in prod)
     const token = Buffer.from(`${email}-${Date.now()}`).toString('base64');
-    // Store token in DB (not implemented in this simplified schema, normally would go to password_resets table)
-
+    
     // 3. Send Email
     if (transporter) {
         try {
-            // FIX: Use VITE_APP_URL or fallback to Origin header to generate correct link
             const appUrl = process.env.VITE_APP_URL || req.headers.origin || 'http://localhost:5173';
             const link = `${appUrl}/#/reset-password?token=${token}`;
             
@@ -595,7 +617,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                             }
                         }
                         
-                        // Clean HTML generation without forced newlines, relying on Base64 encoding
                         return `
                         <tr>
                             <td style="padding: 10px; border-bottom: 1px solid #eee;">
@@ -631,7 +652,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                         from: process.env.SMTP_FROM || '"4Gracie Catering" <info@4gracie.cz>',
                         to: userEmail,
                         subject: `Potvrzení objednávky #${dbOrder.id}`,
-                        // KEY FIX: Use base64 encoding for the HTML content to prevent Quoted-Printable line breaking of long URLs
                         textEncoding: 'base64',
                         html: `
                             <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
@@ -706,7 +726,6 @@ app.post('/api/orders', withDb(async (req, res, db) => {
                 }
             } catch (mailError) {
                 console.error("❌ Failed to send order email:", mailError);
-                // Don't fail the request if email fails, just log it
             }
         }
 
@@ -748,7 +767,7 @@ app.get('/api/orders', withDb(async (req, res, db) => {
     });
 }));
 
-// Load Stats - Updated with correct Group By for strict mode
+// Load Stats - Updated with correct JOIN to Products for current workload
 app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
     const { date } = req.query;
     
@@ -756,34 +775,37 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
         return res.status(400).json({ error: "Missing date parameter" });
     }
 
-    // Ensure we filter by date only (without time)
     const targetDate = formatToMysqlDate(date); 
 
+    // Summary Query: Left Join Products to get current workload. Use COALESCE to fallback if product missing or workload null.
+    // Group by category from Product table (p.category) primarily.
     const summaryQuery = `
         SELECT 
-            oi.category, 
-            SUM(oi.quantity * oi.workload) as total_workload,
-            SUM(oi.workload_overhead) as total_overhead,
+            COALESCE(p.category, oi.category) as category,
+            SUM(oi.quantity * COALESCE(p.workload, 0)) as total_workload,
+            SUM(COALESCE(p.workload_overhead, 0)) as total_overhead,
             COUNT(DISTINCT o.id) as order_count
         FROM order_items oi
         JOIN orders o ON o.id = oi.order_id
+        LEFT JOIN products p ON oi.product_id = p.id
         WHERE o.delivery_date = ? AND o.status != 'cancelled'
-        GROUP BY oi.category
+        GROUP BY COALESCE(p.category, oi.category)
     `;
     
-    // Full Group By compliant query
+    // Detail Query
     const detailQuery = `
         SELECT 
-            oi.category,
+            COALESCE(p.category, oi.category) as category,
             oi.product_id,
-            oi.name,
-            oi.unit,
+            COALESCE(p.name, oi.name) as name,
+            COALESCE(p.unit, oi.unit) as unit,
             SUM(oi.quantity) as total_quantity,
-            SUM(oi.quantity * oi.workload) as product_workload
+            SUM(oi.quantity * COALESCE(p.workload, 0)) as product_workload
         FROM order_items oi
         JOIN orders o ON o.id = oi.order_id
+        LEFT JOIN products p ON oi.product_id = p.id
         WHERE o.delivery_date = ? AND o.status != 'cancelled'
-        GROUP BY oi.category, oi.product_id, oi.name, oi.unit
+        GROUP BY COALESCE(p.category, oi.category), oi.product_id, COALESCE(p.name, oi.name), COALESCE(p.unit, oi.unit)
     `;
     
     try {
@@ -797,6 +819,10 @@ app.get('/api/admin/stats/load', withDb(async (req, res, db) => {
 }));
 
 app.post('/api/settings', withDb(async (req, res, db) => {
+  if (req.body.sqlDebug !== undefined) {
+      sqlDebugMode = !!req.body.sqlDebug;
+      console.log(`🔧 SQL Debug set to: ${sqlDebugMode}`);
+  }
   await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(req.body), JSON.stringify(req.body)]);
   res.json({ success: true });
 }));

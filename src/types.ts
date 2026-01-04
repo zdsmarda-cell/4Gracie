@@ -255,8 +255,9 @@ export interface GlobalSettings {
     types: PackagingType[];
     freeFrom: number;
   };
-  enabledLanguages: Language[]; // NEW
-  enableAiTranslation: boolean; // NEW
+  enabledLanguages: Language[]; 
+  enableAiTranslation: boolean;
+  sqlDebug: boolean; // NEW FIELD
 }
 
 export interface BackupData {

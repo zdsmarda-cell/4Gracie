@@ -145,7 +145,8 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     freeFrom: 5000
   },
   enabledLanguages: [Language.CS, Language.EN, Language.DE],
-  enableAiTranslation: true
+  enableAiTranslation: true,
+  sqlDebug: false
 };
 
 export const EMPTY_SETTINGS: GlobalSettings = {
@@ -171,7 +172,8 @@ export const EMPTY_SETTINGS: GlobalSettings = {
     freeFrom: 0
   },
   enabledLanguages: [],
-  enableAiTranslation: false
+  enableAiTranslation: false,
+  sqlDebug: false
 };
 
 export const MOCK_ORDERS: Order[] = [

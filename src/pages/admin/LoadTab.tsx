@@ -10,19 +10,19 @@ interface LoadTabProps {
 }
 
 interface ServerLoadSummary {
-    category: string;
-    total_workload: number;
-    total_overhead: number;
+    category: string | null;
+    total_workload: number | string;
+    total_overhead: number | string;
     order_count: number;
 }
 
 interface ServerLoadDetail {
-    category: string;
+    category: string | null;
     name: string;
     unit: string;
-    total_quantity: number;
-    product_workload: number;
-    unit_overhead: number;
+    total_quantity: number | string;
+    product_workload: number | string;
+    unit_overhead: number | string;
 }
 
 export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
@@ -82,7 +82,6 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         if (dataSource === 'api') {
             // API MODE
             const url = getFullApiUrl(`/api/admin/stats/load?date=${selectedDate}`);
-            console.log("Fetching stats from:", url);
             
             fetch(url)
                 .then(res => {
@@ -127,8 +126,8 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                         summaryMap.set(cat, { category: cat, total_workload: 0, total_overhead: 0, order_count: 0 });
                     }
                     const sum = summaryMap.get(cat)!;
-                    sum.total_workload += workload;
-                    sum.total_overhead += overhead; // Simplified overhead addition per item for local calc
+                    sum.total_workload = Number(sum.total_workload) + workload;
+                    sum.total_overhead = Number(sum.total_overhead) + overhead; 
                     categoriesInOrder.add(cat);
 
                     // Update Details
@@ -145,8 +144,8 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                         });
                     }
                     const det = detailsMap.get(detailKey)!;
-                    det.total_quantity += item.quantity;
-                    det.product_workload += workload;
+                    det.total_quantity = Number(det.total_quantity) + item.quantity;
+                    det.product_workload = Number(det.product_workload) + workload;
                 });
 
                 // Update Order Count per category
@@ -174,17 +173,23 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         const wb = XLSX.utils.book_new();
         const exportRows: any[] = [];
         
+        // Group items by category (handle null as 'other')
         const grouped = serverDetails.details.reduce((acc, item) => {
-            if (!acc[item.category]) acc[item.category] = [];
-            acc[item.category].push(item);
+            const catKey = item.category || 'other';
+            if (!acc[catKey]) acc[catKey] = [];
+            acc[catKey].push(item);
             return acc;
         }, {} as Record<string, ServerLoadDetail[]>);
 
-        // Safe iteration over keys to avoid unknown type issues with Object.entries
-        Object.keys(grouped).forEach(catId => {
+        // Iterate categories from Settings to respect order
+        const catKeys = [...settings.categories.map(c => c.id), 'other'];
+
+        catKeys.forEach(catId => {
             const items = grouped[catId];
-            const catName = settings.categories.find(c => c.id === catId)?.name || catId;
-            const catSummary = serverDetails.summary.find(s => s.category === catId);
+            if (!items || items.length === 0) return;
+
+            const catName = catId === 'other' ? 'Nezařazeno / Smazané' : (settings.categories.find(c => c.id === catId)?.name || catId);
+            const catSummary = serverDetails.summary.find(s => (s.category || 'other') === catId);
             const totalLoad = (Number(catSummary?.total_workload) || 0) + (Number(catSummary?.total_overhead) || 0);
 
             exportRows.push({ Název: `KATEGORIE: ${catName} (Celkem pracnost: ${totalLoad})`, Ks: '', Jednotka: '', 'Pracnost (Suma)': '' });
@@ -192,9 +197,9 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
             items.forEach(p => {
                 exportRows.push({
                     Název: p.name,
-                    Ks: p.total_quantity,
+                    Ks: Number(p.total_quantity),
                     Jednotka: p.unit,
-                    'Pracnost (Suma)': p.product_workload
+                    'Pracnost (Suma)': Number(p.product_workload)
                 });
             });
             exportRows.push({}); 
@@ -315,41 +320,84 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                             ) : !serverDetails || serverDetails.details.length === 0 ? (
                                 <p className="text-center text-gray-400">Žádná výroba pro tento den (nebo chyba načítání).</p>
                             ) : (
-                                settings.categories.map(cat => {
-                                    const items = serverDetails.details.filter(d => d.category === cat.id);
-                                    if (items.length === 0) return null;
-                                    const summary = serverDetails.summary.find(s => s.category === cat.id);
-                                    const total = (Number(summary?.total_workload)||0) + (Number(summary?.total_overhead)||0);
+                                <>
+                                    {/* Known Categories */}
+                                    {settings.categories.map(cat => {
+                                        const items = serverDetails.details.filter(d => d.category === cat.id);
+                                        if (items.length === 0) return null;
+                                        const summary = serverDetails.summary.find(s => s.category === cat.id);
+                                        const total = (Number(summary?.total_workload)||0) + (Number(summary?.total_overhead)||0);
 
-                                    return (
-                                        <div key={cat.id} className="border rounded-xl overflow-hidden shadow-sm">
-                                            <div className="bg-gray-100 p-3 flex justify-between items-center border-b">
-                                                <h3 className="font-bold text-sm uppercase text-gray-700">{cat.name}</h3>
-                                                <span className="text-xs font-bold bg-white px-2 py-1 rounded border">Celkem pracnost: {total}</span>
-                                            </div>
-                                            <table className="min-w-full divide-y">
-                                                <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase">
-                                                    <tr>
-                                                        <th className="px-4 py-2 text-left">Název</th>
-                                                        <th className="px-4 py-2 text-center">Ks</th>
-                                                        <th className="px-4 py-2 text-right">Pracnost</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y text-xs">
-                                                    {items.map((p, idx) => (
-                                                        <tr key={idx} className="hover:bg-gray-50">
-                                                            <td className="px-4 py-2 font-bold">{p.name}</td>
-                                                            <td className="px-4 py-2 text-center">
-                                                                {p.total_quantity} <span className="text-gray-400 text-[10px]">{p.unit}</span>
-                                                            </td>
-                                                            <td className="px-4 py-2 text-right font-mono">{p.product_workload}</td>
+                                        return (
+                                            <div key={cat.id} className="border rounded-xl overflow-hidden shadow-sm">
+                                                <div className="bg-gray-100 p-3 flex justify-between items-center border-b">
+                                                    <h3 className="font-bold text-sm uppercase text-gray-700">{cat.name}</h3>
+                                                    <span className="text-xs font-bold bg-white px-2 py-1 rounded border">Celkem pracnost: {total}</span>
+                                                </div>
+                                                <table className="min-w-full divide-y">
+                                                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase">
+                                                        <tr>
+                                                            <th className="px-4 py-2 text-left">Název</th>
+                                                            <th className="px-4 py-2 text-center">Ks</th>
+                                                            <th className="px-4 py-2 text-right">Pracnost</th>
                                                         </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    );
-                                })
+                                                    </thead>
+                                                    <tbody className="divide-y text-xs">
+                                                        {items.map((p, idx) => (
+                                                            <tr key={idx} className="hover:bg-gray-50">
+                                                                <td className="px-4 py-2 font-bold">{p.name}</td>
+                                                                <td className="px-4 py-2 text-center">
+                                                                    {Number(p.total_quantity)} <span className="text-gray-400 text-[10px]">{p.unit}</span>
+                                                                </td>
+                                                                <td className="px-4 py-2 text-right font-mono">{Number(p.product_workload)}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        );
+                                    })}
+
+                                    {/* Uncategorized Items (category is null or not in settings) */}
+                                    {(() => {
+                                        const knownCatIds = settings.categories.map(c => c.id);
+                                        const uncategorizedItems = serverDetails.details.filter(d => !d.category || !knownCatIds.includes(d.category));
+                                        
+                                        if (uncategorizedItems.length === 0) return null;
+
+                                        // Calculate total for these items
+                                        const totalUncatWorkload = uncategorizedItems.reduce((acc, item) => acc + Number(item.product_workload), 0);
+
+                                        return (
+                                            <div key="uncategorized" className="border rounded-xl overflow-hidden shadow-sm border-red-200">
+                                                <div className="bg-red-50 p-3 flex justify-between items-center border-b border-red-100">
+                                                    <h3 className="font-bold text-sm uppercase text-red-700">Nezařazeno / Smazané produkty</h3>
+                                                    <span className="text-xs font-bold bg-white px-2 py-1 rounded border border-red-200 text-red-600">Celkem pracnost: {totalUncatWorkload}</span>
+                                                </div>
+                                                <table className="min-w-full divide-y">
+                                                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase">
+                                                        <tr>
+                                                            <th className="px-4 py-2 text-left">Název</th>
+                                                            <th className="px-4 py-2 text-center">Ks</th>
+                                                            <th className="px-4 py-2 text-right">Pracnost</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y text-xs">
+                                                        {uncategorizedItems.map((p, idx) => (
+                                                            <tr key={idx} className="hover:bg-gray-50">
+                                                                <td className="px-4 py-2 font-bold">{p.name}</td>
+                                                                <td className="px-4 py-2 text-center">
+                                                                    {Number(p.total_quantity)} <span className="text-gray-400 text-[10px]">{p.unit}</span>
+                                                                </td>
+                                                                <td className="px-4 py-2 text-right font-mono">{Number(p.product_workload)}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        );
+                                    })()}
+                                </>
                             )}
                         </div>
                         <div className="p-4 border-t bg-gray-50 text-right">

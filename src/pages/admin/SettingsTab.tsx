@@ -2,7 +2,7 @@
 import React from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Language } from '../../types';
-import { Settings as SettingsIcon, Languages, Wand2 } from 'lucide-react';
+import { Settings as SettingsIcon, Languages, Wand2, Terminal } from 'lucide-react';
 
 export const SettingsTab: React.FC = () => {
     const { settings, updateSettings, t } = useStore();
@@ -27,6 +27,10 @@ export const SettingsTab: React.FC = () => {
 
     const toggleAi = async (enabled: boolean) => {
         await updateSettings({ ...settings, enableAiTranslation: enabled });
+    };
+
+    const toggleSqlDebug = async (enabled: boolean) => {
+        await updateSettings({ ...settings, sqlDebug: enabled });
     };
 
     return (
@@ -80,6 +84,26 @@ export const SettingsTab: React.FC = () => {
                             onChange={(e) => toggleAi(e.target.checked)}
                         />
                         <span className="text-sm font-bold text-gray-900">Povolit automatické AI překlady</span>
+                    </label>
+                </div>
+
+                {/* Console Section */}
+                <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 text-gray-300">
+                    <h3 className="text-lg font-bold text-white mb-4 flex items-center">
+                        <Terminal size={20} className="mr-2 text-green-500" />
+                        Konzole
+                    </h3>
+                    <label className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-gray-800 rounded transition">
+                        <input 
+                            type="checkbox" 
+                            className="w-5 h-5 text-green-500 bg-gray-700 border-gray-600 rounded focus:ring-green-500 focus:ring-offset-gray-900"
+                            checked={settings.sqlDebug ?? false}
+                            onChange={(e) => toggleSqlDebug(e.target.checked)}
+                        />
+                        <div>
+                            <span className="text-sm font-bold text-white block">SQL debug</span>
+                            <span className="text-xs text-gray-500">Zobrazovat všechny SQL dotazy v konzoli serveru (pro vývojáře).</span>
+                        </div>
                     </label>
                 </div>
             </div>
