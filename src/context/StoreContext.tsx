@@ -4,7 +4,7 @@ import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, Pr
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { calculatePackagingFeeLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
 
 interface CheckResult {
@@ -663,7 +663,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const res = await apiCall('/api/users', 'POST', newUser);
         if (res && res.success) {
             setAllUsers(prev => [...prev, newUser]);
-            showNotify(`Uživatel ${name} vytvořen.`, 'success', false);
+            showNotify(`Uživatel ${name} vytvořen a email odeslán.`, 'success', false);
             return true;
         }
         return false;
@@ -928,7 +928,238 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
-  const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => { const doc = new jsPDF(); doc.text(`${type === 'final' ? 'Daňový doklad' : 'Faktura'} ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
+  
+  // CLIENT SIDE PDF GENERATION (Re-implemented for browser usage)
+  const printInvoice = async (order: Order, type: 'proforma' | 'final' = 'proforma') => {
+      try {
+          const doc = new jsPDF();
+          
+          // Helper to fetch and add font
+          const addFont = async (url: string, name: string, style: string) => {
+              const res = await fetch(url);
+              if (!res.ok) throw new Error('Font fetch failed');
+              const buf = await res.arrayBuffer();
+              const b64 = btoa(new Uint8Array(buf).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+              doc.addFileToVFS(`${name}-${style}.ttf`, b64);
+              doc.addFont(`${name}-${style}.ttf`, name, style);
+          };
+
+          // Load Roboto for Diacritics
+          await addFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf', 'Roboto', 'normal');
+          await addFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf', 'Roboto', 'bold');
+          
+          doc.setFont('Roboto');
+
+          // Settings fallback
+          const comp = order.companyDetailsSnapshot || settings.companyDetails || {};
+          const isVatPayer = !!comp.dic && comp.dic.trim().length > 0;
+          const headerTitle = type === 'proforma' ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
+          const dateToUse = type === 'final' ? (order.finalInvoiceDate || new Date().toISOString()) : order.createdAt;
+          const brandColor = [147, 51, 234]; // Purple
+
+          // Header
+          doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
+          doc.setFont("Roboto", "bold");
+          doc.setFontSize(20);
+          doc.text(headerTitle, 105, 20, { align: "center" });
+          
+          doc.setTextColor(0, 0, 0);
+          doc.setFont("Roboto", "normal");
+          doc.setFontSize(10);
+          doc.text(`Číslo obj: ${order.id}`, 105, 28, { align: "center" });
+          doc.text(`Datum vystavení: ${formatDate(dateToUse)}`, 105, 34, { align: "center" });
+          if (isVatPayer && type === 'final') {
+              doc.text(`Datum zdan. plnění: ${formatDate(dateToUse)}`, 105, 40, { align: "center" });
+          }
+
+          // Addresses
+          doc.setFontSize(11);
+          doc.setFont("Roboto", "bold");
+          doc.text("DODAVATEL:", 14, 55);
+          doc.text("ODBĚRATEL:", 110, 55);
+          
+          doc.setFont("Roboto", "normal");
+          doc.setFontSize(10);
+          
+          // Supplier
+          let yPos = 61;
+          doc.text(comp.name || '', 14, yPos); yPos += 5;
+          doc.text(comp.street || '', 14, yPos); yPos += 5;
+          doc.text(`${comp.zip || ''} ${comp.city || ''}`, 14, yPos); yPos += 5;
+          doc.text(`IČ: ${comp.ic || ''}`, 14, yPos); yPos += 5;
+          if(comp.dic) doc.text(`DIČ: ${comp.dic}`, 14, yPos);
+
+          // Customer
+          yPos = 61;
+          doc.text(order.billingName || order.userName || 'Zákazník', 110, yPos); yPos += 5;
+          doc.text(order.billingStreet || '', 110, yPos); yPos += 5;
+          doc.text(`${order.billingZip || ''} ${order.billingCity || ''}`, 110, yPos); yPos += 5;
+          if (order.billingIc) { doc.text(`IČ: ${order.billingIc}`, 110, yPos); yPos += 5; }
+          if (order.billingDic) { doc.text(`DIČ: ${order.billingDic}`, 110, yPos); yPos += 5; }
+
+          // Calculations
+          const getBase = (p: number, r: number) => p / (1 + r / 100);
+          const getVat = (p: number, r: number) => p - getBase(p, r);
+          
+          const tableBody: any[] = [];
+          const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
+          
+          const addToSummary = (rate: number, val: number) => {
+              if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
+              taxSummary[rate].base += getBase(val, rate);
+              taxSummary[rate].vat += getVat(val, rate);
+              taxSummary[rate].total += val;
+          };
+
+          // Max rate for fees
+          let maxVatRate = 0;
+          order.items.forEach(i => {
+              const r = i.vatRateTakeaway || 0;
+              if (r > maxVatRate) maxVatRate = r;
+          });
+          const feeRate = maxVatRate > 0 ? maxVatRate : 21;
+
+          // Items
+          order.items.forEach(item => {
+              const total = item.price * item.quantity;
+              const rate = item.vatRateTakeaway || 0;
+              if (isVatPayer) addToSummary(rate, total);
+              
+              const row = [
+                  item.name,
+                  item.quantity,
+                  isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)
+              ];
+              if (isVatPayer) {
+                  row.push(`${rate}%`);
+                  row.push(getVat(total, rate).toFixed(2));
+              }
+              row.push(total.toFixed(2));
+              tableBody.push(row);
+          });
+
+          // Fees
+          if (order.packagingFee > 0) {
+              if (isVatPayer) addToSummary(feeRate, order.packagingFee);
+              const row = ['Balné', '1', isVatPayer ? getBase(order.packagingFee, feeRate).toFixed(2) : order.packagingFee.toFixed(2)];
+              if (isVatPayer) { row.push(`${feeRate}%`); row.push(getVat(order.packagingFee, feeRate).toFixed(2)); }
+              row.push(order.packagingFee.toFixed(2));
+              tableBody.push(row);
+          }
+          if (order.deliveryFee > 0) {
+              if (isVatPayer) addToSummary(feeRate, order.deliveryFee);
+              const row = ['Doprava', '1', isVatPayer ? getBase(order.deliveryFee, feeRate).toFixed(2) : order.deliveryFee.toFixed(2)];
+              if (isVatPayer) { row.push(`${feeRate}%`); row.push(getVat(order.deliveryFee, feeRate).toFixed(2)); }
+              row.push(order.deliveryFee.toFixed(2));
+              tableBody.push(row);
+          }
+
+          // Discounts
+          order.appliedDiscounts?.forEach(d => {
+              const row = [`Sleva ${d.code}`, '1', `-${d.amount.toFixed(2)}`];
+              if (isVatPayer) { row.push(''); row.push(''); }
+              row.push(`-${d.amount.toFixed(2)}`);
+              tableBody.push(row);
+              
+              // Handle Tax Reduction (Simplify: Reduce from bucket with highest total)
+              if (isVatPayer) {
+                  let rem = d.amount;
+                  const rates = Object.keys(taxSummary).map(Number).sort((a,b) => b-a);
+                  for (const r of rates) {
+                      if (rem <= 0) break;
+                      if (taxSummary[r].total > 0) {
+                          const ded = Math.min(taxSummary[r].total, rem);
+                          taxSummary[r].total -= ded;
+                          taxSummary[r].base -= getBase(ded, r);
+                          taxSummary[r].vat -= getVat(ded, r);
+                          rem -= ded;
+                      }
+                  }
+              }
+          });
+
+          // Draw Table
+          const head = isVatPayer ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem s DPH']] : [['Položka', 'Ks', 'Cena/ks', 'Celkem']];
+          
+          autoTable(doc, {
+              startY: 100,
+              head: head,
+              body: tableBody,
+              theme: 'grid',
+              styles: { font: 'Roboto', fontSize: 9, lineColor: [200, 200, 200] },
+              headStyles: { fillColor: brandColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+              columnStyles: isVatPayer ? { 
+                  0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' }, 
+                  3: { halign: 'center' }, 4: { halign: 'right' }, 5: { halign: 'right', fontStyle: 'bold' }
+              } : {
+                  0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' }
+              }
+          });
+
+          // @ts-ignore
+          let finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
+
+          // VAT Recap
+          if (isVatPayer) {
+              doc.setFontSize(10);
+              doc.setFont("Roboto", "bold");
+              doc.text("Rekapitulace DPH", 14, finalY);
+              
+              const summaryBody = Object.keys(taxSummary).map(k => {
+                  const r = Number(k);
+                  const s = taxSummary[r];
+                  if (Math.abs(s.total) < 0.01) return null;
+                  return [`${r} %`, s.base.toFixed(2), s.vat.toFixed(2), s.total.toFixed(2)];
+              }).filter(Boolean);
+
+              if (summaryBody.length > 0) {
+                  autoTable(doc, {
+                      startY: finalY + 2,
+                      head: [['Sazba', 'Základ daně', 'Výše daně', 'Celkem s DPH']],
+                      body: summaryBody,
+                      theme: 'striped',
+                      styles: { font: 'Roboto', fontSize: 8 },
+                      headStyles: { fillColor: [100, 100, 100] },
+                      columnStyles: { 0: { halign: 'center', fontStyle: 'bold' }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } },
+                      margin: { left: 14, right: 100 }
+                  });
+                  // @ts-ignore
+                  finalY = doc.lastAutoTable.finalY + 10;
+              } else { finalY += 5; }
+          }
+
+          // Total
+          const grandTotal = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
+          doc.setFont("Roboto", "bold");
+          doc.setFontSize(14);
+          doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
+          doc.text(`CELKEM K ÚHRADĚ: ${grandTotal.toFixed(2)} Kč`, 196, finalY, { align: "right" });
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(10);
+
+          if (type === 'final') {
+              doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 196, finalY + 8, { align: "right" });
+          } else {
+              // QR Code
+              try {
+                  const qrString = `SPD*1.0*ACC:${comp.bankAccount}*AM:${grandTotal.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
+                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
+                  const qrResp = await fetch(qrUrl);
+                  const qrBuf = await qrResp.arrayBuffer();
+                  const qrBase64 = btoa(new Uint8Array(qrBuf).reduce((d, b) => d + String.fromCharCode(b), ''));
+                  doc.addImage(qrBase64, "PNG", 150, finalY + 10, 40, 40);
+                  doc.setFontSize(8);
+                  doc.text("QR Platba", 170, finalY + 53, { align: "center" });
+              } catch (e) { console.error("QR Fail", e); }
+          }
+
+          doc.save(`faktura_${order.id}.pdf`);
+
+      } catch (e) {
+          console.error("PDF Gen Error:", e);
+          alert("Chyba při generování PDF. Zkontrolujte připojení k internetu (potřebné pro fonty).");
+      }
+  };
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-400">Načítám data...</div>;
 
