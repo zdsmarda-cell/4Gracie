@@ -113,7 +113,7 @@ test.describe('Admin - Excel Exports Verification', () => {
     
     // If no dates/orders exist, this test might need seeding. Assuming MOCK_ORDERS exist.
     if (await detailBtn.count() === 0) {
-        test.skip('No production data available to test export');
+        test.skip(true, 'No production data available to test export');
         return;
     }
     await detailBtn.click();
