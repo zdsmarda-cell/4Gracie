@@ -1,6 +1,9 @@
 
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import autoTableModule from 'jspdf-autotable';
+
+// Fix for ESM import in Node.js environment
+const autoTable = autoTableModule.default || autoTableModule;
 
 // Fetch font buffer helper
 const fetchFont = async (url) => {
