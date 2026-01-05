@@ -274,6 +274,14 @@ const initDb = async () => {
         await db.query(`CREATE TABLE IF NOT EXISTS discounts (id VARCHAR(50) PRIMARY KEY, code VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         await db.query(`CREATE TABLE IF NOT EXISTS calendar_exceptions (date VARCHAR(20) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         
+        // --- MIGRATION: Ensure full_json exists on products if table was created previously without it ---
+        try {
+            await db.query('SELECT full_json FROM products LIMIT 1');
+        } catch (e) {
+            console.log("⚠️ Column full_json missing in products table (Schema Migration). Adding it now...");
+            await db.query('ALTER TABLE products ADD COLUMN full_json JSON');
+        }
+
         const [admins] = await db.query('SELECT id FROM users WHERE email = ?', ['info@4gracie.cz']);
         if (admins.length === 0) {
             console.log("🌱 Seeding default admin...");
@@ -288,12 +296,23 @@ const initDb = async () => {
 
 // --- ROUTE DEFINITIONS FOR APP FUNCTIONALITY ---
 
-// PRODUCTS
+// PRODUCTS - Updated to handle INSERT / UPDATE explicitly for clarity and robustness
 app.post('/api/products', withDb(async (req, res, db) => {
     const p = req.body;
-    await db.query(`INSERT INTO products (id, name, description, price, unit, category, workload, workload_overhead, vat_rate_inner, vat_rate_takeaway, image_url, full_json, is_deleted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=?, description=?, price=?, unit=?, category=?, workload=?, workload_overhead=?, vat_rate_inner=?, vat_rate_takeaway=?, image_url=?, full_json=?, is_deleted=?`, 
-    [p.id, p.name, p.description, p.price, p.unit, p.category, p.workload, p.workloadOverhead, p.vatRateInner, p.vatRateTakeaway, p.images?.[0]||null, JSON.stringify(p), false, 
-     p.name, p.description, p.price, p.unit, p.category, p.workload, p.workloadOverhead, p.vatRateInner, p.vatRateTakeaway, p.images?.[0]||null, JSON.stringify(p), false]);
+    const jsonStr = JSON.stringify(p);
+    
+    // Check if exists
+    const [exists] = await db.query('SELECT id FROM products WHERE id = ?', [p.id]);
+    
+    if (exists.length > 0) {
+        // UPDATE
+        await db.query(`UPDATE products SET name=?, description=?, price=?, unit=?, category=?, workload=?, workload_overhead=?, vat_rate_inner=?, vat_rate_takeaway=?, image_url=?, full_json=?, is_deleted=? WHERE id=?`, 
+        [p.name, p.description, p.price, p.unit, p.category, p.workload, p.workloadOverhead, p.vatRateInner, p.vatRateTakeaway, p.images?.[0]||null, jsonStr, false, p.id]);
+    } else {
+        // INSERT
+        await db.query(`INSERT INTO products (id, name, description, price, unit, category, workload, workload_overhead, vat_rate_inner, vat_rate_takeaway, image_url, full_json, is_deleted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, 
+        [p.id, p.name, p.description, p.price, p.unit, p.category, p.workload, p.workloadOverhead, p.vatRateInner, p.vatRateTakeaway, p.images?.[0]||null, jsonStr, false]);
+    }
     res.json({ success: true });
 }));
 

@@ -52,7 +52,16 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
 
     const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
     const [notifyCustomer, setNotifyCustomer] = useState(false);
-    const [orderFilters, setOrderFilters] = useState({ id: '', dateFrom: '', dateTo: '', customer: '', status: '', ic: '' });
+    
+    // Initial State now respects initialDate prop to prevent race conditions
+    const [orderFilters, setOrderFilters] = useState({ 
+        id: '', 
+        dateFrom: initialDate || '', 
+        dateTo: initialDate || '', 
+        customer: '', 
+        status: '', 
+        ic: '' 
+    });
     
     // Bulk Action State
     const [bulkActionValue, setBulkActionValue] = useState("");
@@ -81,28 +90,32 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
         }
     }, [searchOrders, orderFilters, currentPage, limit]);
 
-    // FIX INFINITE LOOP: Remove loadOrders from dependencies, depend on primitives
+    // Deconstruct orderFilters dependencies to avoid infinite loops on object reference change
     useEffect(() => {
         loadOrders();
-    }, [currentPage, limit, orderFilters]); // Removed 'loadOrders' dependency
+    }, [currentPage, limit, orderFilters.id, orderFilters.dateFrom, orderFilters.dateTo, orderFilters.customer, orderFilters.status, orderFilters.ic]);
 
     // Reset page on filter change
     useEffect(() => {
         setCurrentPage(1);
-    }, [orderFilters]);
+    }, [orderFilters.id, orderFilters.dateFrom, orderFilters.dateTo, orderFilters.customer, orderFilters.status, orderFilters.ic]);
 
     // Handle Initial Date from Props (Navigation from Load Tab)
     useEffect(() => {
         if (initialDate) {
-            setOrderFilters(prev => ({
-                ...prev,
-                dateFrom: initialDate,
-                dateTo: initialDate,
-                id: '',
-                customer: '',
-                status: '',
-                ic: ''
-            }));
+            // Only update if different to avoid loop, though initialization handles main case
+            setOrderFilters(prev => {
+                if (prev.dateFrom === initialDate && prev.dateTo === initialDate) return prev;
+                return {
+                    ...prev,
+                    dateFrom: initialDate,
+                    dateTo: initialDate,
+                    id: '',
+                    customer: '',
+                    status: '',
+                    ic: ''
+                };
+            });
             if (onClearInitialDate) onClearInitialDate();
         }
     }, [initialDate, onClearInitialDate]);
