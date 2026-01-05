@@ -109,9 +109,14 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
         if (!url) return '';
         if (url.startsWith('http')) return url;
         
-        // Postaveno na environmentálních proměnných
+        // Postaveno na environmentálních proměnných APP_URL a PORT
         const port = process.env.PORT || 3000;
-        let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || `http://localhost:${port}`;
+        let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost';
+        
+        // Pokud baseUrl neobsahuje port, přidáme ho (pokud to není standardní 80/443 nebo to tam prostě chybí)
+        if (!baseUrl.includes(':', 6)) { // 6 k přeskočení http://
+            baseUrl = `${baseUrl}:${port}`;
+        }
         
         if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
         const cleanPath = url.startsWith('/') ? url : `/${url}`;

@@ -73,6 +73,7 @@ interface StoreContextType {
   isLoading: boolean;
   isOperationPending: boolean;
   isPreviewEnvironment: boolean;
+  dbConnectionError: boolean; // NEW
   language: Language;
   setLanguage: (lang: Language) => void;
   cart: CartItem[];
@@ -181,6 +182,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const [isLoading, setIsLoading] = useState(true);
+  const [dbConnectionError, setDbConnectionError] = useState(false); // NEW
   const [isOperationPending, setIsOperationPending] = useState(false);
   const [language, setLanguage] = useState<Language>(Language.CS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -284,11 +286,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } catch (e: any) {
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
          if (e.name !== 'AbortError') {
-             showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
+             console.warn("API Timeout");
          }
       } else {
          console.warn(`[API] Call to ${endpoint} failed:`, e);
-         showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
       }
       return null;
     } finally {
@@ -297,10 +298,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, [getFullApiUrl]);
 
   const fetchData = useCallback(async (force: boolean = false) => {
+      setIsLoading(true);
+      setDbConnectionError(false);
       try {
         if (dataSource === 'api') {
           const data = await apiCall('/api/bootstrap', 'GET');
-          if (data) {
+          if (data && data.success) {
               setAllUsers([]); 
               setProducts(data.products || []);
               setOrders(data.orders || []);
@@ -312,8 +315,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
+              setDbConnectionError(false);
           } else {
-              showNotify('Nepodařilo se načíst data ze serveru. Zkontrolujte připojení.', 'error', false);
+              // DATA FETCH FAILED
+              setDbConnectionError(true);
+              showNotify('Nepodařilo se připojit k databázi.', 'error', false);
           }
         } else {
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
@@ -325,9 +331,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
+          setDbConnectionError(false);
         }
       } catch (err: any) {
-        showNotify('Chyba při načítání aplikace: ' + err.message, 'error');
+        console.error('Critical boot error:', err);
+        setDbConnectionError(true);
       } finally {
         setIsLoading(false); 
       }
@@ -459,7 +467,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       updatedOrder.status = OrderStatus.CANCELLED;
     }
     if (dataSource === 'api') {
-       // Pass isUserEdit to backend to trigger different email template
        const payload = { ...updatedOrder, isUserEdit };
        const res = await apiCall('/api/orders', 'POST', payload);
        if (res && res.success) {
@@ -544,7 +551,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [dataSource, orders, apiCall]); 
 
-  // Product Functions
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
@@ -575,7 +581,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // Auth Functions
   const login = async (e: string, p?: string) => { 
       if (dataSource === 'api') {
         const res = await apiCall('/api/auth/login', 'POST', { email: e, password: p });
@@ -897,12 +902,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   
-  // CLIENT SIDE PDF GENERATION (Re-implemented for browser usage)
   const printInvoice = async (order: Order, type: 'proforma' | 'final' = 'proforma') => {
       try {
           const doc = new jsPDF();
-          
-          // Helper to fetch and add font
           const addFont = async (url: string, name: string, style: string) => {
               const res = await fetch(url);
               if (!res.ok) throw new Error('Font fetch failed');
@@ -911,27 +913,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               doc.addFileToVFS(`${name}-${style}.ttf`, b64);
               doc.addFont(`${name}-${style}.ttf`, name, style);
           };
-
-          // Load Roboto for Diacritics
           await addFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf', 'Roboto', 'normal');
           await addFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf', 'Roboto', 'bold');
-          
           doc.setFont('Roboto');
-
-          // Settings fallback
           const comp = (order.companyDetailsSnapshot || settings.companyDetails || {}) as CompanyDetails;
-          // Note: comp might be empty in rare cases, ensure properties exist via type assertion and runtime checks
           const isVatPayer = !!comp.dic && comp.dic.trim().length > 0;
           const headerTitle = type === 'proforma' ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
           const dateToUse = type === 'final' ? (order.finalInvoiceDate || new Date().toISOString()) : order.createdAt;
           const brandColor: [number, number, number] = [147, 51, 234]; // Purple
-
-          // Header
           doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
           doc.setFont("Roboto", "bold");
           doc.setFontSize(20);
           doc.text(headerTitle, 105, 20, { align: "center" });
-          
           doc.setTextColor(0, 0, 0);
           doc.setFont("Roboto", "normal");
           doc.setFontSize(10);
@@ -940,74 +933,49 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           if (isVatPayer && type === 'final') {
               doc.text(`Datum zdan. plnění: ${formatDate(dateToUse)}`, 105, 40, { align: "center" });
           }
-
-          // Addresses
           doc.setFontSize(11);
           doc.setFont("Roboto", "bold");
           doc.text("DODAVATEL:", 14, 55);
           doc.text("ODBĚRATEL:", 110, 55);
-          
           doc.setFont("Roboto", "normal");
           doc.setFontSize(10);
-          
-          // Supplier
           let yPos = 61;
           doc.text(comp.name || '', 14, yPos); yPos += 5;
           doc.text(comp.street || '', 14, yPos); yPos += 5;
           doc.text(`${comp.zip || ''} ${comp.city || ''}`, 14, yPos); yPos += 5;
           doc.text(`IČ: ${comp.ic || ''}`, 14, yPos); yPos += 5;
           if(comp.dic) doc.text(`DIČ: ${comp.dic}`, 14, yPos);
-
-          // Customer
           yPos = 61;
           doc.text(order.billingName || order.userName || 'Zákazník', 110, yPos); yPos += 5;
           doc.text(order.billingStreet || '', 110, yPos); yPos += 5;
           doc.text(`${order.billingZip || ''} ${order.billingCity || ''}`, 110, yPos); yPos += 5;
           if (order.billingIc) { doc.text(`IČ: ${order.billingIc}`, 110, yPos); yPos += 5; }
           if (order.billingDic) { doc.text(`DIČ: ${order.billingDic}`, 110, yPos); yPos += 5; }
-
-          // Calculations
           const getBase = (p: number, r: number) => p / (1 + r / 100);
           const getVat = (p: number, r: number) => p - getBase(p, r);
-          
           const tableBody: any[] = [];
           const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
-          
           const addToSummary = (rate: number, val: number) => {
               if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
               taxSummary[rate].base += getBase(val, rate);
               taxSummary[rate].vat += getVat(val, rate);
               taxSummary[rate].total += val;
           };
-
-          // Max rate for fees
           let maxVatRate = 0;
           order.items.forEach(i => {
               const r = i.vatRateTakeaway || 0;
               if (r > maxVatRate) maxVatRate = r;
           });
           const feeRate = maxVatRate > 0 ? maxVatRate : 21;
-
-          // Items
           order.items.forEach(item => {
               const total = item.price * item.quantity;
               const rate = item.vatRateTakeaway || 0;
               if (isVatPayer) addToSummary(rate, total);
-              
-              const row = [
-                  item.name,
-                  item.quantity,
-                  isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)
-              ];
-              if (isVatPayer) {
-                  row.push(`${rate}%`);
-                  row.push(getVat(total, rate).toFixed(2));
-              }
+              const row = [item.name, item.quantity, isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)];
+              if (isVatPayer) { row.push(`${rate}%`); row.push(getVat(total, rate).toFixed(2)); }
               row.push(total.toFixed(2));
               tableBody.push(row);
           });
-
-          // Fees
           if (order.packagingFee > 0) {
               if (isVatPayer) addToSummary(feeRate, order.packagingFee);
               const row = ['Balné', '1', isVatPayer ? getBase(order.packagingFee, feeRate).toFixed(2) : order.packagingFee.toFixed(2)];
@@ -1022,15 +990,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               row.push(order.deliveryFee.toFixed(2));
               tableBody.push(row);
           }
-
-          // Discounts
           order.appliedDiscounts?.forEach(d => {
               const row = [`Sleva ${d.code}`, '1', `-${d.amount.toFixed(2)}`];
               if (isVatPayer) { row.push(''); row.push(''); }
               row.push(`-${d.amount.toFixed(2)}`);
               tableBody.push(row);
-              
-              // Handle Tax Reduction (Simplify: Reduce from bucket with highest total)
               if (isVatPayer) {
                   let rem = d.amount;
                   const rates = Object.keys(taxSummary).map(Number).sort((a,b) => b-a);
@@ -1046,10 +1010,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   }
               }
           });
-
-          // Draw Table
           const head = isVatPayer ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem s DPH']] : [['Položka', 'Ks', 'Cena/ks', 'Celkem']];
-          
           autoTable(doc, {
               startY: 100,
               head: head,
@@ -1064,23 +1025,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' }
               }
           });
-
           // @ts-ignore
           let finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
-
-          // VAT Recap
           if (isVatPayer) {
               doc.setFontSize(10);
               doc.setFont("Roboto", "bold");
               doc.text("Rekapitulace DPH", 14, finalY);
-              
               const summaryBody = Object.keys(taxSummary).map(k => {
                   const r = Number(k);
                   const s = taxSummary[r];
                   if (Math.abs(s.total) < 0.01) return null;
                   return [`${r} %`, s.base.toFixed(2), s.vat.toFixed(2), s.total.toFixed(2)];
               }).filter(Boolean);
-
               if (summaryBody.length > 0) {
                   autoTable(doc, {
                       startY: finalY + 2,
@@ -1096,8 +1052,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   finalY = doc.lastAutoTable.finalY + 10;
               } else { finalY += 5; }
           }
-
-          // Total
           const grandTotal = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
           doc.setFont("Roboto", "bold");
           doc.setFontSize(14);
@@ -1105,11 +1059,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           doc.text(`CELKEM K ÚHRADĚ: ${grandTotal.toFixed(2)} Kč`, 196, finalY, { align: "right" });
           doc.setTextColor(0, 0, 0);
           doc.setFontSize(10);
-
           if (type === 'final') {
               doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 196, finalY + 8, { align: "right" });
           } else {
-              // QR Code
               try {
                   const qrString = `SPD*1.0*ACC:${comp.bankAccount}*AM:${grandTotal.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
@@ -1121,9 +1073,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   doc.text("QR Platba", 170, finalY + 53, { align: "center" });
               } catch (e) { console.error("QR Fail", e); }
           }
-
           doc.save(`faktura_${order.id}.pdf`);
-
       } catch (e) {
           console.error("PDF Gen Error:", e);
           alert("Chyba při generování PDF. Zkontrolujte připojení k internetu (potřebné pro fonty).");
@@ -1134,7 +1084,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   return (
     <StoreContext.Provider value={{
-      dataSource, setDataSource, isPreviewEnvironment,
+      dataSource, setDataSource, isPreviewEnvironment, dbConnectionError,
       isLoading, isOperationPending,
       language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, cartBump,
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser, searchUsers,

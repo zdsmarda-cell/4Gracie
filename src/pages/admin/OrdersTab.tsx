@@ -40,7 +40,7 @@ const ConfirmationModal: React.FC<{
 };
 
 export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitialDate }) => {
-    const { searchOrders, allUsers, t, updateOrder, updateOrderStatus, formatDate, settings, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, checkAvailability, products, calculatePackagingFee, validateDiscount, printInvoice, generateCzIban, removeDiacritics, dataSource, updateUserAdmin } = useStore();
+    const { searchOrders, allUsers, t, updateOrder, updateOrderStatus, formatDate, settings, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, checkAvailability, products, calculatePackagingFee, validateDiscount, printInvoice, generateCzIban, removeDiacritics, dataSource, updateUserAdmin, getImageUrl } = useStore();
     
     // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
@@ -457,15 +457,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             if (o.packagingFee > 0) addToTaxSummary(feeVatRate, o.packagingFee);
             if (o.deliveryFee > 0) addToTaxSummary(feeVatRate, o.deliveryFee);
 
-            // Discounts - treat as negative amount on the dominant rate or split? 
-            // Simplifying: Subtract from the tax summary proportionally or just from the largest bucket?
-            // Current simple logic: subtract total discount value from total order value for simple checks, 
-            // but for accounting, discounts usually reduce the base.
-            // Simplified approach for export: Just output the totals calculated above, 
-            // accounting software usually handles imports by matching total or recalculating.
-            // However, to be precise, we should subtract discount from the tax base.
-            // Let's iterate discounts and subtract from the bucket with highest total to prevent negatives where possible.
-            
+            // Discounts
             o.appliedDiscounts?.forEach(d => {
                 let discountRemaining = d.amount;
                 // Try to subtract from highest rate bucket first
@@ -542,7 +534,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                     </div>
                     )}
                 </div>
-                {/* EXPORT BUTTON MOVED HERE TO BE ALWAYS VISIBLE */}
                 <button 
                     onClick={exportToAccounting} 
                     className="bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm transition"
@@ -629,7 +620,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
             </div>
             )}
 
-            {/* FIXED POSITION INVOICE MENU using Portal-like strategy */}
+            {/* portal-like strategy for invoice menu */}
             {openInvoiceMenuId && menuPosition && (
                 <div 
                     className="fixed bg-white border rounded-xl shadow-xl z-[9999] py-1 overflow-hidden animate-in zoom-in-95 duration-200"
@@ -637,7 +628,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                         top: menuPosition.top, 
                         left: menuPosition.left, 
                         width: '160px',
-                        transform: 'translateX(-100%)' // Align right edge with button right edge
+                        transform: 'translateX(-100%)' 
                     }}
                     onClick={e => e.stopPropagation()}
                 >
@@ -660,7 +651,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                 </div>
             )}
 
-            {/* QR Modal, Edit Modal, Address Modal are unchanged but required for component to work */}
             {qrModalOrder && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4 backdrop-blur-sm animate-in zoom-in-95 duration-200" onClick={() => setQrModalOrder(null)}>
                     <div className="bg-white p-8 rounded-3xl w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
@@ -765,7 +755,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                         </div>
                                     )}
 
-                                    {/* Billing Address - MANUAL ONLY - Selector Removed */}
+                                    {/* Billing Address */}
                                     <div className="border-t pt-2 mt-2">
                                         <div className="flex justify-between items-center mb-1">
                                             <label className="text-[9px] font-bold text-gray-400 uppercase">Fakturační adresa</label>
@@ -775,7 +765,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                                 </div>
                                             )}
                                         </div>
-                                        {/* Billing Fields */}
                                         <div className="space-y-2 p-3 bg-white border rounded-lg">
                                             <input placeholder="Jméno / Firma" className="w-full border rounded p-2 text-xs" value={editingOrder.billingName || ''} onChange={e => setEditingOrder({...editingOrder, billingName: e.target.value})} />
                                             <input placeholder="Ulice a č.p." className="w-full border rounded p-2 text-xs" value={editingOrder.billingStreet || ''} onChange={e => setEditingOrder({...editingOrder, billingStreet: e.target.value})} />
@@ -806,11 +795,24 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                 <div className="border rounded-2xl overflow-hidden shadow-sm bg-white">
                                     <table className="min-w-full divide-y">
                                         <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                                            <tr><th className="px-3 py-2 text-left">Název</th><th className="px-3 py-2 text-center">Ks</th><th className="px-3 py-2 text-right">Cena</th><th className="px-3 py-2"></th></tr>
+                                            <tr>
+                                                <th className="px-3 py-2 text-left w-12">Foto</th>
+                                                <th className="px-3 py-2 text-left">Název</th>
+                                                <th className="px-3 py-2 text-center">Ks</th>
+                                                <th className="px-3 py-2 text-right">Cena</th>
+                                                <th className="px-3 py-2"></th>
+                                            </tr>
                                         </thead>
                                         <tbody className="divide-y text-xs">
                                             {editingOrder.items.map(item => (
                                                 <tr key={item.id}>
+                                                    <td className="px-3 py-2">
+                                                        {item.images && item.images[0] ? (
+                                                            <img src={getImageUrl(item.images[0])} alt={item.name} className="w-10 h-10 rounded object-cover" />
+                                                        ) : (
+                                                            <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={14}/></div>
+                                                        )}
+                                                    </td>
                                                     <td className="px-3 py-2 font-bold">{item.name}</td>
                                                     <td className="px-3 py-2 text-center"><div className="flex items-center justify-center space-x-1"><button onClick={() => handleEditItemQuantity(item.id, -1)} className="p-1 hover:bg-gray-100 rounded"><Minus size={10}/></button><span className="w-6 text-center font-bold">{item.quantity}</span><button onClick={() => handleEditItemQuantity(item.id, 1)} className="p-1 hover:bg-gray-100 rounded"><Plus size={10}/></button></div></td>
                                                     <td className="px-3 py-2 text-right font-mono">{item.price * item.quantity}</td>
@@ -823,7 +825,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                                 </div>
                                 
                                 <div className="bg-gray-50 p-4 rounded-2xl space-y-2">
-                                    {/* Discount Input */}
                                     <div className="flex gap-2 mb-3">
                                         <input 
                                             type="text" 
@@ -943,7 +944,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, onClearInitia
                         <div className="overflow-y-auto divide-y flex-grow">
                             {products.filter(p => p.name.toLowerCase().includes(productSearch.toLowerCase())).map(p => (
                                 <div key={p.id} className="flex justify-between items-center py-2 hover:bg-gray-50 px-2 rounded">
-                                    <div className="flex items-center gap-3">{p.images && p.images[0] ? <img src={p.images[0]} alt={p.name} className="w-10 h-10 rounded object-cover"/> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-300"/></div>}<div><span className="font-bold text-sm block">{p.name}</span><span className="text-xs text-gray-400">{p.price} Kč / {p.unit}</span></div></div>
+                                    <div className="flex items-center gap-3">{p.images && p.images[0] ? <img src={getImageUrl(p.images[0])} alt={p.name} className="w-10 h-10 rounded object-cover"/> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-300"/></div>}<div><span className="font-bold text-sm block">{p.name}</span><span className="text-xs text-gray-400">{p.price} Kč / {p.unit}</span></div></div>
                                     <button onClick={() => { handleAddProductToOrder(p); setIsAddProductModalOpen(false); }} className="bg-accent text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-yellow-600 transition">Přidat</button>
                                 </div>
                             ))}
