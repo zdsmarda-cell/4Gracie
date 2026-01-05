@@ -28,6 +28,13 @@ export const generateTranslations = async (sourceData: Record<string, string>): 
     }
 
     const data = await response.json();
+    
+    // FIX: The API often returns the translations object directly (keys 'en', 'de')
+    // instead of wrapping it in a 'translations' property. We check for both.
+    if (data.en || data.de) {
+        return data;
+    }
+    
     return data.translations || {};
   } catch (error) {
     console.error("AI Translation failed:", error);
