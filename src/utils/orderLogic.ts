@@ -6,11 +6,20 @@ export const calculatePackagingFeeLogic = (
     packagingTypes: PackagingType[], 
     freeFromLimit: number
 ): number => {
-    const totalVolume = items.reduce((sum, item) => sum + (item.volume || 0) * item.quantity, 0);
+    // Volume logic: Sum only items that REQUIRE packaging
+    const totalVolume = items.reduce((sum, item) => {
+        if (item.noPackaging) return sum; // Skip items marked as "Nebalí se"
+        return sum + (item.volume || 0) * item.quantity;
+    }, 0);
+
     const cartPrice = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
     
+    // If cart total price exceeds limit, packaging is free regardless of volume
     if (cartPrice >= freeFromLimit) return 0;
     
+    // If volume is 0 (e.g. only noPackaging items), fee is 0
+    if (totalVolume === 0) return 0;
+
     const availableTypes = [...packagingTypes].sort((a, b) => a.volume - b.volume);
     if (availableTypes.length === 0) return 0;
     

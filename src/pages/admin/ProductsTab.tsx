@@ -96,7 +96,8 @@ export const ProductsTab: React.FC = () => {
             vatRateInner: 12,
             vatRateTakeaway: 12,
             workload: 0,
-            workloadOverhead: 0
+            workloadOverhead: 0,
+            noPackaging: false
         });
         setIsProductModalOpen(true);
     };
@@ -232,7 +233,10 @@ export const ProductsTab: React.FC = () => {
                         </td>
                         <td className="px-6 py-4">{getCategoryName(p.category)}</td>
                         <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
-                        <td className="px-6 py-4 font-mono text-gray-500">{p.volume > 0 ? `${p.volume} ml` : '-'}</td>
+                        <td className="px-6 py-4 font-mono text-gray-500">
+                            {p.volume > 0 ? `${p.volume} ml` : '-'}
+                            {p.noPackaging && <span className="block text-[9px] text-orange-500 font-bold mt-1">Nebalí se</span>}
+                        </td>
                         <td className="px-6 py-4 text-center">{p.visibility?.online ? <Check size={16} className="inline text-green-500"/> : <X size={16} className="inline text-gray-300"/>}</td>
                         <td className="px-6 py-4 text-right flex justify-end gap-2">
                         <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
@@ -301,6 +305,17 @@ export const ProductsTab: React.FC = () => {
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.minOrderQuantity || ''} onChange={e => setEditingProduct({...editingProduct, minOrderQuantity: Number(e.target.value)})} /></div>
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.volume || ''} onChange={e => setEditingProduct({...editingProduct, volume: Number(e.target.value)})} placeholder="Nutné pro balné"/></div>
                             </div>
+                            
+                            {/* NO PACKAGING CHECKBOX */}
+                            <label className="flex items-center space-x-2 text-sm pt-1">
+                                <input 
+                                    type="checkbox" 
+                                    checked={editingProduct?.noPackaging ?? false} 
+                                    onChange={e => setEditingProduct({...editingProduct, noPackaging: e.target.checked})} 
+                                    className="rounded text-accent"
+                                />
+                                <span>Nebalí se (nezapočítávat do objemu krabic)</span>
+                            </label>
                         </div>
 
                         <div className="bg-gray-50 p-4 rounded-xl border space-y-3">

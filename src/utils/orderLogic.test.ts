@@ -24,6 +24,15 @@ describe('Packaging Logic', () => {
         const fee = calculatePackagingFeeLogic(items, boxes, 5000);
         expect(fee).toBe(30);
     });
+
+    it('should ignore items with noPackaging attribute', () => {
+        const items: any[] = [
+            { price: 100, quantity: 1, volume: 1200 }, // Should cost 30kc
+            { price: 100, quantity: 5, volume: 1000, noPackaging: true } // Should be ignored (5000ml ignored)
+        ];
+        const fee = calculatePackagingFeeLogic(items, boxes, 50000); // High free limit so logic applies
+        expect(fee).toBe(30);
+    });
 });
 
 describe('Discount Logic', () => {

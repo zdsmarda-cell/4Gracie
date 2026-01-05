@@ -156,6 +156,7 @@ export interface Product {
   workload: number;
   workloadOverhead?: number;
   volume: number;
+  noPackaging?: boolean; // IF TRUE: Does not require packaging, volume is ignored in calculation
   minOrderQuantity?: number;
   visibility: {
     online: boolean;
