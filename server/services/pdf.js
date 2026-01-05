@@ -10,6 +10,13 @@ const fetchFont = async (url) => {
     return Buffer.from(arrayBuffer).toString('base64');
 };
 
+const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+};
+
 export const generateInvoicePdf = async (order, type = 'proforma', settings) => {
     const doc = new jsPDF();
     
@@ -55,10 +62,10 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     doc.setFont("Roboto", "normal");
     doc.setFontSize(10);
     doc.text(`Číslo obj: ${order.id}`, 105, 28, { align: "center" });
-    doc.text(`Datum vystavení: ${dateToUse.split('T')[0]}`, 105, 34, { align: "center" });
+    doc.text(`Datum vystavení: ${formatDate(dateToUse)}`, 105, 34, { align: "center" });
     
     if (isVatPayer && type === 'final') {
-        doc.text(`Datum zdan. plnění: ${dateToUse.split('T')[0]}`, 105, 40, { align: "center" });
+        doc.text(`Datum zdan. plnění: ${formatDate(dateToUse)}`, 105, 40, { align: "center" });
     }
 
     // --- 4. SUPPLIER / CUSTOMER ---

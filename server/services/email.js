@@ -24,6 +24,13 @@ export const initEmail = async () => {
     }
 };
 
+const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+};
+
 const STATUS_TRANSLATIONS = {
     cs: {
         created: 'Zadaná',
@@ -99,17 +106,29 @@ const generateOrderHtml = (order, title, message, lang = 'cs') => {
         if (!url) return '';
         if (url.startsWith('http')) return url;
         
-        // Priority: APP_URL -> VITE_APP_URL -> localhost fallback
         let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost:3000';
-        
-        // Remove trailing slash if present
         if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
         
-        // Handle path
+        // Ensure url has leading slash
         const cleanPath = url.startsWith('/') ? url : `/${url}`;
         
         return `${baseUrl}${cleanPath}`;
     };
+
+    // Construct Address Logic
+    let addressDisplay = '';
+    if (order.deliveryType === 'pickup') {
+        addressDisplay = order.deliveryAddress || 'Osobní odběr'; // Legacy fallback
+    } else {
+        // Prefer explicit fields if available
+        if (order.deliveryStreet && order.deliveryCity) {
+            addressDisplay = `${order.deliveryName || ''}<br>${order.deliveryStreet}<br>${order.deliveryZip} ${order.deliveryCity}`;
+            if(order.deliveryPhone) addressDisplay += `<br>Tel: ${order.deliveryPhone}`;
+        } else {
+            // Fallback to legacy string string
+            addressDisplay = (order.deliveryAddress || 'Adresa neuvedena').replace(/\n/g, '<br>');
+        }
+    }
 
     let itemsHtml = order.items.map(item => `
         <tr>
@@ -128,7 +147,7 @@ const generateOrderHtml = (order, title, message, lang = 'cs') => {
         </tr>
     `).join('');
 
-    return `
+    const htmlContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
             <h2 style="color: #1f2937; border-bottom: 2px solid #9333ea; padding-bottom: 10px;">${title} #${order.id}</h2>
             
@@ -162,11 +181,18 @@ const generateOrderHtml = (order, title, message, lang = 'cs') => {
             </div>
 
             <div style="margin-top: 20px; font-size: 12px; color: #666;">
-                <p><strong>Doručení:</strong> ${order.deliveryDate}</p>
-                <p><strong>Adresa:</strong> ${order.deliveryType === 'pickup' ? 'Osobní odběr' : order.deliveryAddress}</p>
+                <p><strong>Doručení:</strong> ${formatDate(order.deliveryDate)}</p>
+                <p><strong>Adresa:</strong><br> ${addressDisplay}</p>
             </div>
         </div>
     `;
+    
+    // DEBUG: Log the generated HTML before base64 encoding to check image URLs
+    console.log("--- DEBUG EMAIL HTML (Check Image URLs) ---");
+    console.log(htmlContent);
+    console.log("-------------------------------------------");
+
+    return htmlContent;
 };
 
 export const sendOrderEmail = async (order, type, settings, customStatus = null) => {
