@@ -5,6 +5,7 @@ import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETT
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { calculatePackagingFeeLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
 
 interface CheckResult {
   allowed: boolean;
@@ -137,7 +138,7 @@ interface StoreContextType {
   removeDiacritics: (str: string) => string;
   formatDate: (dateStr: string) => string;
   getFullApiUrl: (path: string) => string;
-  getImageUrl: (path: string) => string; // NEW
+  getImageUrl: (path: string) => string; 
   refreshData: (force?: boolean) => Promise<void>;
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
@@ -240,7 +241,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [user, setUser] = useState<User | null>(() => loadFromStorage('session_user', null));
   
-  // Ref for user to avoid loops in useEffects
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
@@ -252,14 +252,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
   const setDataSource = (mode: DataSourceMode) => {
-    if (isProduction && mode === 'local') return; // Enforce in prod
+    if (isProduction && mode === 'local') return; 
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
   };
 
-  const isPreviewEnvironment = useMemo(() => {
-      return !isProduction; // Only show debug controls in dev
-  }, [isProduction]);
+  const isPreviewEnvironment = useMemo(() => !isProduction, [isProduction]);
 
   const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
     setGlobalNotification({ message, type, autoClose });
@@ -280,12 +278,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return `${baseUrl}${cleanEndpoint}`;
   }, []);
 
-  // NEW: Helper to force absolute URL for images, bypassing proxy issues
   const getImageUrl = useCallback((path: string) => {
       if (!path) return '';
       if (path.startsWith('http')) return path;
       if (path.startsWith('data:')) return path;
-      // Prepend API URL which includes port 3000 (if detected/configured)
       return getFullApiUrl(path);
   }, [getFullApiUrl]);
 
@@ -311,10 +307,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         timeoutPromise
       ]);
       
-      // Handle No Content explicitly to avoid JSON parsing error
-      if (res.status === 204) {
-          return null; 
-      }
+      if (res.status === 204) return null; 
 
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -324,7 +317,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return await res.json();
     } catch (e: any) {
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
-         // Silently ignore abort errors to prevent spamming notifications during rapid navigation
          if (e.name !== 'AbortError') {
              showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
          }
@@ -338,7 +330,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [getFullApiUrl]);
 
-  // FIX: STOP LOADING ALL USERS IN BOOTSTRAP, DO NOT BLOCK UI WITH ISLOADING
   const fetchData = useCallback(async (force: boolean = false) => {
       try {
         if (dataSource === 'api') {
@@ -359,15 +350,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               showNotify('Nepodařilo se načíst data ze serveru. Zkontrolujte připojení.', 'error', false);
           }
         } else {
-          // Local Mode: Load everything as before for development simulation
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
           setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
-          
           const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
           if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
           if (!loadedSettings.pickupLocations) loadedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
-          
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
@@ -375,11 +363,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       } catch (err: any) {
         showNotify('Chyba při načítání aplikace: ' + err.message, 'error');
       } finally {
-        setIsLoading(false); // Unblock UI after first load
+        setIsLoading(false); 
       }
   }, [dataSource, apiCall]); 
 
-  // Initial load only
   useEffect(() => {
     fetchData();
   }, [dataSource]); 
@@ -428,6 +415,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const clearCart = () => setCart([]);
 
+  const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
+      return calculateDiscountAmountLogic(code, currentCart, discountCodes, orders);
+  };
+
   useEffect(() => {
     if (appliedDiscounts.length === 0) return;
     let updatedDiscounts: AppliedDiscount[] = [];
@@ -447,34 +438,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart]);
 
-  const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
-    const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
-    if (!dc) return { success: false, error: t('discount.invalid') };
-    if (!dc.enabled) return { success: false, error: t('discount.invalid') };
-    
-    const actualUsage = orders.filter(o => o.status !== OrderStatus.CANCELLED && o.appliedDiscounts?.some(ad => ad.code === dc.code)).length;
-    if (dc.maxUsage > 0 && actualUsage >= dc.maxUsage) return { success: false, error: t('discount.used_up') };
-    
-    const now = new Date().toISOString().split('T')[0];
-    if (dc.validFrom && now < dc.validFrom) return { success: false, error: t('discount.future') };
-    if (dc.validTo && now > dc.validTo) return { success: false, error: t('discount.expired') };
-    
-    const cartTotal = currentCart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const applicableItems = dc.applicableCategories && dc.applicableCategories.length > 0 ? currentCart.filter(item => dc.applicableCategories!.includes(item.category)) : currentCart;
-    const applicableTotal = applicableItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    
-    if (dc.applicableCategories && dc.applicableCategories.length > 0 && applicableTotal === 0) return { success: false, error: 'Sleva se nevztahuje na položky v košíku.' };
-    
-    const valueToCheck = (dc.applicableCategories && dc.applicableCategories.length > 0) ? applicableTotal : cartTotal;
-    if (valueToCheck < dc.minOrderValue) return { success: false, error: t('discount.min_order', { min: dc.minOrderValue.toString() }) };
-
-    let calculatedAmount = 0;
-    if (dc.type === DiscountType.PERCENTAGE) calculatedAmount = Math.floor(applicableTotal * (dc.value / 100));
-    else calculatedAmount = Math.min(dc.value, applicableTotal);
-    
-    return { success: true, discount: dc, amount: calculatedAmount };
-  };
-
   const applyDiscount = (code: string): { success: boolean; error?: string } => {
     if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
     const result = calculateDiscountAmount(code, cart);
@@ -491,22 +454,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const validateDiscount = calculateDiscountAmount;
 
   const calculatePackagingFee = (items: CartItem[]): number => {
-    const totalVolume = items.reduce((sum, item) => sum + (item.volume || 0) * item.quantity, 0);
-    const cartPrice = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    if (cartPrice >= settings.packaging.freeFrom) return 0;
-    const availableTypes = [...settings.packaging.types].sort((a, b) => a.volume - b.volume);
-    if (availableTypes.length === 0) return 0;
-    const largestBox = availableTypes[availableTypes.length - 1];
-    let remainingVolume = totalVolume;
-    let totalFee = 0;
-    while (remainingVolume > 0) {
-      if (remainingVolume > largestBox.volume) { totalFee += largestBox.price; remainingVolume -= largestBox.volume; } 
-      else {
-        const bestFit = availableTypes.find(type => type.volume >= remainingVolume);
-        if (bestFit) { totalFee += bestFit.price; remainingVolume = 0; } else { totalFee += largestBox.price; remainingVolume -= largestBox.volume; }
-      }
-    }
-    return totalFee;
+      return calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
   };
 
   const uploadImage = async (base64: string, name?: string): Promise<string> => {
@@ -518,8 +466,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         return base64; 
     }
   };
-
-  // ... Order & User Logic ...
 
   const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
@@ -630,14 +576,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [dataSource, orders, apiCall]); 
 
+  // Product Functions
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { 
-            setProducts(prev => [...prev, p]); 
-            showNotify(t('notification.saved')); 
-            return true; 
-        }
+        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify('Produkt uložen do DB.'); return true; }
         return false;
     } else {
         setProducts(prev => [...prev, p]); return true;
@@ -647,11 +590,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { 
-            setProducts(prev => prev.map(x => x.id === p.id ? p : x)); 
-            showNotify(t('notification.saved')); 
-            return true; 
-        }
+        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify('Produkt aktualizován v DB.'); return true; }
         return false;
     } else {
         setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
@@ -661,114 +600,140 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteProduct = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Smazáno.'); return true; }
+        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Produkt smazán z DB.'); return true; }
         return false;
     } else {
         setProducts(prev => prev.filter(x => x.id !== id)); return true;
     }
   };
 
-  const login = async (email: string, password?: string) => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/auth/login', 'POST', { email, password });
-        if (res && res.success) {
-            setUser(res.user);
-            return { success: true };
-        }
-        return { success: false, message: res?.message || 'Login failed' };
-    } else {
-        const foundUser = allUsers.find(u => u.email === email);
-        if (foundUser) {
-            if (foundUser.isBlocked) return { success: false, message: t('cart.blocked_alert') };
-            if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Invalid password' };
-            setUser(foundUser); 
-            return { success: true };
-        }
-        return { success: false, message: 'User not found' };
-    }
-  };
-
-  const register = (name: string, email: string, phone: string, password?: string) => {
-    const newUser: User = { id: Date.now().toString(), name, email, phone, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(password || '1234'), marketingConsent: false };
-    if (dataSource === 'api') {
-        apiCall('/api/users', 'POST', newUser).then(res => {
-            if (res && res.success) { setUser(newUser); }
-        });
-    } else {
-        setAllUsers(prev => [...prev, newUser]); setUser(newUser); 
-    }
-  };
-
-  const searchUsers = useCallback(async (filter: {search?: string}): Promise<User[]> => {
+  // Auth Functions
+  const login = async (e: string, p?: string) => { 
       if (dataSource === 'api') {
-          const res = await apiCall(`/api/users?search=${filter.search || ''}`, 'GET');
-          return res?.users || [];
+        const res = await apiCall('/api/auth/login', 'POST', { email: e, password: p });
+        if (res && res.success) { setUser(res.user); return { success: true }; }
+        return { success: false, message: res?.message || 'Login failed' };
       }
-      const term = (filter.search || '').toLowerCase();
-      return allUsers.filter(u => u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term));
-  }, [dataSource, allUsers, apiCall]);
+      const foundUser = allUsers.find(u => u.email === e);
+      if (foundUser) {
+          if (foundUser.isBlocked) return { success: false, message: t('cart.blocked_alert') };
+          if (p && foundUser.passwordHash !== hashPassword(p)) return { success: false, message: 'Invalid password' };
+          setUser(foundUser); 
+          return { success: true };
+      }
+      return { success: false, message: 'User not found' };
+  };
+
+  const logout = () => {
+      setUser(null);
+      localStorage.removeItem('session_user');
+  };
+
+  const register = (n: string, e: string, ph: string, p?: string) => { 
+      if (allUsers.find(u => u.email.toLowerCase() === e.toLowerCase())) { 
+          showNotify('Tento email je již registrován.', 'error');
+          return; 
+      }
+      const newUser: User = { id: Date.now().toString(), name: n, email: e, phone: ph, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword(p || '1234'), marketingConsent: false };
+      
+      if (dataSource === 'api') {
+          apiCall('/api/users', 'POST', newUser).then(res => {
+              if (res && res.success) { setAllUsers(prev => [...prev, newUser]); setUser(newUser); }
+          });
+      } else {
+          setAllUsers(prev => [...prev, newUser]); setUser(newUser); 
+      }
+  };
+
+  const searchUsers = async (f: any) => { 
+      if (dataSource === 'api') {
+          const queryString = new URLSearchParams(f).toString();
+          const res = await apiCall(`/api/users?${queryString}`, 'GET');
+          if (res && res.success) return res.users;
+          return [];
+      }
+      return allUsers; 
+  };
 
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
-      const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/users', 'POST', newUser);
-          if (res && res.success) { showNotify(t('notification.email_sent')); return true; }
-          return false;
-      } else {
-          setAllUsers(prev => [...prev, newUser]); return true;
-      }
+    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { showNotify('Uživatel již existuje.', 'error'); return false; }
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
+    
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', newUser);
+        if (res && res.success) {
+            setAllUsers(prev => [...prev, newUser]);
+            showNotify(`Uživatel ${name} vytvořen.`, 'success', false);
+            return true;
+        }
+        return false;
+    } else {
+        setAllUsers(prev => [...prev, newUser]);
+        showNotify(`Uživatel ${name} vytvořen.`);
+        return true;
+    }
   };
 
   const updateUser = async (u: User): Promise<boolean> => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/users', 'POST', u);
-          if (res && res.success) { setUser(u); return true; }
-          return false;
-      } else {
-          setUser(u);
-          setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-          return true;
-      }
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', u);
+        if (res && res.success) {
+            setUser(u);
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            showNotify('Profil aktualizován.');
+            return true;
+        }
+        return false;
+    } else {
+        setUser(u);
+        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+        return true;
+    }
   };
 
   const updateUserAdmin = async (u: User): Promise<boolean> => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/users', 'POST', u);
-          if (res && res.success) {
-              setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-              if (user && user.id === u.id) setUser(u);
-              showNotify(t('notification.saved'));
-              return true;
-          }
-          return false;
-      } else {
-          setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-          if (user && user.id === u.id) setUser(u);
-          return true;
-      }
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', u);
+        if (res && res.success) {
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            if (user && user.id === u.id) setUser(u);
+            showNotify('Uživatel aktualizován.');
+            return true;
+        }
+        return false;
+    } else {
+        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+        if (user && user.id === u.id) setUser(u);
+        return true;
+    }
   };
 
   const toggleUserBlock = async (id: string): Promise<boolean> => { 
       const u = allUsers.find(x => x.id === id); 
-      if (u) { const updated = { ...u, isBlocked: !u.isBlocked }; return await updateUserAdmin(updated); } 
+      if (u) { 
+          const updated = { ...u, isBlocked: !u.isBlocked }; 
+          return await updateUserAdmin(updated); 
+      } 
       return false; 
   };
 
   const sendPasswordReset = async (email: string) => { 
       if (dataSource === 'api') { 
           const res = await apiCall('/api/auth/reset-password', 'POST', { email }); 
-          return res;
+          if (res && res.success) return { success: true, message: res.message || 'Email odeslán.' }; 
+          return { success: false, message: res?.message || 'Chyba serveru' }; 
       } 
-      return { success: true, message: 'Email odeslán (Simulace).' }; 
+      return { success: true, message: 'Simulace (Lokální mód): Reset link odeslán.' }; 
   };
 
   const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => { 
       if (dataSource === 'api') { 
           const newHash = hashPassword(newPass); 
           const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); 
-          return res;
+          if (res && res.success) { await fetchData(); return { success: true, message: res.message || 'Heslo úspěšně změněno.' }; } 
+          return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' }; 
       } 
-      return { success: true, message: 'Heslo změněno (Simulace).' }; 
+      return { success: true, message: 'Heslo změněno (Lokální simulace)' }; 
   };
 
   const changePassword = (o: string, n: string) => { 
@@ -779,12 +744,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return { success: true, message: 'Změněno' }; 
   };
 
-  const logout = () => { setUser(null); localStorage.removeItem('session_user'); };
-
   const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/settings', 'POST', s);
-        if (res && res.success) { setSettings(s); showNotify(t('notification.saved')); return true; }
+        if (res && res.success) { setSettings(s); showNotify('Nastavení uloženo.'); return true; }
         return false;
     } else {
         setSettings(s); return true;
@@ -796,7 +759,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const res = await apiCall('/api/calendar', 'POST', c);
         if (res && res.success) {
             setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-            showNotify(t('notification.saved')); return true;
+            showNotify('Kalendář aktualizován.'); return true;
         }
         return false;
     } else {
@@ -808,7 +771,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const removeDayConfig = async (date: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify(t('notification.saved')); return true; }
+        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify('Výjimka smazána.'); return true; }
         return false;
     } else {
         setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
@@ -818,7 +781,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
-        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify(t('notification.saved')); return true; }
+        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify('Slevový kód uložen.'); return true; }
         return false;
     } else {
         setDiscountCodes(prev => [...prev, c]); return true;
@@ -828,7 +791,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', code);
-        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify(t('notification.saved')); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify('Slevový kód aktualizován.'); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
@@ -838,7 +801,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteDiscountCode = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Smazáno.'); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Slevový kód smazán.'); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
@@ -884,20 +847,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const config = dayConfigs.find(d => d.date === date);
     if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
     
-    const { load, usedProductIds } = getDailyLoad(date, excludeOrderId);
+    const { load } = getDailyLoad(date, excludeOrderId);
     
     items.forEach(item => {
        const productDef = products.find(p => String(p.id) === String(item.id));
        const workload = Number(productDef?.workload) || Number(item.workload) || 0;
-       const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
        
        if (load[item.category] !== undefined) {
           load[item.category] += workload * item.quantity;
-          // Only add overhead if this product hasn't been counted for this day yet
-          if (!usedProductIds.has(String(item.id))) {
-              load[item.category] += overhead;
-              usedProductIds.add(String(item.id));
-          }
        }
     });
     
@@ -948,10 +905,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         try {
             const res = await apiCall('/api/admin/import', 'POST', { data: d, selection: s });
             if (res && res.success) {
-                await fetchData(true); // Force refresh
+                await fetchData(); 
                 return { success: true };
             }
-            return { success: false, message: res?.error || 'Import failed.' };
+            return { success: false, message: res?.error || 'Import failed on server.' };
         } catch (e: any) {
             return { success: false, message: e.message };
         }
@@ -969,260 +926,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
     }
   };
-  
+
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
-  
-  const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => { 
-      const doc = new jsPDF();
-      
-      try {
-          // Load Regular Font
-          const fontRes = await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
-          const fontBlob = await fontRes.blob();
-          const fontBase64 = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string);
-              reader.readAsDataURL(fontBlob);
-          });
-          const pureBase64 = fontBase64.split(',')[1];
-          doc.addFileToVFS("Roboto-Regular.ttf", pureBase64);
-          doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
-
-          // Load Medium/Bold Font for headers to support diacritics
-          const fontBoldRes = await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
-          const fontBoldBlob = await fontBoldRes.blob();
-          const fontBoldBase64 = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string);
-              reader.readAsDataURL(fontBoldBlob);
-          });
-          const pureBoldBase64 = fontBoldBase64.split(',')[1];
-          doc.addFileToVFS("Roboto-Medium.ttf", pureBoldBase64);
-          doc.addFont("Roboto-Medium.ttf", "Roboto", "bold");
-
-          doc.setFont("Roboto");
-      } catch (e) {
-          console.warn("Nepodařilo se načíst font pro diakritiku, používám výchozí.", e);
-      }
-
-      const comp = o.companyDetailsSnapshot || settings.companyDetails;
-      const isVatPayer = !!comp.dic;
-      const tSafe = (txt: string) => txt || ''; 
-
-      // Header logic based on type
-      const headerTitle = type === 'proforma' 
-          ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" 
-          : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
-      
-      // Dates logic
-      // Proforma: Issued = CreatedAt, DUZP = CreatedAt
-      // Final: Issued = FinalInvoiceDate (delivery), DUZP = FinalInvoiceDate
-      const dateToUse = type === 'final' 
-          ? (o.finalInvoiceDate || new Date().toISOString()) 
-          : o.createdAt;
-
-      doc.setFontSize(22);
-      doc.setFont("Roboto", "bold");
-      doc.text(tSafe(headerTitle), 105, 20, { align: "center" });
-      doc.setFont("Roboto", "normal");
-      
-      doc.setFontSize(10);
-      doc.text(tSafe(`Číslo obj: ${o.id}`), 105, 28, { align: "center" });
-      
-      doc.text(tSafe(`Datum vystavení: ${formatDate(dateToUse)}`), 105, 34, { align: "center" });
-      if (isVatPayer) {
-          doc.text(tSafe(`Datum zdan. plnění: ${formatDate(dateToUse)}`), 105, 40, { align: "center" });
-      }
-
-      doc.setFontSize(12);
-      doc.text(tSafe("DODAVATEL:"), 14, 50);
-      doc.setFontSize(10);
-      doc.text(tSafe(comp.name), 14, 56);
-      doc.text(tSafe(comp.street), 14, 61);
-      doc.text(tSafe(`${comp.zip} ${comp.city}`), 14, 66);
-      doc.text(tSafe(`IČ: ${comp.ic}`), 14, 71);
-      if(comp.dic) doc.text(tSafe(`DIČ: ${comp.dic}`), 14, 76);
-      
-      doc.setFontSize(12);
-      doc.text(tSafe("ODBĚRATEL:"), 120, 50);
-      doc.setFontSize(10);
-      
-      let yPos = 56;
-      doc.text(tSafe(o.billingName || o.userName || 'Zákazník'), 120, yPos); yPos += 5;
-      doc.text(tSafe(o.billingStreet || ''), 120, yPos); yPos += 5;
-      doc.text(tSafe(`${o.billingZip || ''} ${o.billingCity || ''}`), 120, yPos); yPos += 5;
-      if (o.billingIc) { doc.text(tSafe(`IČ: ${o.billingIc}`), 120, yPos); yPos += 5; }
-      if (o.billingDic) { doc.text(tSafe(`DIČ: ${o.billingDic}`), 120, yPos); yPos += 5; }
-
-      let y = 100;
-      doc.line(14, y, 196, y);
-      y += 6;
-      doc.setFontSize(9);
-      
-      if (isVatPayer) {
-          doc.text("POLOŽKA", 14, y);
-          doc.text("KS", 90, y);
-          doc.text("CENA/KS", 105, y);
-          doc.text("DPH", 130, y);
-          doc.text("ZÁKLAD", 150, y);
-          doc.text("CELKEM", 180, y);
-      } else {
-          doc.text("POLOŽKA", 14, y);
-          doc.text("KS", 130, y);
-          doc.text("CENA/KS", 150, y);
-          doc.text("CELKEM", 180, y);
-      }
-      y += 3;
-      doc.line(14, y, 196, y);
-      y += 6;
-
-      const calculateVat = (priceWithVat: number, rate: number) => {
-          const priceNoVat = priceWithVat / (1 + rate / 100);
-          const vat = priceWithVat - priceNoVat;
-          return { priceNoVat, vat };
-      };
-
-      const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
-      const addToTaxSummary = (rate: number, totalWithVat: number) => {
-          if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
-          const { priceNoVat, vat } = calculateVat(totalWithVat, rate);
-          taxSummary[rate].base += priceNoVat;
-          taxSummary[rate].vat += vat;
-          taxSummary[rate].total += totalWithVat;
-      };
-
-      let maxItemVatRate = 0;
-      o.items.forEach(item => {
-           const rate = item.vatRateTakeaway || 12; 
-           if (rate > maxItemVatRate) maxItemVatRate = rate;
-      });
-      const feeVatRate = maxItemVatRate > 0 ? maxItemVatRate : 21;
-
-      o.items.forEach(item => {
-          const itemTotal = item.price * item.quantity;
-          const vatRate = item.vatRateTakeaway || 12; 
-          if (isVatPayer) {
-              const { priceNoVat } = calculateVat(item.price, vatRate);
-              addToTaxSummary(vatRate, itemTotal);
-              doc.text(tSafe(item.name).substring(0, 35), 14, y);
-              doc.text(item.quantity.toString(), 90, y);
-              doc.text(priceNoVat.toFixed(2), 105, y);
-              doc.text(`${vatRate}%`, 130, y);
-              doc.text((priceNoVat * item.quantity).toFixed(2), 150, y);
-              doc.text(itemTotal.toFixed(2), 180, y);
-          } else {
-              doc.text(tSafe(item.name).substring(0, 50), 14, y);
-              doc.text(item.quantity.toString(), 130, y);
-              doc.text(item.price.toString(), 150, y);
-              doc.text(itemTotal.toString(), 180, y);
-          }
-          y += 6;
-      });
-
-      if (o.packagingFee > 0) {
-          if (isVatPayer) {
-              const { priceNoVat } = calculateVat(o.packagingFee, feeVatRate);
-              addToTaxSummary(feeVatRate, o.packagingFee);
-              doc.text("Balné", 14, y);
-              doc.text("1", 90, y);
-              doc.text(priceNoVat.toFixed(2), 105, y);
-              doc.text(`${feeVatRate}%`, 130, y);
-              doc.text(priceNoVat.toFixed(2), 150, y);
-              doc.text(o.packagingFee.toFixed(2), 180, y);
-          } else {
-              doc.text("Balné", 14, y);
-              doc.text(o.packagingFee.toString(), 180, y);
-          }
-          y += 6;
-      }
-
-      if (o.deliveryFee > 0) {
-          if (isVatPayer) {
-              const { priceNoVat } = calculateVat(o.deliveryFee, feeVatRate);
-              addToTaxSummary(feeVatRate, o.deliveryFee);
-              doc.text("Doprava", 14, y);
-              doc.text("1", 90, y);
-              doc.text(priceNoVat.toFixed(2), 105, y);
-              doc.text(`${feeVatRate}%`, 130, y);
-              doc.text(priceNoVat.toFixed(2), 150, y);
-              doc.text(o.deliveryFee.toFixed(2), 180, y);
-          } else {
-              doc.text("Doprava", 14, y);
-              doc.text(o.deliveryFee.toString(), 180, y);
-          }
-          y += 6;
-      }
-      
-      o.appliedDiscounts?.forEach(d => {
-          doc.text(tSafe(`Sleva ${d.code}`), 14, y);
-          doc.text(`-${d.amount}`, 180, y);
-          y += 6;
-      });
-
-      doc.line(14, y, 196, y);
-      y += 10;
-
-      if (isVatPayer) {
-          doc.setFontSize(8);
-          doc.text("Rekapitulace DPH", 14, y);
-          y += 4;
-          doc.text("Sazba", 14, y);
-          doc.text("Základ", 40, y);
-          doc.text("DPH", 70, y);
-          doc.text("Celkem", 100, y);
-          y += 4;
-          Object.keys(taxSummary).forEach(rate => {
-              const r = Number(rate);
-              const s = taxSummary[r];
-              doc.text(`${r}%`, 14, y);
-              doc.text(s.base.toFixed(2), 40, y);
-              doc.text(s.vat.toFixed(2), 70, y);
-              doc.text(s.total.toFixed(2), 100, y);
-              y += 4;
-          });
-          y += 10;
-      }
-
-      doc.setFontSize(14);
-      const total = Math.max(0, o.totalPrice + o.packagingFee + (o.deliveryFee || 0) - (o.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
-      doc.text(tSafe(`CELKEM K ÚHRADĚ: ${total} Kč`), 196, y, { align: "right" });
-
-      if (type === 'final') {
-          // Footer for Final Invoice
-          y += 10;
-          doc.setFontSize(12);
-          doc.setFont("Roboto", "bold");
-          doc.text(tSafe("NEPLATIT - Již uhrazeno zálohovou fakturou."), 105, y, { align: "center" });
-      } else {
-          // QR Code for Proforma ONLY
-          try {
-              const iban = calculateCzIban(settings.companyDetails.bankAccount).replace(/\s/g,'');
-              const bic = settings.companyDetails.bic ? `+${settings.companyDetails.bic}` : '';
-              const acc = `ACC:${iban}${bic}`;
-              const amountStr = total.toFixed(2);
-              const vs = o.id.replace(/\D/g,'') || '0';
-              const msg = removeDiacritics(`Objednavka ${o.id}`); 
-              const qrString = `SPD*1.0*${acc}*AM:${amountStr}*CC:CZK*X-VS:${vs}*MSG:${msg}`;
-              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrString)}`;
-              const qrRes = await fetch(qrUrl);
-              const qrBlob = await qrRes.blob();
-              const qrBase64 = await new Promise<string>((resolve) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve(reader.result as string);
-                  reader.readAsDataURL(qrBlob);
-              });
-              doc.addImage(qrBase64, 'PNG', 150, 200, 40, 40); 
-              doc.setFontSize(8);
-              doc.text("QR Platba", 170, 242, { align: "center" });
-          } catch (e) {
-              console.warn("QR kód se nepodařilo vložit", e);
-          }
-      }
-
-      const filename = type === 'proforma' ? `zalohova_faktura_${o.id}.pdf` : `faktura_${o.id}.pdf`;
-      doc.save(filename);
-  };
-  const generateCzIban = calculateCzIban;
+  const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => { const doc = new jsPDF(); doc.text(`${type === 'final' ? 'Daňový doklad' : 'Faktura'} ${o.id}`, 10, 10); doc.save('faktura.pdf'); };
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-400">Načítám data...</div>;
 
