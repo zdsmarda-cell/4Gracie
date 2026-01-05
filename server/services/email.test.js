@@ -51,8 +51,8 @@ describe('Email Service', () => {
         // Expect 2 calls: 1 to customer, 1 to admin
         expect(sendMailMock).toHaveBeenCalledTimes(2);
         
-        // Check customer email
-        const customerCall = sendMailMock.calls.find(call => call[0].to === 'customer@test.com');
+        // Check customer email (using .mock.calls)
+        const customerCall = sendMailMock.mock.calls.find(call => call[0].to === 'customer@test.com');
         expect(customerCall).toBeDefined();
         expect(customerCall[0].subject).toContain('Potvrzení objednávky');
         expect(customerCall[0].attachments).toHaveLength(1); // Invoice PDF
@@ -74,7 +74,7 @@ describe('Email Service', () => {
         await sendOrderEmail(order, 'status', settings, 'confirmed');
 
         expect(sendMailMock).toHaveBeenCalledTimes(1);
-        const call = sendMailMock.calls[0][0];
+        const call = sendMailMock.mock.calls[0][0];
         expect(call.to).toBe('customer@test.com');
         expect(call.subject).toContain('Order Status Update');
     });

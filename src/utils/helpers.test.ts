@@ -28,9 +28,9 @@ describe('Helpers', () => {
         it('should calculate valid IBAN for standard account', () => {
             // Example: 123456789/0100 (KB)
             // Bank: 0100, Prefix: 000000, Number: 0123456789
-            // Expected IBAN check via online calculator for 123456789/0100 is CZ1701000000000123456789
+            // Expected IBAN check: CZ18 0100 0000 0001 2345 6789
             const iban = calculateCzIban('123456789/0100');
-            expect(iban).toBe('CZ1701000000000123456789');
+            expect(iban).toBe('CZ1801000000000123456789');
         });
 
         it('should handle account with prefix', () => {
@@ -41,7 +41,6 @@ describe('Helpers', () => {
             // BBAN: 0800 000019 0123456789
             // Numeric: 08000000190123456789 123500
             // Mod97 will determine check digits.
-            // Let's trust the function logic if it's consistent, or verify one known real IBAN.
             expect(iban).toHaveLength(24);
             expect(iban.startsWith('CZ')).toBe(true);
         });

@@ -35,6 +35,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: [],
+    exclude: ['node_modules', 'tests/e2e/**'], // Exclude Playwright tests
   },
   build: {
     chunkSizeWarningLimit: 1000, 
