@@ -24,6 +24,39 @@ export const initEmail = async () => {
     }
 };
 
+const STATUS_TRANSLATIONS = {
+    cs: {
+        created: 'Zadaná',
+        confirmed: 'Potvrzená',
+        preparing: 'Připravuje se',
+        ready: 'Připravena',
+        on_way: 'Na cestě',
+        delivered: 'Doručena',
+        not_picked_up: 'Nedoručena/Nevyzvednuta',
+        cancelled: 'Stornována'
+    },
+    en: {
+        created: 'Created',
+        confirmed: 'Confirmed',
+        preparing: 'Preparing',
+        ready: 'Ready',
+        on_way: 'On the way',
+        delivered: 'Delivered',
+        not_picked_up: 'Not picked up',
+        cancelled: 'Cancelled'
+    },
+    de: {
+        created: 'Erstellt',
+        confirmed: 'Bestätigt',
+        preparing: 'In Vorbereitung',
+        ready: 'Bereit',
+        on_way: 'Unterwegs',
+        delivered: 'Geliefert',
+        not_picked_up: 'Nicht abgeholt',
+        cancelled: 'Storniert'
+    }
+};
+
 const TRANSLATIONS = {
     cs: {
         created_subject: 'Potvrzení objednávky',
@@ -65,10 +98,17 @@ const generateOrderHtml = (order, title, message, lang = 'cs') => {
     const getImgUrl = (url) => {
         if (!url) return '';
         if (url.startsWith('http')) return url;
-        const baseUrl = process.env.VITE_APP_URL || 'http://localhost:3000'; // Fallback
-        // Correctly handle /api/uploads vs /uploads paths
-        if (url.startsWith('/')) return `${baseUrl}${url}`;
-        return `${baseUrl}/${url}`;
+        
+        // Priority: APP_URL -> VITE_APP_URL -> localhost fallback
+        let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost:3000';
+        
+        // Remove trailing slash if present
+        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+        
+        // Handle path
+        const cleanPath = url.startsWith('/') ? url : `/${url}`;
+        
+        return `${baseUrl}${cleanPath}`;
     };
 
     let itemsHtml = order.items.map(item => `
@@ -206,7 +246,11 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
     } else if (type === 'status') {
         subject = `${t.status_update_subject} #${order.id}`;
         title = t.status_update_subject;
-        const statusMsg = `${t.status_prefix} ${customStatus}`;
+        
+        // Localize status
+        const localizedStatus = STATUS_TRANSLATIONS[lang]?.[customStatus] || customStatus;
+        const statusMsg = `${t.status_prefix} ${localizedStatus}`;
+        
         messageHtml = generateOrderHtml(order, title, statusMsg, lang);
 
         const email = await customerEmail;

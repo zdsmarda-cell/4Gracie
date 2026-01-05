@@ -95,19 +95,33 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         if (rate > maxVatRate) maxVatRate = rate;
     });
 
-    const feeVatRate = maxVatRate; // Delivery & Packaging takes the highest rate
+    const feeVatRate = maxVatRate > 0 ? maxVatRate : 21; // Default to 21 if no products or 0 rates
 
     // Helper to calc bases
     const getBase = (priceWithVat, rate) => priceWithVat / (1 + rate / 100);
     const getVat = (priceWithVat, rate) => priceWithVat - getBase(priceWithVat, rate);
 
     const tableBody = [];
+    
+    // Summary Data Structure
+    const taxSummary = {}; // rate -> { base, vat, total }
+
+    const addToSummary = (rate, amountWithVat) => {
+        if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
+        const base = getBase(amountWithVat, rate);
+        const vat = getVat(amountWithVat, rate);
+        taxSummary[rate].base += base;
+        taxSummary[rate].vat += vat;
+        taxSummary[rate].total += amountWithVat;
+    };
 
     // Products
     order.items.forEach(item => {
         const lineTotal = item.price * item.quantity;
         const rate = Number(item.vatRateTakeaway || 0);
         
+        if (isVatPayer) addToSummary(rate, lineTotal);
+
         const row = [
             item.name,
             item.quantity,
@@ -125,6 +139,7 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
 
     // Fees
     if (order.packagingFee > 0) {
+        if (isVatPayer) addToSummary(feeVatRate, order.packagingFee);
         const row = [
             'Balné',
             '1',
@@ -139,6 +154,7 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     }
 
     if (order.deliveryFee > 0) {
+        if (isVatPayer) addToSummary(feeVatRate, order.deliveryFee);
         const row = [
             'Doprava',
             '1',
@@ -154,17 +170,31 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
 
     // Discounts
     order.appliedDiscounts?.forEach(d => {
-        // Discounts are a bit complex with VAT, we assume they reduce the total base proportionally or take highest rate
-        // For simplicity in display, we show them as negative lines.
-        // Assuming discount is gross amount.
+        // Handle discounts in summary: 
+        // Simply subtract from the highest rate bucket available to avoid complex math
+        let discountRem = d.amount;
+        if (isVatPayer) {
+            const rates = Object.keys(taxSummary).map(Number).sort((a,b) => b-a);
+            for (const r of rates) {
+                if (discountRem <= 0) break;
+                if (taxSummary[r].total > 0) {
+                    const ded = Math.min(taxSummary[r].total, discountRem);
+                    taxSummary[r].total -= ded;
+                    taxSummary[r].base -= getBase(ded, r);
+                    taxSummary[r].vat -= getVat(ded, r);
+                    discountRem -= ded;
+                }
+            }
+        }
+
         const row = [
             `Sleva ${d.code}`,
             '1',
             `-${d.amount.toFixed(2)}`
         ];
         if (isVatPayer) {
-            row.push(''); // Rate unclear/mixed
-            row.push(''); // VAT unclear/mixed
+            row.push(''); // Rate
+            row.push(''); // VAT
         }
         row.push(`-${d.amount.toFixed(2)}`);
         tableBody.push(row);
@@ -205,8 +235,50 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         }
     });
 
-    // --- 7. TOTALS & FOOTER ---
-    const finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
+    let finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
+
+    // --- 7. VAT RECAP TABLE (New) ---
+    if (isVatPayer) {
+        doc.setFontSize(10);
+        doc.setFont("Roboto", "bold");
+        doc.text("Rekapitulace DPH", 14, finalY);
+        
+        const summaryBody = Object.keys(taxSummary).map(rate => {
+            const r = Number(rate);
+            const s = taxSummary[r];
+            // Only show if there are values
+            if (s.total <= 0.01 && s.total >= -0.01) return null;
+            return [
+                `${r} %`,
+                s.base.toFixed(2),
+                s.vat.toFixed(2),
+                s.total.toFixed(2)
+            ];
+        }).filter(Boolean);
+
+        if (summaryBody.length > 0) {
+            autoTable(doc, {
+                startY: finalY + 2,
+                head: [['Sazba', 'Základ daně', 'Výše daně', 'Celkem s DPH']],
+                body: summaryBody,
+                theme: 'striped',
+                styles: { font: 'Roboto', fontSize: 8 },
+                headStyles: { fillColor: [100, 100, 100] }, // Grey header for recap
+                columnStyles: {
+                    0: { halign: 'center', fontStyle: 'bold' },
+                    1: { halign: 'right' },
+                    2: { halign: 'right' },
+                    3: { halign: 'right', fontStyle: 'bold' }
+                },
+                margin: { left: 14, right: 100 } // Don't take full width
+            });
+            finalY = doc.lastAutoTable.finalY + 10;
+        } else {
+            finalY += 5;
+        }
+    }
+
+    // --- 8. TOTALS & FOOTER ---
     const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
     
     doc.setFont("Roboto", "bold");
@@ -218,20 +290,11 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     doc.setFontSize(10);
     
     if (type === 'final') {
-        doc.text("Již uhrazeno zálohou / online.", 196, finalY + 8, { align: "right" });
+        doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 196, finalY + 8, { align: "right" });
     } else {
-        // --- 8. QR CODE (Only for Proforma) ---
+        // --- 9. QR CODE (Only for Proforma) ---
         try {
-            const iban = comp.bankAccount.replace(/\s/g,'').split('/')[0]; // Simple parse, assumes CZ format handled
-            // Note: Real IBAN parser logic is in StoreContext, simplistic fallback here or rely on pre-calculated
-            // Ideally we need the real IBAN. For now assuming the bankAccount string *is* valid or we construct CZ format.
-            // Using a public API for QR generation to embed into PDF
-            
-            // Construct SPD string
-            const accNum = comp.bankAccount.split('/')[0];
-            const bankCode = comp.bankAccount.split('/')[1];
-            // Simple CZ IBAN generator stub for the PDF service context (simplified)
-            // In production, pass full IBAN in settings or order
+            const iban = comp.bankAccount.replace(/\s/g,'').split('/')[0]; 
             
             const qrString = `SPD*1.0*ACC:${comp.bankAccount}*AM:${total.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
