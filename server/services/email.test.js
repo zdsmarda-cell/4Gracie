@@ -29,6 +29,7 @@ describe('Email Service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         process.env.SMTP_HOST = 'smtp.test.com';
+        process.env.SMTP_USER = 'test-user';
         process.env.EMAIL_FROM = 'noreply@test.com';
         initEmail(); // Initialize transporter
     });

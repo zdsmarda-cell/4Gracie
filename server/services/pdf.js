@@ -289,12 +289,12 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     }
 
     // --- 8. TOTALS & FOOTER ---
-    const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
+    const grandTotal = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
     
     doc.setFont("Roboto", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...brandColor);
-    doc.text(`CELKEM K ÚHRADĚ: ${total.toFixed(2)} Kč`, 196, finalY, { align: "right" });
+    doc.text(`CELKEM K ÚHRADĚ: ${grandTotal.toFixed(2)} Kč`, 196, finalY, { align: "right" });
     
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(10);
@@ -304,19 +304,19 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     } else {
         // --- 9. QR CODE (Only for Proforma) ---
         try {
-            const iban = comp.bankAccount.replace(/\s/g,'').split('/')[0]; 
-            
-            const qrString = `SPD*1.0*ACC:${comp.bankAccount}*AM:${total.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
-            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
-            
-            // Fetch the image
-            const qrResp = await fetch(qrUrl);
-            const qrBuf = await qrResp.arrayBuffer();
-            const qrBase64 = Buffer.from(qrBuf).toString('base64');
-            
-            doc.addImage(qrBase64, "PNG", 150, finalY + 10, 40, 40);
-            doc.setFontSize(8);
-            doc.text("QR Platba", 170, finalY + 53, { align: "center" });
+            if (comp.bankAccount) {
+              const qrString = `SPD*1.0*ACC:${comp.bankAccount.replace(/\s/g, '')}*AM:${grandTotal.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
+              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
+              
+              // Fetch the image
+              const qrResp = await fetch(qrUrl);
+              const qrBuf = await qrResp.arrayBuffer();
+              const qrBase64 = Buffer.from(qrBuf).toString('base64');
+              
+              doc.addImage(qrBase64, "PNG", 150, finalY + 10, 40, 40);
+              doc.setFontSize(8);
+              doc.text("QR Platba", 170, finalY + 53, { align: "center" });
+            }
         } catch (e) {
             console.error("QR Code generation failed:", e);
         }

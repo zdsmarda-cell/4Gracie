@@ -46,9 +46,9 @@ describe('PDF Service', () => {
             packagingFee: 0,
             deliveryFee: 0,
             createdAt: new Date().toISOString(),
-            companyDetailsSnapshot: { name: 'Test Co' }
+            companyDetailsSnapshot: { name: 'Test Co', bankAccount: '123456789/0100' }
         };
-        const mockSettings = { companyDetails: { name: 'Test Co' } };
+        const mockSettings = { companyDetails: { name: 'Test Co', bankAccount: '123456789/0100' } };
 
         const buffer = await generateInvoicePdf(mockOrder, 'proforma', mockSettings);
         
