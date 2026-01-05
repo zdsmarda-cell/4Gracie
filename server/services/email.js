@@ -67,6 +67,7 @@ const STATUS_TRANSLATIONS = {
 const TRANSLATIONS = {
     cs: {
         created_subject: 'Potvrzení objednávky',
+        updated_subject: 'Úprava objednávky',
         status_update_subject: 'Změna stavu objednávky',
         status_prefix: 'Nový stav objednávky:',
         total: 'Celkem',
@@ -77,6 +78,7 @@ const TRANSLATIONS = {
     },
     en: {
         created_subject: 'Order Confirmation',
+        updated_subject: 'Order Update',
         status_update_subject: 'Order Status Update',
         status_prefix: 'New Order Status:',
         total: 'Total',
@@ -87,6 +89,7 @@ const TRANSLATIONS = {
     },
     de: {
         created_subject: 'Bestellbestätigung',
+        updated_subject: 'Bestellaktualisierung',
         status_update_subject: 'Bestellstatusänderung',
         status_prefix: 'Neuer Bestellstatus:',
         total: 'Gesamt',
@@ -129,17 +132,14 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
 
     // Construct Address Logic
     let addressDisplay = '';
-    if (order.deliveryType === 'pickup') {
-        addressDisplay = order.deliveryAddress || 'Osobní odběr'; // Legacy fallback
+    // Use saved delivery fields from the order object. 
+    // Logic in frontend ensures these are populated with Pickup Location address if pickup is selected.
+    if (order.deliveryStreet && order.deliveryCity) {
+        addressDisplay = `${order.deliveryName || ''}<br>${order.deliveryStreet}<br>${order.deliveryZip} ${order.deliveryCity}`;
+        if(order.deliveryPhone) addressDisplay += `<br>Tel: ${order.deliveryPhone}`;
     } else {
-        // Prefer explicit fields if available
-        if (order.deliveryStreet && order.deliveryCity) {
-            addressDisplay = `${order.deliveryName || ''}<br>${order.deliveryStreet}<br>${order.deliveryZip} ${order.deliveryCity}`;
-            if(order.deliveryPhone) addressDisplay += `<br>Tel: ${order.deliveryPhone}`;
-        } else {
-            // Fallback to legacy string string
-            addressDisplay = (order.deliveryAddress || 'Adresa neuvedena').replace(/\n/g, '<br>');
-        }
+        // Fallback to legacy string string
+        addressDisplay = (order.deliveryAddress || 'Adresa neuvedena').replace(/\n/g, '<br>');
     }
 
     let itemsHtml = order.items.map(item => `
@@ -193,8 +193,8 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
             </div>
 
             <div style="margin-top: 20px; font-size: 12px; color: #666;">
-                <p><strong>Doručení:</strong> ${formatDate(order.deliveryDate)}</p>
-                <p><strong>Adresa:</strong><br> ${addressDisplay}</p>
+                <p><strong>Termín:</strong> ${formatDate(order.deliveryDate)}</p>
+                <p><strong>Místo dodání / odběru:</strong><br> ${addressDisplay}</p>
             </div>
         </div>
     `;
@@ -227,7 +227,7 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
     });
     
     // 1. ATTACHMENTS LOGIC
-    // VOP - Only for Created
+    // VOP - Only for Created (Initial order)
     if (type === 'created' && process.env.VOP_PATH) {
         if (fs.existsSync(process.env.VOP_PATH)) {
             attachments.push({
@@ -266,12 +266,12 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
                 to: email,
                 subject,
                 html: messageHtml,
-                encoding: 'base64', // FORCE BASE64 ENCODING FOR BODY
+                encoding: 'base64', 
                 attachments
             });
         }
 
-        // Send to Operator (No Attachments)
+        // Send to Operator
         if (settings.companyDetails?.email) {
             const operatorHtml = generateOrderHtml(order, "Nová objednávka", "Přišla nová objednávka z e-shopu.", 'cs', settings);
             await transporter.sendMail({
@@ -279,7 +279,36 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
                 to: settings.companyDetails.email,
                 subject: `Nová objednávka #${order.id}`,
                 html: operatorHtml,
-                encoding: 'base64' // FORCE BASE64 ENCODING
+                encoding: 'base64'
+            });
+        }
+
+    } else if (type === 'updated') {
+        subject = `${t.updated_subject} #${order.id}`;
+        title = t.updated_subject;
+        messageHtml = generateOrderHtml(order, title, "Vaše objednávka byla upravena.", lang, settings);
+
+        const email = await customerEmail;
+        if (email) {
+            await transporter.sendMail({
+                from: process.env.EMAIL_FROM,
+                to: email,
+                subject,
+                html: messageHtml,
+                encoding: 'base64', 
+                attachments // Attachments (if any) are empty unless specifically added for updated type, which is standard.
+            });
+        }
+        
+        // Notify operator about update
+        if (settings.companyDetails?.email) {
+            const operatorHtml = generateOrderHtml(order, "Úprava objednávky", "Zákazník upravil existující objednávku.", 'cs', settings);
+            await transporter.sendMail({
+                from: process.env.EMAIL_FROM,
+                to: settings.companyDetails.email,
+                subject: `Aktualizace objednávky #${order.id}`,
+                html: operatorHtml,
+                encoding: 'base64'
             });
         }
 
@@ -300,7 +329,7 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
                 to: email,
                 subject,
                 html: messageHtml,
-                encoding: 'base64', // FORCE BASE64 ENCODING
+                encoding: 'base64',
                 attachments
             });
         }

@@ -99,7 +99,7 @@ interface StoreContextType {
   searchOrders: (filters: { id?: string; dateFrom?: string; dateTo?: string; status?: string; customer?: string; ic?: string; page?: number; limit?: number }) => Promise<OrdersSearchResult>;
   addOrder: (order: Order) => Promise<boolean>;
   updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
-  updateOrder: (order: Order, sendNotify?: boolean) => Promise<boolean>;
+  updateOrder: (order: Order, sendNotify?: boolean, isUserEdit?: boolean) => Promise<boolean>;
   checkOrderRestoration: (order: Order) => RestorationCheckResult;
   
   products: Product[];
@@ -453,13 +453,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const updateOrder = async (order: Order, sendNotify?: boolean): Promise<boolean> => {
+  const updateOrder = async (order: Order, sendNotify?: boolean, isUserEdit?: boolean): Promise<boolean> => {
     let updatedOrder = { ...order };
     if (updatedOrder.items.length === 0) {
       updatedOrder.status = OrderStatus.CANCELLED;
     }
     if (dataSource === 'api') {
-       const res = await apiCall('/api/orders', 'POST', updatedOrder);
+       // Pass isUserEdit to backend to trigger different email template
+       const payload = { ...updatedOrder, isUserEdit };
+       const res = await apiCall('/api/orders', 'POST', payload);
        if (res && res.success) {
           setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
           showNotify(t('notification.saved'));

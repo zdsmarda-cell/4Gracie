@@ -12,7 +12,7 @@ export const Cart: React.FC = () => {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false); // New State
+  const [isSubmitting, setIsSubmitting] = useState(false); 
   
   const [deliveryType, setDeliveryType] = useState<DeliveryType>(() => {
     return (localStorage.getItem('cart_deliveryType') as DeliveryType) || DeliveryType.PICKUP;
@@ -53,8 +53,7 @@ export const Cart: React.FC = () => {
   }, [deliveryType, activePickupLocations]);
 
   useEffect(() => {
-      // Sync payment method if the currently selected one is no longer available, 
-      // but ONLY if activePaymentMethods has actually loaded (length > 0)
+      // Sync payment method if the currently selected one is no longer available
       if (activePaymentMethods.length > 0 && !activePaymentMethods.some(m => m.id === paymentMethod)) {
           setPaymentMethod(activePaymentMethods[0].id);
       }
@@ -206,13 +205,18 @@ export const Cart: React.FC = () => {
       deliveryType,
       deliveryDate: date,
       
+      // AUTO-FILL PICKUP LOCATION ADDRESS if Pickup
+      deliveryName: deliveryType === DeliveryType.PICKUP ? pickupLocation?.name : selectedAddr?.name,
+      deliveryStreet: deliveryType === DeliveryType.PICKUP ? pickupLocation?.street : selectedAddr?.street,
+      deliveryCity: deliveryType === DeliveryType.PICKUP ? pickupLocation?.city : selectedAddr?.city,
+      deliveryZip: deliveryType === DeliveryType.PICKUP ? pickupLocation?.zip : selectedAddr?.zip,
+      deliveryPhone: deliveryType === DeliveryType.PICKUP ? settings.companyDetails.phone : selectedAddr?.phone, // Use company phone for pickup? Or user phone? Usually user wants contact info. Actually, Order deliveryPhone is usually recipient. Let's keep it undefined for Pickup or use User's phone?
+      // Better: For Pickup, deliveryPhone isn't strictly needed for logistics, but good to have user contact. 
+      // Let's use user's phone if available, or just undefined.
+      // However, email template shows delivery address. If we put pickup location address, it will look like "Shop Name, Street...".
+      
       // Explicitly map split address fields
-      deliveryName: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.name : undefined,
-      deliveryStreet: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.street : undefined,
-      deliveryCity: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.city : undefined,
-      deliveryZip: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.zip : undefined,
-      deliveryPhone: deliveryType === DeliveryType.DELIVERY ? selectedAddr?.phone : undefined,
-
+      // billingName etc...
       billingName: selectedBilling?.name,
       billingStreet: selectedBilling?.street,
       billingCity: selectedBilling?.city,
@@ -229,6 +233,13 @@ export const Cart: React.FC = () => {
       pickupLocationId: deliveryType === DeliveryType.PICKUP ? selectedPickupLocationId : undefined
     };
     
+    // Fallback for legacy email templates that use single string
+    if (deliveryType === DeliveryType.PICKUP && pickupLocation) {
+        newOrder.deliveryAddress = `Osobní odběr: ${pickupLocation.name}, ${pickupLocation.street}, ${pickupLocation.city}`;
+    } else if (selectedAddr) {
+        newOrder.deliveryAddress = `${selectedAddr.name}\n${selectedAddr.street}\n${selectedAddr.city}\n${selectedAddr.zip}\nTel: ${selectedAddr.phone}`;
+    }
+
     newOrder.invoiceUrl = generateInvoice(newOrder);
     
     const success = await addOrder(newOrder); 

@@ -201,6 +201,14 @@ export const Profile: React.FC = () => {
             setOrderSaveError(`Odběrné místo má ${formatDate(editingOrder.deliveryDate)} zavřeno.`);
             return;
         }
+        
+        // CRITICAL: Populate address fields for Pickup so Email template renders correct address
+        editingOrder.deliveryName = loc.name;
+        editingOrder.deliveryStreet = loc.street;
+        editingOrder.deliveryCity = loc.city;
+        editingOrder.deliveryZip = loc.zip;
+        editingOrder.deliveryAddress = `Osobní odběr: ${loc.name}, ${loc.street}, ${loc.city}`;
+
     } else {
         // Validate Address Fields
         if (!editingOrder.deliveryName || editingOrder.deliveryName.length < 3) { setOrderSaveError(t('validation.name_length')); return; }
@@ -253,7 +261,8 @@ export const Profile: React.FC = () => {
         deliveryFee
     };
 
-    const success = await updateOrder(finalOrder);
+    // PASS true as 3rd arg for isUserEdit
+    const success = await updateOrder(finalOrder, true, true); 
     if (success) setIsEditOrderModalOpen(false);
     else setOrderSaveError('Chyba při ukládání.');
   };
@@ -663,7 +672,7 @@ export const Profile: React.FC = () => {
       {/* User Edit Order Modal */}
       {isEditOrderModalOpen && editingOrder && (
          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
-             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
              <div className="p-6 border-b flex justify-between items-center bg-gray-50">
                <h2 className="text-xl font-serif font-bold text-primary">Upravit objednávku #{editingOrder.id}</h2>
                <button onClick={() => setIsEditOrderModalOpen(false)} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={24}/></button>
@@ -681,6 +690,22 @@ export const Profile: React.FC = () => {
                        <div className="grid grid-cols-2 gap-2">
                          <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('common.date')}</label><input type="date" className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryDate} onChange={e => setEditingOrder({...editingOrder, deliveryDate: e.target.value})}/></div>
                          <div><label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.delivery')}</label><select className="w-full border rounded p-2 text-sm" value={editingOrder.deliveryType} onChange={e => setEditingOrder({...editingOrder, deliveryType: e.target.value as DeliveryType})}><option value={DeliveryType.PICKUP}>{t('checkout.pickup')}</option><option value={DeliveryType.DELIVERY}>{t('admin.delivery')}</option></select></div>
+                       </div>
+
+                       {/* CALENDAR VISIBLE HERE */}
+                       <div className="mt-2">
+                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">Výběr termínu</label>
+                            <CustomCalendar 
+                                cart={editingOrder.items}
+                                checkAvailability={checkAvailability}
+                                onSelect={(date) => setEditingOrder({ ...editingOrder, deliveryDate: date })}
+                                selectedDate={editingOrder.deliveryDate}
+                                region={derivedRegion}
+                                getRegionInfo={getRegionInfoForDate}
+                                pickupLocation={derivedPickupLocation}
+                                getPickupInfo={getPickupPointInfo}
+                                excludeOrderId={editingOrder.id}
+                            />
                        </div>
 
                        {/* Pickup Location Selector */}
@@ -717,7 +742,7 @@ export const Profile: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Billing Address - MANUAL ONLY (Selector Removed) */}
+                        {/* Billing Address - MANUAL ONLY - Selector Removed */}
                         <div className="border-t pt-2 mt-2">
                             <label className="text-[9px] font-bold text-gray-400 uppercase block mb-2">Fakturační adresa</label>
                             

@@ -9,6 +9,7 @@ router.post('/', withDb(async (req, res, db) => {
     const o = req.body;
     const deliveryDate = o.deliveryDate; 
     const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const isUserEdit = o.isUserEdit; // Check flag from frontend
     
     // 1. Save Order
     await db.query(`INSERT INTO orders (id, user_id, user_name, delivery_date, status, total_price, delivery_fee, packaging_fee, payment_method, is_paid, delivery_type, delivery_name, delivery_street, delivery_city, delivery_zip, delivery_phone, billing_name, billing_street, billing_city, billing_zip, billing_ic, billing_dic, note, pickup_location_id, language, created_at, full_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE status=?, total_price=?, delivery_date=?, full_json=?`, 
@@ -20,14 +21,17 @@ router.post('/', withDb(async (req, res, db) => {
         await db.query('INSERT INTO order_items (order_id, product_id, name, quantity, price, category, unit, workload, workload_overhead) VALUES ?', [values]);
     }
 
-    // 2. Trigger Email (if Created)
+    // 2. Trigger Email
+    // Fetch global settings for Invoice generation
+    const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
+    const settings = sRows.length ? parseJsonCol(sRows[0]) : {};
+
     if (o.status === 'created') {
-        // Fetch global settings for Invoice generation
-        const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
-        const settings = sRows.length ? parseJsonCol(sRows[0]) : {};
-        
-        // Use the full object o for email generation
-        await sendOrderEmail(o, 'created', settings);
+        if (isUserEdit) {
+            await sendOrderEmail(o, 'updated', settings);
+        } else {
+            await sendOrderEmail(o, 'created', settings);
+        }
     }
 
     res.json({ success: true });

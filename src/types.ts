@@ -223,6 +223,7 @@ export interface Order {
   deliveryCity?: string;
   deliveryZip?: string;
   deliveryPhone?: string;
+  deliveryAddress?: string;
 
   // Split Billing Address Attributes
   billingName?: string;
