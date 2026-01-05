@@ -40,9 +40,7 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     }
 
     // --- 2. PREPARE DATA ---
-    // Use snapshot if available, otherwise current settings
     const comp = order.companyDetailsSnapshot || settings.companyDetails || {};
-    // Logic: If DIC is present, supplier is VAT payer
     const isVatPayer = !!comp.dic && comp.dic.trim().length > 0;
 
     const headerTitle = type === 'proforma' 
@@ -80,7 +78,6 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     doc.setFont("Roboto", "normal");
     doc.setFontSize(10);
     
-    // Supplier Info
     let yPos = 61;
     doc.text(comp.name || '', 14, yPos); yPos += 5;
     doc.text(comp.street || '', 14, yPos); yPos += 5;
@@ -88,7 +85,6 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     doc.text(`IČ: ${comp.ic || ''}`, 14, yPos); yPos += 5;
     if(comp.dic) doc.text(`DIČ: ${comp.dic}`, 14, yPos);
 
-    // Customer Info
     yPos = 61;
     doc.text(order.billingName || order.userName || 'Zákazník', 110, yPos); yPos += 5;
     doc.text(order.billingStreet || '', 110, yPos); yPos += 5;
@@ -97,115 +93,75 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     if (order.billingDic) { doc.text(`DIČ: ${order.billingDic}`, 110, yPos); yPos += 5; }
 
     // --- 5. CALCULATIONS ---
-    
-    // Find Max VAT Rate from products for Fees
-    let maxVatRate = 0;
-    order.items.forEach(item => {
-        const rate = Number(item.vatRateTakeaway || 0); // Assuming takeaway rate for delivery
-        if (rate > maxVatRate) maxVatRate = rate;
-    });
-
-    const feeVatRate = maxVatRate > 0 ? maxVatRate : 21; // Default to 21 if no products or 0 rates
-
-    // Helper to calc bases
     const getBase = (priceWithVat, rate) => priceWithVat / (1 + rate / 100);
     const getVat = (priceWithVat, rate) => priceWithVat - getBase(priceWithVat, rate);
 
-    const tableBody = [];
+    const grossTotalsByRate = {};
     
-    // Summary Data Structure
-    const taxSummary = {}; // rate -> { base, vat, total }
+    // Group totals by rate
+    order.items.forEach(item => {
+        const rate = Number(item.vatRateTakeaway || 0);
+        grossTotalsByRate[rate] = (grossTotalsByRate[rate] || 0) + (item.price * item.quantity);
+    });
 
-    const addToSummary = (rate, amountWithVat) => {
-        if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
-        const base = getBase(amountWithVat, rate);
-        const vat = getVat(amountWithVat, rate);
-        taxSummary[rate].base += base;
-        taxSummary[rate].vat += vat;
-        taxSummary[rate].total += amountWithVat;
-    };
+    let maxVatRate = 0;
+    Object.keys(grossTotalsByRate).forEach(k => { if(Number(k) > maxVatRate) maxVatRate = Number(k); });
+    const feeVatRate = maxVatRate > 0 ? maxVatRate : 21;
 
-    // Products
+    if (order.packagingFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + order.packagingFee;
+    if (order.deliveryFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + order.deliveryFee;
+
+    const grandGrossTotal = Object.values(grossTotalsByRate).reduce((a, b) => a + b, 0);
+    const totalDiscount = order.appliedDiscounts?.reduce((a, b) => a + b.amount, 0) || 0;
+    const discountRatio = grandGrossTotal > 0 ? (totalDiscount / grandGrossTotal) : 0;
+
+    const tableBody = [];
+    const taxSummary = {};
+
+    // Calculate Summary with proportional discount
+    Object.keys(grossTotalsByRate).forEach(k => {
+        const r = Number(k);
+        const gross = grossTotalsByRate[r];
+        const netAtRate = gross * (1 - discountRatio);
+        
+        taxSummary[r] = {
+            total: netAtRate,
+            base: getBase(netAtRate, r),
+            vat: netAtRate - getBase(netAtRate, r)
+        };
+    });
+
+    // Items table rows
     order.items.forEach(item => {
         const lineTotal = item.price * item.quantity;
         const rate = Number(item.vatRateTakeaway || 0);
-        
-        if (isVatPayer) addToSummary(rate, lineTotal);
-
         const row = [
             item.name,
             item.quantity,
             isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)
         ];
-
-        if (isVatPayer) {
-            row.push(`${rate}%`);
-            row.push(getVat(lineTotal, rate).toFixed(2));
-        }
-        
+        if (isVatPayer) { row.push(`${rate}%`); row.push(getVat(lineTotal, rate).toFixed(2)); }
         row.push(lineTotal.toFixed(2));
         tableBody.push(row);
     });
 
-    // Fees
     if (order.packagingFee > 0) {
-        if (isVatPayer) addToSummary(feeVatRate, order.packagingFee);
-        const row = [
-            'Balné',
-            '1',
-            isVatPayer ? getBase(order.packagingFee, feeVatRate).toFixed(2) : order.packagingFee.toFixed(2)
-        ];
-        if (isVatPayer) {
-            row.push(`${feeVatRate}%`);
-            row.push(getVat(order.packagingFee, feeVatRate).toFixed(2));
-        }
+        const row = ['Balné', '1', isVatPayer ? getBase(order.packagingFee, feeVatRate).toFixed(2) : order.packagingFee.toFixed(2)];
+        if (isVatPayer) { row.push(`${feeVatRate}%`); row.push(getVat(order.packagingFee, feeVatRate).toFixed(2)); }
         row.push(order.packagingFee.toFixed(2));
         tableBody.push(row);
     }
 
     if (order.deliveryFee > 0) {
-        if (isVatPayer) addToSummary(feeVatRate, order.deliveryFee);
-        const row = [
-            'Doprava',
-            '1',
-            isVatPayer ? getBase(order.deliveryFee, feeVatRate).toFixed(2) : order.deliveryFee.toFixed(2)
-        ];
-        if (isVatPayer) {
-            row.push(`${feeVatRate}%`);
-            row.push(getVat(order.deliveryFee, feeVatRate).toFixed(2));
-        }
+        const row = ['Doprava', '1', isVatPayer ? getBase(order.deliveryFee, feeVatRate).toFixed(2) : order.deliveryFee.toFixed(2)];
+        if (isVatPayer) { row.push(`${feeVatRate}%`); row.push(getVat(order.deliveryFee, feeVatRate).toFixed(2)); }
         row.push(order.deliveryFee.toFixed(2));
         tableBody.push(row);
     }
 
-    // Discounts
     order.appliedDiscounts?.forEach(d => {
-        // Handle discounts in summary: 
-        // Simply subtract from the highest rate bucket available to avoid complex math
-        let discountRem = d.amount;
-        if (isVatPayer) {
-            const rates = Object.keys(taxSummary).map(Number).sort((a,b) => b-a);
-            for (const r of rates) {
-                if (discountRem <= 0) break;
-                if (taxSummary[r].total > 0) {
-                    const ded = Math.min(taxSummary[r].total, discountRem);
-                    taxSummary[r].total -= ded;
-                    taxSummary[r].base -= getBase(ded, r);
-                    taxSummary[r].vat -= getVat(ded, r);
-                    discountRem -= ded;
-                }
-            }
-        }
-
-        const row = [
-            `Sleva ${d.code}`,
-            '1',
-            `-${d.amount.toFixed(2)}`
-        ];
-        if (isVatPayer) {
-            row.push(''); // Rate
-            row.push(''); // VAT
-        }
+        const row = [`Sleva ${d.code}`, '1', `-${d.amount.toFixed(2)}`];
+        if (isVatPayer) { row.push(''); row.push(''); }
         row.push(`-${d.amount.toFixed(2)}`);
         tableBody.push(row);
     });
@@ -220,50 +176,28 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         head: head,
         body: tableBody,
         theme: 'grid',
-        styles: { 
-            font: 'Roboto', 
-            fontSize: 9,
-            lineColor: [200, 200, 200]
-        },
-        headStyles: {
-            fillColor: brandColor, // Purple
-            textColor: [255, 255, 255],
-            fontStyle: 'bold'
-        },
+        styles: { font: 'Roboto', fontSize: 9, lineColor: [200, 200, 200] },
+        headStyles: { fillColor: brandColor, textColor: [255, 255, 255], fontStyle: 'bold' },
         columnStyles: isVatPayer ? {
-            0: { cellWidth: 'auto' }, // Name
-            1: { halign: 'center' }, // Qty
-            2: { halign: 'right' },  // Base
-            3: { halign: 'center' }, // Rate
-            4: { halign: 'right' },  // VAT
-            5: { halign: 'right', fontStyle: 'bold' } // Total
+            0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' },
+            3: { halign: 'center' }, 4: { halign: 'right' }, 5: { halign: 'right', fontStyle: 'bold' }
         } : {
-            0: { cellWidth: 'auto' },
-            1: { halign: 'center' },
-            2: { halign: 'right' },
-            3: { halign: 'right', fontStyle: 'bold' }
+            0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' }
         }
     });
 
     let finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
 
-    // --- 7. VAT RECAP TABLE (New) ---
+    // --- 7. VAT RECAP TABLE ---
     if (isVatPayer) {
         doc.setFontSize(10);
         doc.setFont("Roboto", "bold");
         doc.text("Rekapitulace DPH", 14, finalY);
-        
         const summaryBody = Object.keys(taxSummary).map(rate => {
             const r = Number(rate);
             const s = taxSummary[r];
-            // Only show if there are values
-            if (s.total <= 0.01 && s.total >= -0.01) return null;
-            return [
-                `${r} %`,
-                s.base.toFixed(2),
-                s.vat.toFixed(2),
-                s.total.toFixed(2)
-            ];
+            if (Math.abs(s.total) < 0.01) return null;
+            return [`${r} %`, s.base.toFixed(2), s.vat.toFixed(2), s.total.toFixed(2)];
         }).filter(Boolean);
 
         if (summaryBody.length > 0) {
@@ -273,24 +207,16 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
                 body: summaryBody,
                 theme: 'striped',
                 styles: { font: 'Roboto', fontSize: 8 },
-                headStyles: { fillColor: [100, 100, 100] }, // Grey header for recap
-                columnStyles: {
-                    0: { halign: 'center', fontStyle: 'bold' },
-                    1: { halign: 'right' },
-                    2: { halign: 'right' },
-                    3: { halign: 'right', fontStyle: 'bold' }
-                },
-                margin: { left: 14, right: 100 } // Don't take full width
+                headStyles: { fillColor: [100, 100, 100] },
+                columnStyles: { 0: { halign: 'center', fontStyle: 'bold' }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } },
+                margin: { left: 14, right: 100 }
             });
             finalY = doc.lastAutoTable.finalY + 10;
-        } else {
-            finalY += 5;
-        }
+        } else { finalY += 5; }
     }
 
     // --- 8. TOTALS & FOOTER ---
-    const grandTotal = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
-    
+    const grandTotal = Math.max(0, grandGrossTotal - totalDiscount);
     doc.setFont("Roboto", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...brandColor);
@@ -302,25 +228,19 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     if (type === 'final') {
         doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 196, finalY + 8, { align: "right" });
     } else {
-        // --- 9. QR CODE (Only for Proforma) ---
         try {
             if (comp.bankAccount) {
-              const qrString = `SPD*1.0*ACC:${comp.bankAccount.replace(/\s/g, '')}*AM:${grandTotal.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
+              const vs = order.id.replace(/\D/g, '');
+              const qrString = `SPD*1.0*ACC:${comp.bankAccount.replace(/\s/g, '')}*AM:${grandTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:OBJ${order.id}`;
               const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
-              
-              // Fetch the image
               const qrResp = await fetch(qrUrl);
               const qrBuf = await qrResp.arrayBuffer();
               const qrBase64 = Buffer.from(qrBuf).toString('base64');
-              
               doc.addImage(qrBase64, "PNG", 150, finalY + 10, 40, 40);
               doc.setFontSize(8);
               doc.text("QR Platba", 170, finalY + 53, { align: "center" });
             }
-        } catch (e) {
-            console.error("QR Code generation failed:", e);
-        }
+        } catch (e) { console.error("QR Code generation failed:", e); }
     }
-
     return Buffer.from(doc.output('arraybuffer'));
 };

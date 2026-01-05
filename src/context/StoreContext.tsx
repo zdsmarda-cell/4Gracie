@@ -73,7 +73,7 @@ interface StoreContextType {
   isLoading: boolean;
   isOperationPending: boolean;
   isPreviewEnvironment: boolean;
-  dbConnectionError: boolean; // NEW
+  dbConnectionError: boolean;
   language: Language;
   setLanguage: (lang: Language) => void;
   cart: CartItem[];
@@ -127,6 +127,7 @@ interface StoreContextType {
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
   getDailyLoad: (date: string, excludeOrderId?: string) => DailyLoadResult;
+  getDailyLoadWithDetails: (date: string, excludeOrderId?: string) => DailyLoadResult;
   getDeliveryRegion: (zip: string) => DeliveryRegion | undefined;
   getRegionInfoForDate: (region: DeliveryRegion, date: string) => RegionDateInfo;
   getPickupPointInfo: (location: PickupLocation, date: string) => RegionDateInfo; 
@@ -182,7 +183,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const [isLoading, setIsLoading] = useState(true);
-  const [dbConnectionError, setDbConnectionError] = useState(false); // NEW
+  const [dbConnectionError, setDbConnectionError] = useState(false);
   const [isOperationPending, setIsOperationPending] = useState(false);
   const [language, setLanguage] = useState<Language>(Language.CS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -317,7 +318,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               setDayConfigs(data.dayConfigs || []);
               setDbConnectionError(false);
           } else {
-              // DATA FETCH FAILED
               setDbConnectionError(true);
               showNotify('Nepodařilo se připojit k databázi.', 'error', false);
           }
@@ -951,65 +951,80 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           doc.text(`${order.billingZip || ''} ${order.billingCity || ''}`, 110, yPos); yPos += 5;
           if (order.billingIc) { doc.text(`IČ: ${order.billingIc}`, 110, yPos); yPos += 5; }
           if (order.billingDic) { doc.text(`DIČ: ${order.billingDic}`, 110, yPos); yPos += 5; }
+          
           const getBase = (p: number, r: number) => p / (1 + r / 100);
           const getVat = (p: number, r: number) => p - getBase(p, r);
+          
           const tableBody: any[] = [];
-          const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
-          const addToSummary = (rate: number, val: number) => {
-              if (!taxSummary[rate]) taxSummary[rate] = { base: 0, vat: 0, total: 0 };
-              taxSummary[rate].base += getBase(val, rate);
-              taxSummary[rate].vat += getVat(val, rate);
-              taxSummary[rate].total += val;
-          };
-          let maxVatRate = 0;
+          
+          // VAT Calculation logic improvement: Proportional discount distribution
+          const grossTotalsByRate: Record<number, number> = {};
+          
+          // Gather gross amounts (before discount) per rate
           order.items.forEach(i => {
-              const r = i.vatRateTakeaway || 0;
-              if (r > maxVatRate) maxVatRate = r;
+              const r = Number(i.vatRateTakeaway || 0);
+              grossTotalsByRate[r] = (grossTotalsByRate[r] || 0) + (i.price * i.quantity);
           });
+          
+          let maxVatRate = 0;
+          Object.keys(grossTotalsByRate).forEach(k => { if(Number(k) > maxVatRate) maxVatRate = Number(k); });
           const feeRate = maxVatRate > 0 ? maxVatRate : 21;
+
+          if (order.packagingFee > 0) grossTotalsByRate[feeRate] = (grossTotalsByRate[feeRate] || 0) + order.packagingFee;
+          if (order.deliveryFee > 0) grossTotalsByRate[feeRate] = (grossTotalsByRate[feeRate] || 0) + order.deliveryFee;
+
+          const grandGrossTotal = Object.values(grossTotalsByRate).reduce((a, b) => a + b, 0);
+          const totalDiscount = order.appliedDiscounts?.reduce((a, b) => a + b.amount, 0) || 0;
+          
+          // Calculate discount ratio (e.g. 0.1 for 10% discount on entire order)
+          const discountRatio = grandGrossTotal > 0 ? (totalDiscount / grandGrossTotal) : 0;
+
+          // Prepare Summary Data
+          const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
+          
+          Object.keys(grossTotalsByRate).forEach(k => {
+              const r = Number(k);
+              const gross = grossTotalsByRate[r];
+              const netAtRate = gross * (1 - discountRatio); // Proportionally lowered gross
+              
+              taxSummary[r] = {
+                  total: netAtRate,
+                  base: getBase(netAtRate, r),
+                  vat: netAtRate - getBase(netAtRate, r)
+              };
+          });
+
+          // Populate Table Rows
           order.items.forEach(item => {
-              const total = item.price * item.quantity;
-              const rate = item.vatRateTakeaway || 0;
-              if (isVatPayer) addToSummary(rate, total);
+              const totalLine = item.price * item.quantity;
+              const rate = Number(item.vatRateTakeaway || 0);
               const row = [item.name, item.quantity, isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)];
-              if (isVatPayer) { row.push(`${rate}%`); row.push(getVat(total, rate).toFixed(2)); }
-              row.push(total.toFixed(2));
+              if (isVatPayer) { row.push(`${rate}%`); row.push(getVat(totalLine, rate).toFixed(2)); }
+              row.push(totalLine.toFixed(2));
               tableBody.push(row);
           });
+          
           if (order.packagingFee > 0) {
-              if (isVatPayer) addToSummary(feeRate, order.packagingFee);
               const row = ['Balné', '1', isVatPayer ? getBase(order.packagingFee, feeRate).toFixed(2) : order.packagingFee.toFixed(2)];
               if (isVatPayer) { row.push(`${feeRate}%`); row.push(getVat(order.packagingFee, feeRate).toFixed(2)); }
               row.push(order.packagingFee.toFixed(2));
               tableBody.push(row);
           }
+          
           if (order.deliveryFee > 0) {
-              if (isVatPayer) addToSummary(feeRate, order.deliveryFee);
               const row = ['Doprava', '1', isVatPayer ? getBase(order.deliveryFee, feeRate).toFixed(2) : order.deliveryFee.toFixed(2)];
               if (isVatPayer) { row.push(`${feeRate}%`); row.push(getVat(order.deliveryFee, feeRate).toFixed(2)); }
               row.push(order.deliveryFee.toFixed(2));
               tableBody.push(row);
           }
+          
           order.appliedDiscounts?.forEach(d => {
-              const row = [`Sleva ${d.code}`, '1', `-${d.amount.toFixed(2)}`];
+              const row = [`Sleva ${d.code}`, '1', `-${d.amount.toFixed(2)}` ];
               if (isVatPayer) { row.push(''); row.push(''); }
               row.push(`-${d.amount.toFixed(2)}`);
               tableBody.push(row);
-              if (isVatPayer) {
-                  let rem = d.amount;
-                  const rates = Object.keys(taxSummary).map(Number).sort((a,b) => b-a);
-                  for (const r of rates) {
-                      if (rem <= 0) break;
-                      if (taxSummary[r].total > 0) {
-                          const ded = Math.min(taxSummary[r].total, rem);
-                          taxSummary[r].total -= ded;
-                          taxSummary[r].base -= getBase(ded, r);
-                          taxSummary[r].vat -= getVat(ded, r);
-                          rem -= ded;
-                      }
-                  }
-              }
           });
+
           const head = isVatPayer ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem s DPH']] : [['Položka', 'Ks', 'Cena/ks', 'Celkem']];
           autoTable(doc, {
               startY: 100,
@@ -1025,6 +1040,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' }
               }
           });
+          
           // @ts-ignore
           let finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
           if (isVatPayer) {
@@ -1052,7 +1068,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   finalY = doc.lastAutoTable.finalY + 10;
               } else { finalY += 5; }
           }
-          const grandTotal = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
+          const grandTotal = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - totalDiscount);
           doc.setFont("Roboto", "bold");
           doc.setFontSize(14);
           doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
@@ -1063,7 +1079,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 196, finalY + 8, { align: "right" });
           } else {
               try {
-                  const qrString = `SPD*1.0*ACC:${comp.bankAccount}*AM:${grandTotal.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
+                  const vs = order.id.replace(/\D/g, '');
+                  const qrString = `SPD*1.0*ACC:${comp.bankAccount.replace(/\s/g, '')}*AM:${grandTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:OBJ${order.id}`;
                   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
                   const qrResp = await fetch(qrUrl);
                   const qrBuf = await qrResp.arrayBuffer();
@@ -1091,7 +1108,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, searchOrders,
       products, addProduct, updateProduct, deleteProduct, uploadImage,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
-      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
+      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDailyLoadWithDetails: getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
       getPickupPointInfo,
       calculatePackagingFee,
       t, tData, generateInvoice, printInvoice, generateCzIban: calculateCzIban, importDatabase, globalNotification, dismissNotification,
