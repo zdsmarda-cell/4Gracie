@@ -6,6 +6,7 @@ import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { calculatePackagingFeeLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
+import { calculateCzIban, removeDiacritics, formatDate } from '../utils/helpers';
 
 interface CheckResult {
   allowed: boolean;
@@ -154,41 +155,6 @@ interface StoreContextType {
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
-
-const removeDiacritics = (str: string): string => {
-  if (!str) return "";
-  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-};
-
-const formatDate = (dateStr: string): string => {
-  if (!dateStr) return '';
-  const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return dateStr;
-  return date.toLocaleDateString('cs-CZ', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric'
-  });
-};
-
-const calculateCzIban = (accountString: string): string => {
-  if (!accountString) return '';
-  const cleanStr = accountString.replace(/\s/g, '');
-  const [accountPart, bankCode] = cleanStr.split('/');
-  if (!accountPart || !bankCode || bankCode.length !== 4) return '';
-  let prefix = '';
-  let number = accountPart;
-  if (accountPart.includes('-')) { [prefix, number] = accountPart.split('-'); }
-  const paddedPrefix = prefix.padStart(6, '0');
-  const paddedNumber = number.padStart(10, '0');
-  const paddedBank = bankCode.padStart(4, '0');
-  const bban = paddedBank + paddedPrefix + paddedNumber;
-  const numericStr = bban + '123500';
-  const remainder = BigInt(numericStr) % 97n;
-  const checkDigitsVal = 98n - remainder;
-  const checkDigitsStr = checkDigitsVal.toString().padStart(2, '0');
-  return `CZ${checkDigitsStr}${bban}`;
-};
 
 const loadFromStorage = <T,>(key: string, fallback: T): T => {
   try {
