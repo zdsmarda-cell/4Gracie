@@ -917,11 +917,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           doc.setFont('Roboto');
 
           // Settings fallback
-          const comp = order.companyDetailsSnapshot || settings.companyDetails || {};
+          const comp = (order.companyDetailsSnapshot || settings.companyDetails || {}) as CompanyDetails;
+          // Note: comp might be empty in rare cases, ensure properties exist via type assertion and runtime checks
           const isVatPayer = !!comp.dic && comp.dic.trim().length > 0;
           const headerTitle = type === 'proforma' ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
           const dateToUse = type === 'final' ? (order.finalInvoiceDate || new Date().toISOString()) : order.createdAt;
-          const brandColor = [147, 51, 234]; // Purple
+          const brandColor: [number, number, number] = [147, 51, 234]; // Purple
 
           // Header
           doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
