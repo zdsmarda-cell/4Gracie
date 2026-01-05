@@ -97,7 +97,7 @@ const TRANSLATIONS = {
     }
 };
 
-const generateOrderHtml = (order, title, message, lang = 'cs') => {
+const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) => {
     const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
     const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
     
@@ -106,7 +106,10 @@ const generateOrderHtml = (order, title, message, lang = 'cs') => {
         if (!url) return '';
         if (url.startsWith('http')) return url;
         
-        let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost:3000';
+        // Priority: 1. Settings (DB), 2. Env Var, 3. Localhost fallback with explicit port
+        const port = process.env.PORT || 3000;
+        let baseUrl = settings.server?.baseUrl || process.env.APP_URL || process.env.VITE_APP_URL || `http://localhost:${port}`;
+        
         if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
         
         // Ensure url has leading slash
@@ -187,10 +190,12 @@ const generateOrderHtml = (order, title, message, lang = 'cs') => {
         </div>
     `;
     
-    // DEBUG: Log the generated HTML before base64 encoding to check image URLs
-    console.log("--- DEBUG EMAIL HTML (Check Image URLs) ---");
-    console.log(htmlContent);
-    console.log("-------------------------------------------");
+    // LOGGING CONFIG CHECK
+    if (settings.server?.consoleLogging) {
+        console.log("--- DEBUG EMAIL HTML (Check Image URLs) ---");
+        console.log(htmlContent);
+        console.log("-------------------------------------------");
+    }
 
     return htmlContent;
 };
@@ -242,7 +247,7 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
     if (type === 'created') {
         subject = `${t.created_subject} #${order.id}`;
         title = t.created_subject;
-        messageHtml = generateOrderHtml(order, title, "Děkujeme za Vaši objednávku.", lang);
+        messageHtml = generateOrderHtml(order, title, "Děkujeme za Vaši objednávku.", lang, settings);
         
         // Send to Customer
         const email = await customerEmail;
@@ -259,7 +264,7 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
 
         // Send to Operator (No Attachments)
         if (settings.companyDetails?.email) {
-            const operatorHtml = generateOrderHtml(order, "Nová objednávka", "Přišla nová objednávka z e-shopu.", 'cs');
+            const operatorHtml = generateOrderHtml(order, "Nová objednávka", "Přišla nová objednávka z e-shopu.", 'cs', settings);
             await transporter.sendMail({
                 from: process.env.EMAIL_FROM,
                 to: settings.companyDetails.email,
@@ -277,7 +282,7 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
         const localizedStatus = STATUS_TRANSLATIONS[lang]?.[customStatus] || customStatus;
         const statusMsg = `${t.status_prefix} ${localizedStatus}`;
         
-        messageHtml = generateOrderHtml(order, title, statusMsg, lang);
+        messageHtml = generateOrderHtml(order, title, statusMsg, lang, settings);
 
         const email = await customerEmail;
         if (email) {

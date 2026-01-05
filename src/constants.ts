@@ -146,7 +146,11 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   },
   enabledLanguages: [Language.CS, Language.EN, Language.DE],
   enableAiTranslation: true,
-  sqlDebug: false
+  sqlDebug: false,
+  server: {
+    consoleLogging: false,
+    baseUrl: 'http://localhost:3000'
+  }
 };
 
 export const EMPTY_SETTINGS: GlobalSettings = {
@@ -173,7 +177,8 @@ export const EMPTY_SETTINGS: GlobalSettings = {
   },
   enabledLanguages: [],
   enableAiTranslation: false,
-  sqlDebug: false
+  sqlDebug: false,
+  server: { consoleLogging: false }
 };
 
 export const MOCK_ORDERS: Order[] = [

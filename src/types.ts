@@ -260,6 +260,11 @@ export interface DayConfig {
   capacityOverrides?: Partial<CategoryCapacities>;
 }
 
+export interface ServerSettings {
+  consoleLogging: boolean;
+  baseUrl?: string;
+}
+
 export interface GlobalSettings {
   categories: Category[]; 
   defaultCapacities: CategoryCapacities;
@@ -273,7 +278,8 @@ export interface GlobalSettings {
   };
   enabledLanguages: Language[]; 
   enableAiTranslation: boolean;
-  sqlDebug: boolean; 
+  sqlDebug: boolean;
+  server?: ServerSettings; // NEW FIELD
 }
 
 export interface BackupData {
