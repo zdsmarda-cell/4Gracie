@@ -264,7 +264,6 @@ export interface DayConfig {
 
 export interface ServerSettings {
   consoleLogging: boolean;
-  baseUrl?: string;
 }
 
 export interface GlobalSettings {

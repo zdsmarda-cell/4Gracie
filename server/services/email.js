@@ -109,22 +109,11 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
         if (!url) return '';
         if (url.startsWith('http')) return url;
         
-        // Priority: 1. Env Var (APP_URL + PORT), 2. Settings (DB), 3. Localhost fallback
+        // Postaveno na environmentálních proměnných
         const port = process.env.PORT || 3000;
-        let baseUrl;
-
-        if (process.env.APP_URL) {
-            // Ensure port is included if provided via APP_URL env
-            let appUrl = process.env.APP_URL;
-            if (appUrl.endsWith('/')) appUrl = appUrl.slice(0, -1);
-            baseUrl = `${appUrl}:${port}`;
-        } else {
-            baseUrl = process.env.VITE_APP_URL || settings.server?.baseUrl || `http://localhost:${port}`;
-        }
+        let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || `http://localhost:${port}`;
         
         if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-        
-        // Ensure url has leading slash
         const cleanPath = url.startsWith('/') ? url : `/${url}`;
         
         return `${baseUrl}${cleanPath}`;
@@ -132,13 +121,10 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
 
     // Construct Address Logic
     let addressDisplay = '';
-    // Use saved delivery fields from the order object. 
-    // Logic in frontend ensures these are populated with Pickup Location address if pickup is selected.
     if (order.deliveryStreet && order.deliveryCity) {
         addressDisplay = `${order.deliveryName || ''}<br>${order.deliveryStreet}<br>${order.deliveryZip} ${order.deliveryCity}`;
         if(order.deliveryPhone) addressDisplay += `<br>Tel: ${order.deliveryPhone}`;
     } else {
-        // Fallback to legacy string string
         addressDisplay = (order.deliveryAddress || 'Adresa neuvedena').replace(/\n/g, '<br>');
     }
 
@@ -199,11 +185,10 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
         </div>
     `;
     
-    // LOGGING CONFIG CHECK
     if (settings.server?.consoleLogging) {
-        console.log("--- DEBUG EMAIL HTML (Check Image URLs) ---");
+        console.log("--- DEBUG EMAIL HTML ---");
         console.log(htmlContent);
-        console.log("-------------------------------------------");
+        console.log("------------------------");
     }
 
     return htmlContent;
@@ -220,14 +205,11 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
     let messageHtml = '';
     let title = '';
 
-    // Determine Recipients
     const customerEmail = (await import('../db.js')).getDb().then(async pool => {
         const [u] = await pool.query('SELECT email FROM users WHERE id=?', [order.userId]);
         return u[0]?.email;
     });
     
-    // 1. ATTACHMENTS LOGIC
-    // VOP - Only for Created (Initial order)
     if (type === 'created' && process.env.VOP_PATH) {
         if (fs.existsSync(process.env.VOP_PATH)) {
             attachments.push({
@@ -237,7 +219,6 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
         }
     }
 
-    // PDF INVOICES
     if (type === 'created') {
         const pdfBuffer = await generateInvoicePdf(order, 'proforma', settings);
         attachments.push({
@@ -252,13 +233,11 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
         });
     }
 
-    // 2. CONTENT LOGIC
     if (type === 'created') {
         subject = `${t.created_subject} #${order.id}`;
         title = t.created_subject;
         messageHtml = generateOrderHtml(order, title, "Děkujeme za Vaši objednávku.", lang, settings);
         
-        // Send to Customer
         const email = await customerEmail;
         if (email) {
             await transporter.sendMail({
@@ -271,7 +250,6 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
             });
         }
 
-        // Send to Operator
         if (settings.companyDetails?.email) {
             const operatorHtml = generateOrderHtml(order, "Nová objednávka", "Přišla nová objednávka z e-shopu.", 'cs', settings);
             await transporter.sendMail({
@@ -296,11 +274,10 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
                 subject,
                 html: messageHtml,
                 encoding: 'base64', 
-                attachments // Attachments (if any) are empty unless specifically added for updated type, which is standard.
+                attachments 
             });
         }
         
-        // Notify operator about update
         if (settings.companyDetails?.email) {
             const operatorHtml = generateOrderHtml(order, "Úprava objednávky", "Zákazník upravil existující objednávku.", 'cs', settings);
             await transporter.sendMail({
@@ -316,7 +293,6 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
         subject = `${t.status_update_subject} #${order.id}`;
         title = t.status_update_subject;
         
-        // Localize status
         const localizedStatus = STATUS_TRANSLATIONS[lang]?.[customStatus] || customStatus;
         const statusMsg = `${t.status_prefix} ${localizedStatus}`;
         

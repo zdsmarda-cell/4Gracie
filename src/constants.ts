@@ -148,8 +148,7 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   enableAiTranslation: true,
   sqlDebug: false,
   server: {
-    consoleLogging: false,
-    baseUrl: 'http://localhost:3000'
+    consoleLogging: false
   }
 };
 

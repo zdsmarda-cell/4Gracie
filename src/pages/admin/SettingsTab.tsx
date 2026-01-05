@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Language } from '../../types';
 import { Settings as SettingsIcon, Languages, Wand2, Server, Terminal } from 'lucide-react';
@@ -7,13 +7,6 @@ import { Settings as SettingsIcon, Languages, Wand2, Server, Terminal } from 'lu
 export const SettingsTab: React.FC = () => {
     const { settings, updateSettings, t } = useStore();
     
-    // Local state for Base URL to prevent lag
-    const [localBaseUrl, setLocalBaseUrl] = useState(settings.server?.baseUrl || '');
-
-    useEffect(() => {
-        setLocalBaseUrl(settings.server?.baseUrl || '');
-    }, [settings.server?.baseUrl]);
-
     const toggleLanguage = async (lang: Language) => {
         const current = settings.enabledLanguages || [];
         let updated: Language[];
@@ -39,14 +32,7 @@ export const SettingsTab: React.FC = () => {
     const toggleConsoleLogging = async (enabled: boolean) => {
         await updateSettings({ 
             ...settings, 
-            server: { ...settings.server || { baseUrl: '' }, consoleLogging: enabled } 
-        });
-    };
-
-    const saveBaseUrl = async () => {
-        await updateSettings({
-            ...settings,
-            server: { ...settings.server || { consoleLogging: false }, baseUrl: localBaseUrl }
+            server: { ...settings.server || {}, consoleLogging: enabled } 
         });
     };
 
@@ -111,21 +97,6 @@ export const SettingsTab: React.FC = () => {
                         Serverová nastavení
                     </h3>
                     <div className="space-y-4">
-                        <div>
-                            <label className="text-xs font-bold text-gray-500 block mb-1">URL Aplikace (včetně portu)</label>
-                            <div className="flex gap-2">
-                                <input 
-                                    type="text" 
-                                    className="w-full border rounded p-2 text-sm" 
-                                    value={localBaseUrl} 
-                                    onChange={e => setLocalBaseUrl(e.target.value)} 
-                                    placeholder="http://localhost:3000 nebo https://mojedomena.cz" 
-                                />
-                                <button onClick={saveBaseUrl} className="bg-primary text-white px-3 py-2 rounded text-xs font-bold">Uložit</button>
-                            </div>
-                            <p className="text-xs text-gray-400 mt-1">Používá se pro generování odkazů na obrázky v emailech.</p>
-                        </div>
-
                         <label className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-white rounded transition">
                             <input 
                                 type="checkbox" 
