@@ -2,100 +2,252 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// Helper to remove diacritics if font loading fails
-const removeDiacritics = (str) => {
-  if (!str) return "";
-  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+// Fetch font buffer helper
+const fetchFont = async (url) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to load font: ${response.statusText}`);
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer).toString('base64');
 };
 
 export const generateInvoicePdf = async (order, type = 'proforma', settings) => {
     const doc = new jsPDF();
     
-    // Note: On server side without proper font files loaded into VFS, 
-    // we must strip diacritics or standard fonts will print garbage.
-    // In a full production env, we would load .ttf files here via fs.readFileSync
-    const tSafe = (txt) => removeDiacritics(txt || ''); 
+    // --- 1. LOAD FONTS (Roboto for Diacritics) ---
+    try {
+        const regularBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
+        const mediumBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
+        
+        doc.addFileToVFS("Roboto-Regular.ttf", regularBase64);
+        doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+        
+        doc.addFileToVFS("Roboto-Medium.ttf", mediumBase64);
+        doc.addFont("Roboto-Medium.ttf", "Roboto", "bold");
+        
+        doc.setFont("Roboto");
+    } catch (e) {
+        console.error("Font loading failed, falling back to default (diacritics may fail):", e);
+    }
 
+    // --- 2. PREPARE DATA ---
+    // Use snapshot if available, otherwise current settings
     const comp = order.companyDetailsSnapshot || settings.companyDetails || {};
-    const isVatPayer = !!comp.dic;
+    // Logic: If DIC is present, supplier is VAT payer
+    const isVatPayer = !!comp.dic && comp.dic.trim().length > 0;
 
     const headerTitle = type === 'proforma' 
-        ? "ZALOHOVY DANOVY DOKLAD" 
-        : (isVatPayer ? "FAKTURA - DANOVY DOKLAD" : "FAKTURA");
+        ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" 
+        : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
     
     const dateToUse = type === 'final' 
         ? (order.finalInvoiceDate || new Date().toISOString()) 
         : order.createdAt;
 
-    doc.setFontSize(22);
+    const brandColor = [147, 51, 234]; // Purple #9333ea
+
+    // --- 3. HEADER ---
+    doc.setTextColor(...brandColor);
+    doc.setFont("Roboto", "bold");
+    doc.setFontSize(20);
     doc.text(headerTitle, 105, 20, { align: "center" });
     
+    doc.setTextColor(0, 0, 0);
+    doc.setFont("Roboto", "normal");
     doc.setFontSize(10);
-    doc.text(`Cislo obj: ${order.id}`, 105, 28, { align: "center" });
+    doc.text(`Číslo obj: ${order.id}`, 105, 28, { align: "center" });
+    doc.text(`Datum vystavení: ${dateToUse.split('T')[0]}`, 105, 34, { align: "center" });
     
-    doc.text(`Datum vystaveni: ${dateToUse.split('T')[0]}`, 105, 34, { align: "center" });
-
-    // Supplier
-    doc.setFontSize(12);
-    doc.text("DODAVATEL:", 14, 50);
-    doc.setFontSize(10);
-    doc.text(tSafe(comp.name), 14, 56);
-    doc.text(tSafe(comp.street), 14, 61);
-    doc.text(tSafe(`${comp.zip} ${comp.city}`), 14, 66);
-    doc.text(tSafe(`IC: ${comp.ic}`), 14, 71);
-    if(comp.dic) doc.text(tSafe(`DIC: ${comp.dic}`), 14, 76);
-    
-    // Customer
-    doc.setFontSize(12);
-    doc.text("ODBERATEL:", 120, 50);
-    doc.setFontSize(10);
-    
-    let yPos = 56;
-    doc.text(tSafe(order.billingName || order.userName || 'Zakaznik'), 120, yPos); yPos += 5;
-    doc.text(tSafe(order.billingStreet || ''), 120, yPos); yPos += 5;
-    doc.text(tSafe(`${order.billingZip || ''} ${order.billingCity || ''}`), 120, yPos); yPos += 5;
-    if (order.billingIc) { doc.text(tSafe(`IC: ${order.billingIc}`), 120, yPos); yPos += 5; }
-    if (order.billingDic) { doc.text(tSafe(`DIC: ${order.billingDic}`), 120, yPos); yPos += 5; }
-
-    // Table using autotable for better layout
-    const tableBody = order.items.map(item => [
-        tSafe(item.name),
-        item.quantity,
-        item.price.toFixed(2),
-        (item.price * item.quantity).toFixed(2)
-    ]);
-
-    // Fees
-    if (order.packagingFee > 0) tableBody.push(['Balne', '1', order.packagingFee.toFixed(2), order.packagingFee.toFixed(2)]);
-    if (order.deliveryFee > 0) tableBody.push(['Doprava', '1', order.deliveryFee.toFixed(2), order.deliveryFee.toFixed(2)]);
-    
-    // Discounts
-    order.appliedDiscounts?.forEach(d => {
-        tableBody.push([`Sleva ${d.code}`, '1', `-${d.amount}`, `-${d.amount}`]);
-    });
-
-    // FIX: Use functional call for autoTable in Node.js environment
-    // Instead of doc.autoTable(...), we pass doc as the first argument
-    autoTable(doc, {
-        startY: 90,
-        head: [['Polozka', 'Ks', 'Cena/ks', 'Celkem']],
-        body: tableBody,
-        theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 9 } // Using standard font
-    });
-
-    const finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
-    
-    const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
-    
-    doc.setFontSize(14);
-    doc.text(`CELKEM K UHRADE: ${total.toFixed(2)} Kc`, 196, finalY, { align: "right" });
-
-    if (type === 'final') {
-        doc.setFontSize(10);
-        doc.text("Jiz uhrazeno zalohou.", 196, finalY + 10, { align: "right" });
+    if (isVatPayer && type === 'final') {
+        doc.text(`Datum zdan. plnění: ${dateToUse.split('T')[0]}`, 105, 40, { align: "center" });
     }
 
-    // Return as Buffer
+    // --- 4. SUPPLIER / CUSTOMER ---
+    doc.setFontSize(11);
+    doc.setFont("Roboto", "bold");
+    doc.text("DODAVATEL:", 14, 55);
+    doc.text("ODBĚRATEL:", 110, 55);
+    
+    doc.setFont("Roboto", "normal");
+    doc.setFontSize(10);
+    
+    // Supplier Info
+    let yPos = 61;
+    doc.text(comp.name || '', 14, yPos); yPos += 5;
+    doc.text(comp.street || '', 14, yPos); yPos += 5;
+    doc.text(`${comp.zip || ''} ${comp.city || ''}`, 14, yPos); yPos += 5;
+    doc.text(`IČ: ${comp.ic || ''}`, 14, yPos); yPos += 5;
+    if(comp.dic) doc.text(`DIČ: ${comp.dic}`, 14, yPos);
+
+    // Customer Info
+    yPos = 61;
+    doc.text(order.billingName || order.userName || 'Zákazník', 110, yPos); yPos += 5;
+    doc.text(order.billingStreet || '', 110, yPos); yPos += 5;
+    doc.text(`${order.billingZip || ''} ${order.billingCity || ''}`, 110, yPos); yPos += 5;
+    if (order.billingIc) { doc.text(`IČ: ${order.billingIc}`, 110, yPos); yPos += 5; }
+    if (order.billingDic) { doc.text(`DIČ: ${order.billingDic}`, 110, yPos); yPos += 5; }
+
+    // --- 5. CALCULATIONS ---
+    
+    // Find Max VAT Rate from products for Fees
+    let maxVatRate = 0;
+    order.items.forEach(item => {
+        const rate = Number(item.vatRateTakeaway || 0); // Assuming takeaway rate for delivery
+        if (rate > maxVatRate) maxVatRate = rate;
+    });
+
+    const feeVatRate = maxVatRate; // Delivery & Packaging takes the highest rate
+
+    // Helper to calc bases
+    const getBase = (priceWithVat, rate) => priceWithVat / (1 + rate / 100);
+    const getVat = (priceWithVat, rate) => priceWithVat - getBase(priceWithVat, rate);
+
+    const tableBody = [];
+
+    // Products
+    order.items.forEach(item => {
+        const lineTotal = item.price * item.quantity;
+        const rate = Number(item.vatRateTakeaway || 0);
+        
+        const row = [
+            item.name,
+            item.quantity,
+            isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)
+        ];
+
+        if (isVatPayer) {
+            row.push(`${rate}%`);
+            row.push(getVat(lineTotal, rate).toFixed(2));
+        }
+        
+        row.push(lineTotal.toFixed(2));
+        tableBody.push(row);
+    });
+
+    // Fees
+    if (order.packagingFee > 0) {
+        const row = [
+            'Balné',
+            '1',
+            isVatPayer ? getBase(order.packagingFee, feeVatRate).toFixed(2) : order.packagingFee.toFixed(2)
+        ];
+        if (isVatPayer) {
+            row.push(`${feeVatRate}%`);
+            row.push(getVat(order.packagingFee, feeVatRate).toFixed(2));
+        }
+        row.push(order.packagingFee.toFixed(2));
+        tableBody.push(row);
+    }
+
+    if (order.deliveryFee > 0) {
+        const row = [
+            'Doprava',
+            '1',
+            isVatPayer ? getBase(order.deliveryFee, feeVatRate).toFixed(2) : order.deliveryFee.toFixed(2)
+        ];
+        if (isVatPayer) {
+            row.push(`${feeVatRate}%`);
+            row.push(getVat(order.deliveryFee, feeVatRate).toFixed(2));
+        }
+        row.push(order.deliveryFee.toFixed(2));
+        tableBody.push(row);
+    }
+
+    // Discounts
+    order.appliedDiscounts?.forEach(d => {
+        // Discounts are a bit complex with VAT, we assume they reduce the total base proportionally or take highest rate
+        // For simplicity in display, we show them as negative lines.
+        // Assuming discount is gross amount.
+        const row = [
+            `Sleva ${d.code}`,
+            '1',
+            `-${d.amount.toFixed(2)}`
+        ];
+        if (isVatPayer) {
+            row.push(''); // Rate unclear/mixed
+            row.push(''); // VAT unclear/mixed
+        }
+        row.push(`-${d.amount.toFixed(2)}`);
+        tableBody.push(row);
+    });
+
+    // --- 6. TABLE GENERATION ---
+    const head = isVatPayer 
+        ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem s DPH']]
+        : [['Položka', 'Ks', 'Cena/ks', 'Celkem']];
+
+    autoTable(doc, {
+        startY: 100,
+        head: head,
+        body: tableBody,
+        theme: 'grid',
+        styles: { 
+            font: 'Roboto', 
+            fontSize: 9,
+            lineColor: [200, 200, 200]
+        },
+        headStyles: {
+            fillColor: brandColor, // Purple
+            textColor: [255, 255, 255],
+            fontStyle: 'bold'
+        },
+        columnStyles: isVatPayer ? {
+            0: { cellWidth: 'auto' }, // Name
+            1: { halign: 'center' }, // Qty
+            2: { halign: 'right' },  // Base
+            3: { halign: 'center' }, // Rate
+            4: { halign: 'right' },  // VAT
+            5: { halign: 'right', fontStyle: 'bold' } // Total
+        } : {
+            0: { cellWidth: 'auto' },
+            1: { halign: 'center' },
+            2: { halign: 'right' },
+            3: { halign: 'right', fontStyle: 'bold' }
+        }
+    });
+
+    // --- 7. TOTALS & FOOTER ---
+    const finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
+    const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
+    
+    doc.setFont("Roboto", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(...brandColor);
+    doc.text(`CELKEM K ÚHRADĚ: ${total.toFixed(2)} Kč`, 196, finalY, { align: "right" });
+    
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(10);
+    
+    if (type === 'final') {
+        doc.text("Již uhrazeno zálohou / online.", 196, finalY + 8, { align: "right" });
+    } else {
+        // --- 8. QR CODE (Only for Proforma) ---
+        try {
+            const iban = comp.bankAccount.replace(/\s/g,'').split('/')[0]; // Simple parse, assumes CZ format handled
+            // Note: Real IBAN parser logic is in StoreContext, simplistic fallback here or rely on pre-calculated
+            // Ideally we need the real IBAN. For now assuming the bankAccount string *is* valid or we construct CZ format.
+            // Using a public API for QR generation to embed into PDF
+            
+            // Construct SPD string
+            const accNum = comp.bankAccount.split('/')[0];
+            const bankCode = comp.bankAccount.split('/')[1];
+            // Simple CZ IBAN generator stub for the PDF service context (simplified)
+            // In production, pass full IBAN in settings or order
+            
+            const qrString = `SPD*1.0*ACC:${comp.bankAccount}*AM:${total.toFixed(2)}*CC:CZK*MSG:OBJ${order.id}`;
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
+            
+            // Fetch the image
+            const qrResp = await fetch(qrUrl);
+            const qrBuf = await qrResp.arrayBuffer();
+            const qrBase64 = Buffer.from(qrBuf).toString('base64');
+            
+            doc.addImage(qrBase64, "PNG", 150, finalY + 10, 40, 40);
+            doc.setFontSize(8);
+            doc.text("QR Platba", 170, finalY + 53, { align: "center" });
+        } catch (e) {
+            console.error("QR Code generation failed:", e);
+        }
+    }
+
     return Buffer.from(doc.output('arraybuffer'));
 };

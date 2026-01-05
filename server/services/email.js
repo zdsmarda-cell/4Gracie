@@ -141,8 +141,6 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
     let title = '';
 
     // Determine Recipients
-    // Customer always gets email
-    // Operator only gets 'created' email
     const customerEmail = (await import('../db.js')).getDb().then(async pool => {
         const [u] = await pool.query('SELECT email FROM users WHERE id=?', [order.userId]);
         return u[0]?.email;
@@ -188,6 +186,7 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
                 to: email,
                 subject,
                 html: messageHtml,
+                encoding: 'base64', // FORCE BASE64 ENCODING FOR BODY
                 attachments
             });
         }
@@ -199,7 +198,8 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
                 from: process.env.EMAIL_FROM,
                 to: settings.companyDetails.email,
                 subject: `Nová objednávka #${order.id}`,
-                html: operatorHtml
+                html: operatorHtml,
+                encoding: 'base64' // FORCE BASE64 ENCODING
             });
         }
 
@@ -216,6 +216,7 @@ export const sendOrderEmail = async (order, type, settings, customStatus = null)
                 to: email,
                 subject,
                 html: messageHtml,
+                encoding: 'base64', // FORCE BASE64 ENCODING
                 attachments
             });
         }
