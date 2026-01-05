@@ -4,7 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { ALLERGENS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
-import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe } from 'lucide-react';
+import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe, Upload } from 'lucide-react';
 
 const TranslationViewModal: React.FC<{
     isOpen: boolean;
@@ -105,59 +105,80 @@ export const ProductsTab: React.FC = () => {
         e.preventDefault();
         if (!editingProduct) return;
         
-        if (settings.enableAiTranslation) {
-            setIsTranslating(true);
-        }
+        setIsUploading(true); // Start loading state
         
-        const prod = { ...editingProduct } as Product;
-        if (!prod.id) prod.id = Date.now().toString();
-        
-        // Safety checks for required fields
-        if (!prod.category && sortedCategories.length > 0) prod.category = sortedCategories[0].id;
-        if (!prod.unit) prod.unit = 'ks';
-        if (!prod.images) prod.images = [];
-        if (!prod.visibility) prod.visibility = { online: true, store: true, stand: true };
-        if (!prod.allergens) prod.allergens = [];
-        
-        prod.vatRateInner = Number(prod.vatRateInner ?? 0);
-        prod.vatRateTakeaway = Number(prod.vatRateTakeaway ?? 0);
-        prod.workload = Number(prod.workload ?? 0);
-        prod.workloadOverhead = Number(prod.workloadOverhead ?? 0);
-        prod.volume = Number(prod.volume ?? 0); 
-        
-        // Generate Translations if enabled
-        if (settings.enableAiTranslation) {
-            const translations = await generateTranslations({ 
-                name: prod.name, 
-                description: prod.description 
-            });
-            prod.translations = translations;
-        }
+        try {
+            const prod = { ...editingProduct } as Product;
+            if (!prod.id) prod.id = Date.now().toString();
+            
+            // 1. Process Images (Upload ONLY new Base64 images)
+            if (prod.images && prod.images.length > 0) {
+                const processedImages = await Promise.all(prod.images.map(async (img, index) => {
+                    // Check if it is a new Base64 image
+                    if (img.startsWith('data:')) {
+                        try {
+                            const fileName = `prod-${prod.id}-${Date.now()}-${index}.jpg`;
+                            // Upload to server and get URL
+                            return await uploadImage(img, fileName);
+                        } catch (err) {
+                            console.error("Failed to upload image:", err);
+                            return img; // Fallback (though DB might reject large string if column size limited)
+                        }
+                    }
+                    // It's already a URL (existing image), keep as is
+                    return img;
+                }));
+                prod.images = processedImages;
+            } else {
+                prod.images = [];
+            }
 
-        if (products.some(p => p.id === prod.id)) await updateProduct(prod);
-        else await addProduct(prod);
-        setIsTranslating(false);
-        setIsProductModalOpen(false);
+            // Safety checks for required fields
+            if (!prod.category && sortedCategories.length > 0) prod.category = sortedCategories[0].id;
+            if (!prod.unit) prod.unit = 'ks';
+            if (!prod.visibility) prod.visibility = { online: true, store: true, stand: true };
+            if (!prod.allergens) prod.allergens = [];
+            
+            prod.vatRateInner = Number(prod.vatRateInner ?? 0);
+            prod.vatRateTakeaway = Number(prod.vatRateTakeaway ?? 0);
+            prod.workload = Number(prod.workload ?? 0);
+            prod.workloadOverhead = Number(prod.workloadOverhead ?? 0);
+            prod.volume = Number(prod.volume ?? 0); 
+            
+            // Generate Translations if enabled
+            if (settings.enableAiTranslation) {
+                setIsTranslating(true);
+                const translations = await generateTranslations({ 
+                    name: prod.name, 
+                    description: prod.description 
+                });
+                prod.translations = translations;
+                setIsTranslating(false);
+            }
+
+            if (products.some(p => p.id === prod.id)) await updateProduct(prod);
+            else await addProduct(prod);
+            
+            setIsProductModalOpen(false);
+        } catch (e) {
+            console.error("Save error:", e);
+            alert("Chyba při ukládání produktu.");
+        } finally {
+            setIsUploading(false);
+            setIsTranslating(false);
+        }
     };
 
-    const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file && editingProduct) {
-            setIsUploading(true);
-            try {
-                const reader = new FileReader();
-                reader.onloadend = async () => {
-                    const base64 = reader.result as string;
-                    // UPLOAD TO SERVER INSTEAD OF LOCAL STORAGE
-                    const imageUrl = await uploadImage(base64, file.name);
-                    setEditingProduct(prev => ({ ...prev, images: [...(prev?.images || []), imageUrl] }));
-                    setIsUploading(false);
-                };
-                reader.readAsDataURL(file);
-            } catch (error) {
-                console.error("Upload failed", error);
-                setIsUploading(false);
-            }
+            // Just read as Base64 for Preview. Upload happens on Save.
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const base64 = reader.result as string;
+                setEditingProduct(prev => ({ ...prev, images: [...(prev?.images || []), base64] }));
+            };
+            reader.readAsDataURL(file);
         }
     };
 
@@ -323,9 +344,9 @@ export const ProductsTab: React.FC = () => {
                                         <button type="button" onClick={() => setEditingProduct({...editingProduct, images: editingProduct.images?.filter((_, i) => i !== idx)})} className="absolute top-0 right-0 bg-red-500 text-white p-1 opacity-0 group-hover:opacity-100 transition"><X size={12}/></button>
                                     </div>
                                 ))}
-                                <label className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition">
-                                    {isUploading ? <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400"></div> : <Plus size={24} />}
-                                    <span className="text-[10px] mt-1">{isUploading ? 'Nahrávám...' : 'Nahrát'}</span>
+                                <label className={`w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                    <Plus size={24} />
+                                    <span className="text-[10px] mt-1">Nahrát</span>
                                     <input type="file" className="hidden" onChange={handleImageFileChange} disabled={isUploading} />
                                 </label>
                             </div>
@@ -335,7 +356,13 @@ export const ProductsTab: React.FC = () => {
                     <div className="flex gap-2 pt-4 border-t">
                     <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
                     <button type="submit" disabled={isTranslating || isUploading} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
-                        {isTranslating ? <><Languages size={14} className="mr-2 animate-pulse"/> Překládám...</> : t('common.save')}
+                        {isUploading ? (
+                            <><Upload size={14} className="mr-2 animate-bounce"/> Nahrávám obrázky...</>
+                        ) : isTranslating ? (
+                            <><Languages size={14} className="mr-2 animate-pulse"/> Překládám...</>
+                        ) : (
+                            t('common.save')
+                        )}
                     </button>
                     </div>
                 </form>

@@ -106,10 +106,18 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
         if (!url) return '';
         if (url.startsWith('http')) return url;
         
-        // Priority: 1. Env Var (APP_URL), 2. Settings (DB), 3. Localhost fallback
-        // We prioritize APP_URL because DB settings might contain default localhost string if not updated by admin
+        // Priority: 1. Env Var (APP_URL + PORT), 2. Settings (DB), 3. Localhost fallback
         const port = process.env.PORT || 3000;
-        let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || settings.server?.baseUrl || `http://localhost:${port}`;
+        let baseUrl;
+
+        if (process.env.APP_URL) {
+            // Ensure port is included if provided via APP_URL env
+            let appUrl = process.env.APP_URL;
+            if (appUrl.endsWith('/')) appUrl = appUrl.slice(0, -1);
+            baseUrl = `${appUrl}:${port}`;
+        } else {
+            baseUrl = process.env.VITE_APP_URL || settings.server?.baseUrl || `http://localhost:${port}`;
+        }
         
         if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
         
