@@ -71,7 +71,7 @@ const TranslationViewModal: React.FC<{
 };
 
 export const ProductsTab: React.FC = () => {
-    const { products, t, addProduct, updateProduct, deleteProduct, settings, uploadImage } = useStore();
+    const { products, t, addProduct, updateProduct, deleteProduct, settings, uploadImage, getImageUrl } = useStore();
     const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<{type: string, id: string, name?: string} | null>(null);
@@ -193,7 +193,7 @@ export const ProductsTab: React.FC = () => {
                     {products.map(p => (
                     <tr key={p.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4">
-                        {p.images?.[0] ? <img src={p.images[0]} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
+                        {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
                         </td>
                         <td className="px-6 py-4 font-bold">
                             {p.name}
@@ -319,7 +319,7 @@ export const ProductsTab: React.FC = () => {
                             <div className="flex flex-wrap gap-2">
                                 {editingProduct?.images?.map((img, idx) => (
                                     <div key={idx} className="relative w-20 h-20 group rounded-lg overflow-hidden border">
-                                        <img src={img} className="w-full h-full object-cover" />
+                                        <img src={getImageUrl(img)} className="w-full h-full object-cover" />
                                         <button type="button" onClick={() => setEditingProduct({...editingProduct, images: editingProduct.images?.filter((_, i) => i !== idx)})} className="absolute top-0 right-0 bg-red-500 text-white p-1 opacity-0 group-hover:opacity-100 transition"><X size={12}/></button>
                                     </div>
                                 ))}

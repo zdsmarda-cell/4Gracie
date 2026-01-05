@@ -137,6 +137,7 @@ interface StoreContextType {
   removeDiacritics: (str: string) => string;
   formatDate: (dateStr: string) => string;
   getFullApiUrl: (path: string) => string;
+  getImageUrl: (path: string) => string; // NEW
   refreshData: (force?: boolean) => Promise<void>;
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
@@ -278,6 +279,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     return `${baseUrl}${cleanEndpoint}`;
   }, []);
+
+  // NEW: Helper to force absolute URL for images, bypassing proxy issues
+  const getImageUrl = useCallback((path: string) => {
+      if (!path) return '';
+      if (path.startsWith('http')) return path;
+      if (path.startsWith('data:')) return path;
+      // Prepend API URL which includes port 3000 (if detected/configured)
+      return getFullApiUrl(path);
+  }, [getFullApiUrl]);
 
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
@@ -1229,7 +1239,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       getPickupPointInfo,
       calculatePackagingFee,
       t, tData, generateInvoice, printInvoice, generateCzIban: calculateCzIban, importDatabase, globalNotification, dismissNotification,
-      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate, getFullApiUrl, refreshData: fetchData
+      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate, getFullApiUrl, getImageUrl, refreshData: fetchData
     }}>
       {children}
     </StoreContext.Provider>

@@ -8,7 +8,7 @@ import { CustomCalendar } from '../components/CustomCalendar';
 import { TermsContent } from '../components/TermsContent';
 
 export const Cart: React.FC = () => {
-  const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate } = useStore();
+  const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate, getImageUrl } = useStore();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
@@ -310,7 +310,7 @@ export const Cart: React.FC = () => {
                {cart.map(item => (
                  <div key={item.id} className="p-4 flex flex-col md:flex-row md:items-center gap-4 hover:bg-gray-50 transition">
                    <div className="flex items-center gap-4 flex-1">
-                     <img src={item.images[0]} className="w-16 h-16 object-cover rounded-lg shadow-sm" />
+                     <img src={getImageUrl(item.images[0])} className="w-16 h-16 object-cover rounded-lg shadow-sm" />
                      <div className="flex-1">
                        <div className="font-bold text-sm text-gray-800">{tData(item, 'name')}</div>
                        {item.minOrderQuantity && item.minOrderQuantity > 1 && (

@@ -6,6 +6,7 @@ import { Product } from '../types';
 import { Filter, Info, ChevronLeft, ChevronRight, X, Maximize2, Clock, AlertCircle } from 'lucide-react';
 
 const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
+  const { getImageUrl } = useStore();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isZoomed, setIsZoomed] = useState(false);
 
@@ -39,7 +40,7 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
         title="Kliknutím zvětšíte"
       >
         <img 
-          src={product.images[currentIndex]} 
+          src={getImageUrl(product.images[currentIndex])} 
           alt={product.name} 
           className="w-full h-full object-cover transition duration-500 group-hover/gallery:scale-105" 
         />
@@ -88,7 +89,7 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
           
           <div className="relative max-w-full max-h-full flex items-center justify-center animate-in zoom-in duration-300">
              <img 
-              src={product.images[currentIndex]} 
+              src={getImageUrl(product.images[currentIndex])} 
               alt={product.name} 
               className="max-w-[90vw] max-h-[85vh] object-contain shadow-2xl rounded"
               onClick={(e) => e.stopPropagation()}

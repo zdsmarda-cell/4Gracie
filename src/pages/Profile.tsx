@@ -7,7 +7,7 @@ import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMe
 import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Profile: React.FC = () => {
-  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount } = useStore();
+  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl } = useStore();
   
   // General Modal State (For Profile Address Management)
   const [modalType, setModalType] = useState<'billing' | 'delivery' | null>(null);
@@ -364,7 +364,7 @@ export const Profile: React.FC = () => {
                               <div key={item.id} className="p-3 flex items-center justify-between text-sm">
                                 <div className="flex items-center gap-3">
                                   {item.images && item.images[0] && (
-                                    <img src={item.images[0]} alt={item.name} className="w-8 h-8 rounded object-cover" />
+                                    <img src={getImageUrl(item.images[0])} alt={item.name} className="w-8 h-8 rounded object-cover" />
                                   )}
                                   <span className="font-bold">{item.quantity}x {item.name}</span>
                                 </div>
@@ -761,7 +761,7 @@ export const Profile: React.FC = () => {
                             <tr key={item.id}>
                               <td className="px-3 py-2">
                                   {item.images && item.images[0] ? (
-                                      <img src={item.images[0]} alt={item.name} className="w-8 h-8 rounded object-cover" />
+                                      <img src={getImageUrl(item.images[0])} alt={item.name} className="w-8 h-8 rounded object-cover" />
                                   ) : (
                                       <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={12}/></div>
                                   )}
@@ -834,7 +834,7 @@ export const Profile: React.FC = () => {
                 <div key={p.id} className="flex justify-between items-center py-2 hover:bg-gray-50 px-2 rounded">
                   <div className="flex items-center gap-3">
                       {p.images && p.images[0] ? (
-                          <img src={p.images[0]} alt={p.name} className="w-10 h-10 rounded object-cover"/>
+                          <img src={getImageUrl(p.images[0])} alt={p.name} className="w-10 h-10 rounded object-cover"/>
                       ) : (
                           <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-300"/></div>
                       )}
