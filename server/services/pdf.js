@@ -1,6 +1,6 @@
 
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 // Helper to remove diacritics if font loading fails
 const removeDiacritics = (str) => {
@@ -74,7 +74,9 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         tableBody.push([`Sleva ${d.code}`, '1', `-${d.amount}`, `-${d.amount}`]);
     });
 
-    doc.autoTable({
+    // FIX: Use functional call for autoTable in Node.js environment
+    // Instead of doc.autoTable(...), we pass doc as the first argument
+    autoTable(doc, {
         startY: 90,
         head: [['Polozka', 'Ks', 'Cena/ks', 'Celkem']],
         body: tableBody,
@@ -82,7 +84,7 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         styles: { font: 'helvetica', fontSize: 9 } // Using standard font
     });
 
-    const finalY = doc.lastAutoTable.finalY + 10;
+    const finalY = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 150) + 10;
     
     const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
     
