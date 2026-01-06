@@ -1,9 +1,10 @@
 
 import express from 'express';
-import { withDb } from '../db.js';
+import { withDb, parseJsonCol } from '../db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { sendEventNotification } from '../services/email.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -54,6 +55,40 @@ router.post('/import', withDb(async (req, res, db) => {
         res.status(500).json({ error: e.message });
     } finally {
         conn.release();
+    }
+}));
+
+// NOTIFY EVENT
+router.post('/notify-event', withDb(async (req, res, db) => {
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ error: 'Date required' });
+
+    try {
+        // 1. Fetch Users with Consent
+        const [users] = await db.query('SELECT email FROM users WHERE marketing_consent = 1 AND is_blocked = 0');
+        const recipients = users.map(u => u.email).filter(e => e && e.includes('@'));
+
+        if (recipients.length === 0) {
+            return res.json({ success: true, message: 'No recipients found' });
+        }
+
+        // 2. Fetch Active Event Products
+        const [pRows] = await db.query('SELECT full_json FROM products WHERE is_deleted = 0');
+        const eventProducts = pRows
+            .map(r => parseJsonCol(r, 'full_json'))
+            .filter(p => p.isEventProduct && p.visibility?.online);
+
+        if (eventProducts.length === 0) {
+            return res.json({ success: true, message: 'No active event products found' });
+        }
+
+        // 3. Send Emails
+        await sendEventNotification(date, eventProducts, recipients);
+
+        res.json({ success: true, count: recipients.length });
+    } catch (e) {
+        console.error("Notify Event Error:", e);
+        res.status(500).json({ error: e.message });
     }
 }));
 

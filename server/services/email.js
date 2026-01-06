@@ -100,30 +100,28 @@ const TRANSLATIONS = {
     }
 };
 
+// Helper for image URLs
+const getImgUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    
+    const port = process.env.PORT || 3000;
+    let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost';
+    
+    if (!baseUrl.includes(':', 6)) { 
+        baseUrl = `${baseUrl}:${port}`;
+    }
+    
+    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    
+    return `${baseUrl}${cleanPath}`;
+};
+
 const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) => {
     const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
     const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
     
-    // Resolve Image URL
-    const getImgUrl = (url) => {
-        if (!url) return '';
-        if (url.startsWith('http')) return url;
-        
-        // Postaveno na environmentálních proměnných APP_URL a PORT
-        const port = process.env.PORT || 3000;
-        let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost';
-        
-        // Pokud baseUrl neobsahuje port, přidáme ho (pokud to není standardní 80/443 nebo to tam prostě chybí)
-        if (!baseUrl.includes(':', 6)) { // 6 k přeskočení http://
-            baseUrl = `${baseUrl}:${port}`;
-        }
-        
-        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-        const cleanPath = url.startsWith('/') ? url : `/${url}`;
-        
-        return `${baseUrl}${cleanPath}`;
-    };
-
     // Construct Address Logic
     let addressDisplay = '';
     if (order.deliveryStreet && order.deliveryCity) {
@@ -197,6 +195,82 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
     }
 
     return htmlContent;
+};
+
+// NEW: Event Notification Email Logic
+export const sendEventNotification = async (eventDate, products, recipients) => {
+    if (!transporter || recipients.length === 0) return;
+
+    const formattedDate = formatDate(eventDate);
+    const subject = `Speciální akce na ${formattedDate} - Objednejte si včas!`;
+
+    // Helper to calculate deadline date
+    const getDeadline = (leadTime) => {
+        const d = new Date(eventDate);
+        d.setDate(d.getDate() - leadTime);
+        return formatDate(d.toISOString());
+    };
+
+    const productsHtml = products.map(p => {
+        const leadTimeMsg = p.leadTimeDays > 0 
+            ? `Objednat do: <strong>${getDeadline(p.leadTimeDays)}</strong>` 
+            : 'Objednat lze ihned';
+            
+        return `
+        <div style="display: flex; gap: 15px; border-bottom: 1px solid #eee; padding: 15px 0; align-items: center;">
+            <div style="width: 80px; height: 80px; flex-shrink: 0; background-color: #f9fafb; border-radius: 8px; overflow: hidden;">
+                ${p.images && p.images[0] 
+                    ? `<img src="${getImgUrl(p.images[0])}" style="width: 100%; height: 100%; object-fit: cover;" alt="${p.name}">` 
+                    : ''}
+            </div>
+            <div>
+                <h3 style="margin: 0 0 5px 0; font-size: 16px; color: #1f2937;">${p.name}</h3>
+                <p style="margin: 0 0 5px 0; font-size: 14px; color: #666;">${p.description || ''}</p>
+                <div style="font-size: 12px; color: #9333ea; font-weight: bold;">
+                    ${leadTimeMsg}
+                </div>
+            </div>
+        </div>
+    `}).join('');
+
+    const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <div style="background-color: #9333ea; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
+                <h1 style="color: white; margin: 0; font-size: 24px;">Nová cateringová akce!</h1>
+                <p style="color: #f3e8ff; margin: 5px 0 0 0; font-size: 16px;">Připravili jsme pro vás speciální nabídku na den ${formattedDate}.</p>
+            </div>
+            
+            <div style="padding: 20px; background-color: #ffffff; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+                <p style="margin-bottom: 20px;">Využijte naši nabídku akčních produktů. Pozor na termíny objednání!</p>
+                
+                ${productsHtml}
+                
+                <div style="text-align: center; margin-top: 30px;">
+                    <a href="${process.env.VITE_APP_URL || '#'}" style="display: inline-block; background-color: #9333ea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold;">
+                        Objednat nyní
+                    </a>
+                </div>
+            </div>
+            
+            <div style="text-align: center; margin-top: 20px; font-size: 11px; color: #9ca3af;">
+                Tento email jste obdrželi, protože jste přihlášeni k odběru novinek.<br>
+                Pokud si nepřejete dostávat tato sdělení, můžete změnit nastavení ve svém profilu.
+            </div>
+        </div>
+    `;
+
+    try {
+        // Send as BCC to protect privacy
+        await transporter.sendMail({
+            from: process.env.EMAIL_FROM,
+            bcc: recipients, // Array of email strings
+            subject: subject,
+            html: htmlContent
+        });
+        console.log(`✅ Event notification sent to ${recipients.length} recipients.`);
+    } catch (e) {
+        console.error('❌ Failed to send event notification:', e.message);
+    }
 };
 
 export const sendOrderEmail = async (order, type, settings, customStatus = null) => {

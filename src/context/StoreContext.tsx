@@ -136,6 +136,7 @@ interface StoreContextType {
   removeDayConfig: (date: string) => Promise<boolean>;
   updateEventSlot: (slot: any) => Promise<boolean>;
   removeEventSlot: (date: string) => Promise<boolean>;
+  notifyEventSubscribers: (date: string) => Promise<boolean>;
   
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
@@ -643,6 +644,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return await updateSettings(newSettings);
   };
 
+  const notifyEventSubscribers = async (date: string): Promise<boolean> => {
+      if (dataSource !== 'api') {
+          showNotify('Notifikace nelze odeslat v lokálním režimu (pouze API).', 'error');
+          return false;
+      }
+      const res = await apiCall('/api/admin/notify-event', 'POST', { date });
+      if (res && res.success) {
+          showNotify(`Notifikace odeslána ${res.count} odběratelům.`);
+          return true;
+      }
+      return false;
+  };
+
   const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
@@ -1080,7 +1094,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       searchUsers, 
       orders, searchOrders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
-      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, updateEventSlot, removeEventSlot,
+      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, updateEventSlot, removeEventSlot, notifyEventSubscribers,
       checkAvailability, getDateStatus, getDailyLoad, getAvailableEventDates, isEventCapacityAvailable,
       getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo,
       calculatePackagingFee,

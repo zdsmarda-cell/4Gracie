@@ -1,7 +1,8 @@
+
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { EventSlot, OrderStatus } from '../../types';
-import { Plus, Edit, Trash2, Calendar, AlertTriangle, ListFilter } from 'lucide-react';
+import { Plus, Edit, Trash2, Calendar, AlertTriangle, ListFilter, Mail } from 'lucide-react';
 
 const WarningModal: React.FC<{
     isOpen: boolean;
@@ -57,11 +58,14 @@ interface EventsTabProps {
 }
 
 export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
-    const { settings, updateEventSlot, removeEventSlot, t, formatDate, orders } = useStore();
+    const { settings, updateEventSlot, removeEventSlot, t, formatDate, orders, notifyEventSubscribers } = useStore();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingSlot, setEditingSlot] = useState<Partial<EventSlot> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
     const [warningMessage, setWarningMessage] = useState<string | null>(null);
+    
+    // Checkbox for sending notifications
+    const [sendNotification, setSendNotification] = useState(false);
     
     // Toggle state: 'active' (today+future) or 'history' (past)
     const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
@@ -103,6 +107,11 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
         }
         
         await updateEventSlot(editingSlot as EventSlot);
+        
+        if (sendNotification) {
+            await notifyEventSubscribers(editingSlot.date);
+        }
+
         setIsModalOpen(false);
     };
 
@@ -126,6 +135,12 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
             await removeEventSlot(deleteTarget);
             setDeleteTarget(null);
         }
+    };
+
+    const openModal = (slot?: Partial<EventSlot>) => {
+        setEditingSlot(slot ? JSON.parse(JSON.stringify(slot)) : { date: '', capacityOverrides: {} });
+        setSendNotification(false);
+        setIsModalOpen(true);
     };
 
     return (
@@ -156,7 +171,7 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
                     </h3>
                     {viewMode === 'active' && (
                         <button 
-                            onClick={() => { setEditingSlot({ date: '', capacityOverrides: {} }); setIsModalOpen(true); }} 
+                            onClick={() => openModal()} 
                             className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"
                         >
                             <Plus size={14} className="mr-1"/> {t('admin.event_add')}
@@ -208,7 +223,7 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
                                 </div>
 
                                 <div className="flex gap-2">
-                                    <button onClick={() => { setEditingSlot(JSON.parse(JSON.stringify(slot))); setIsModalOpen(true); }} className="p-2 bg-white rounded-lg hover:bg-gray-100 text-gray-600 border border-gray-200 transition"><Edit size={16}/></button>
+                                    <button onClick={() => openModal(slot)} className="p-2 bg-white rounded-lg hover:bg-gray-100 text-gray-600 border border-gray-200 transition"><Edit size={16}/></button>
                                     <button onClick={() => handleDeleteRequest(slot.date)} className="p-2 bg-white rounded-lg hover:bg-red-50 text-red-500 border border-red-100 transition"><Trash2 size={16}/></button>
                                 </div>
                             </div>
@@ -257,6 +272,26 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
                                 ))}
                             </div>
                             <p className="text-[10px] text-gray-400 mt-2 italic">Nevyplněné hodnoty se řídí výchozí kapacitou 0 (nedostupné). Min. hodnota je 0.</p>
+                        </div>
+
+                        {/* NOTIFICATION CHECKBOX */}
+                        <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
+                            <label className="flex items-start gap-2 cursor-pointer">
+                                <input 
+                                    type="checkbox" 
+                                    checked={sendNotification} 
+                                    onChange={e => setSendNotification(e.target.checked)}
+                                    className="mt-1 rounded text-purple-600 focus:ring-purple-600"
+                                />
+                                <div>
+                                    <span className="block text-sm font-bold text-purple-900 flex items-center">
+                                        <Mail size={16} className="mr-2"/> Odeslat notifikaci
+                                    </span>
+                                    <p className="text-xs text-purple-700 mt-1">
+                                        Odešle email všem odběratelům novinek s informací o nové akci a seznamem aktuálně dostupných akčních produktů.
+                                    </p>
+                                </div>
+                            </label>
                         </div>
 
                         <div className="flex gap-2 pt-4">
