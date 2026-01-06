@@ -5,7 +5,11 @@ import { EmailLog } from '../../types';
 import { Mail, RefreshCw, AlertCircle, CheckCircle, Clock, Loader2, Filter, X, Eye, Braces } from 'lucide-react';
 import { Pagination } from '../../components/Pagination';
 
-export const EmailsTab: React.FC = () => {
+interface EmailsTabProps {
+    initialRecipient?: string | null;
+}
+
+export const EmailsTab: React.FC<EmailsTabProps> = ({ initialRecipient }) => {
     const { getFullApiUrl, dataSource, t } = useStore();
     const [emails, setEmails] = useState<EmailLog[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -26,6 +30,13 @@ export const EmailsTab: React.FC = () => {
         dateFrom: '',
         dateTo: ''
     });
+
+    // Apply initial prop
+    useEffect(() => {
+        if (initialRecipient) {
+            setFilters(prev => ({ ...prev, recipient: initialRecipient }));
+        }
+    }, [initialRecipient]);
 
     const loadEmails = useCallback(async () => {
         if (dataSource !== 'api') return;

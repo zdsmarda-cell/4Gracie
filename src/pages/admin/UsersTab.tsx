@@ -6,7 +6,11 @@ import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search
 import * as XLSX from 'xlsx';
 import { Pagination } from '../../components/Pagination';
 
-export const UsersTab: React.FC = () => {
+interface UsersTabProps {
+    onNavigateToEmails?: (email: string) => void;
+}
+
+export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
     const { searchUsers, orders, t, addUser, updateUserAdmin, searchOrders } = useStore();
     const [fetchedUsers, setFetchedUsers] = useState<User[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -190,6 +194,7 @@ export const UsersTab: React.FC = () => {
                         <th className="px-6 py-4 text-left">{t('common.email')}</th>
                         <th className="px-6 py-4 text-left">{t('common.role')}</th>
                         <th className="px-6 py-4 text-center">Marketing</th>
+                        <th className="px-6 py-4 text-center">Emaily</th>
                         <th className="px-6 py-4 text-center">{t('common.status')}</th>
                         <th className="px-6 py-4 text-right">{t('common.actions')}</th>
                         </tr>
@@ -209,6 +214,15 @@ export const UsersTab: React.FC = () => {
                             <td className="px-6 py-4 uppercase font-bold text-[10px]">{u.role}</td>
                             <td className="px-6 py-4 text-center">
                                 {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                                <button 
+                                    onClick={() => onNavigateToEmails?.(u.email)} 
+                                    className="p-1.5 text-gray-400 hover:text-accent hover:bg-gray-100 rounded-full transition"
+                                    title="Zobrazit historii emailů"
+                                >
+                                    <Mail size={16}/>
+                                </button>
                             </td>
                             <td className="px-6 py-4 text-center">
                                 {u.isBlocked ? <span className="text-red-600 font-bold flex items-center justify-center"><Ban size={14} className="mr-1"/> {t('common.blocked')}</span> : <span className="text-green-600 font-bold">{t('common.active')}</span>}

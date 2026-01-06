@@ -40,9 +40,12 @@ export const Admin: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState('orders');
     
-    // Navigation State
+    // Navigation State for Orders
     const [filterDate, setFilterDate] = useState<string | null>(null);
     const [filterEventOnly, setFilterEventOnly] = useState(false);
+
+    // Navigation State for Emails
+    const [emailFilter, setEmailFilter] = useState<string | null>(null);
 
     const handleNavigateToDate = (date: string) => {
         setFilterDate(date);
@@ -54,6 +57,11 @@ export const Admin: React.FC = () => {
         setFilterDate(date);
         setFilterEventOnly(true);
         setActiveTab('orders');
+    };
+
+    const handleNavigateToEmails = (email: string) => {
+        setEmailFilter(email);
+        setActiveTab('emails');
     };
 
     const clearFilters = () => {
@@ -80,7 +88,7 @@ export const Admin: React.FC = () => {
                 {availableTabs.map(tab => (
                     <button 
                     key={tab}
-                    onClick={() => setActiveTab(tab)} 
+                    onClick={() => { setActiveTab(tab); setEmailFilter(null); }} 
                     className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition whitespace-nowrap flex items-center ${activeTab === tab ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:bg-white/50'}`}
                     >
                     {tab === 'app_settings' && <Settings size={12} className="mr-1"/>}
@@ -94,7 +102,7 @@ export const Admin: React.FC = () => {
 
             {/* Modular Tabs */}
             {activeTab === 'orders' && <OrdersTab initialDate={filterDate} initialEventOnly={filterEventOnly} onClearFilters={clearFilters} />}
-            {activeTab === 'users' && <UsersTab />}
+            {activeTab === 'users' && <UsersTab onNavigateToEmails={handleNavigateToEmails} />}
             {activeTab === 'products' && <ProductsTab />}
             {activeTab === 'discounts' && <DiscountsTab />}
             {activeTab === 'delivery' && <DeliveryTab />}
@@ -106,7 +114,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'operator' && <OperatorTab />}
             {activeTab === 'payments' && <PaymentsTab />}
             {activeTab === 'app_settings' && <SettingsTab />}
-            {activeTab === 'emails' && <EmailsTab />}
+            {activeTab === 'emails' && <EmailsTab initialRecipient={emailFilter} />}
             {activeTab === 'load' && <LoadTab onNavigateToDate={handleNavigateToDate} />}
 
             {/* Inline Tabs (DB) */}
