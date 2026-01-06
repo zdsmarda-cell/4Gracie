@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { EventSlot, OrderStatus } from '../../types';
@@ -96,6 +95,12 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
         
         // Ensure capacityOverrides exists
         if (!editingSlot.capacityOverrides) editingSlot.capacityOverrides = {};
+        
+        // Validation: Check for negative capacities
+        if (Object.values(editingSlot.capacityOverrides).some((val) => (val as number) < 0)) {
+            alert('Kapacita nesmí být záporná (musí být 0 nebo vyšší).');
+            return;
+        }
         
         await updateEventSlot(editingSlot as EventSlot);
         setIsModalOpen(false);
@@ -238,7 +243,8 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
                                     <div key={cat.id} className="flex justify-between items-center text-sm">
                                         <span className="font-bold text-gray-700">{cat.name}</span>
                                         <input 
-                                            type="number" 
+                                            type="number"
+                                            min="0" 
                                             className="w-24 border rounded p-1 text-right font-mono focus:ring-accent outline-none" 
                                             placeholder="Limit" 
                                             value={editingSlot?.capacityOverrides?.[cat.id] ?? ''} 
@@ -250,7 +256,7 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
                                     </div>
                                 ))}
                             </div>
-                            <p className="text-[10px] text-gray-400 mt-2 italic">Nevyplněné hodnoty se řídí výchozí kapacitou 0 (nedostupné).</p>
+                            <p className="text-[10px] text-gray-400 mt-2 italic">Nevyplněné hodnoty se řídí výchozí kapacitou 0 (nedostupné). Min. hodnota je 0.</p>
                         </div>
 
                         <div className="flex gap-2 pt-4">

@@ -42,7 +42,10 @@ export const OperatorTab: React.FC = () => {
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.company_ic')}</label><input className="w-full border rounded p-2" value={formData.ic} onChange={e => setFormData({...formData, ic: e.target.value})} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.company_dic')}</label><input className="w-full border rounded p-2" value={formData.dic} onChange={e => setFormData({...formData, dic: e.target.value})} /></div>
                 </div>
-                <div><label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.company_account')}</label><input className="w-full border rounded p-2" value={formData.bankAccount} onChange={e => setFormData({...formData, bankAccount: e.target.value})} /></div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.company_account')}</label><input className="w-full border rounded p-2" value={formData.bankAccount} onChange={e => setFormData({...formData, bankAccount: e.target.value})} /></div>
+                    <div><label className="text-xs font-bold text-gray-400 block mb-1">SWIFT / BIC</label><input className="w-full border rounded p-2" value={formData.bic || ''} onChange={e => setFormData({...formData, bic: e.target.value})} placeholder="Např. KOMBCZPP" /></div>
+                </div>
                 <div className="pt-4"><button type="submit" className="bg-primary text-white px-6 py-2 rounded-lg font-bold shadow-lg">{t('admin.save_changes')}</button></div>
             </form>
         </div>

@@ -58,7 +58,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
              return sorted.filter(d => d >= now);
         }
         return sorted.reverse(); 
-    }, [dayConfigs, orders, showLoadHistory, settings.eventSlots]);
+    }, [dayConfigs, orders, showLoadHistory, settings]); // Changed settings.eventSlots to settings to ensure deep updates trigger re-render
 
     const getDayCapacityLimit = (date: string, catId: string) => {
         const config = dayConfigs.find(d => d.date === date);

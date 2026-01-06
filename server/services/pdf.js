@@ -20,6 +20,25 @@ const formatDate = (dateStr) => {
     return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
 };
 
+const calculateCzIban = (accountString) => {
+  if (!accountString) return '';
+  const cleanStr = accountString.replace(/\s/g, '');
+  const [accountPart, bankCode] = cleanStr.split('/');
+  if (!accountPart || !bankCode || bankCode.length !== 4) return '';
+  let prefix = '';
+  let number = accountPart;
+  if (accountPart.includes('-')) { [prefix, number] = accountPart.split('-'); }
+  const paddedPrefix = prefix.padStart(6, '0');
+  const paddedNumber = number.padStart(10, '0');
+  const paddedBank = bankCode.padStart(4, '0');
+  const bban = paddedBank + paddedPrefix + paddedNumber;
+  const numericStr = bban + '123500';
+  const remainder = BigInt(numericStr) % 97n;
+  const checkDigitsVal = 98n - remainder;
+  const checkDigitsStr = checkDigitsVal.toString().padStart(2, '0');
+  return `CZ${checkDigitsStr}${bban}`;
+};
+
 export const generateInvoicePdf = async (order, type = 'proforma', settings) => {
     const doc = new jsPDF();
     
@@ -39,8 +58,15 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         console.error("Font loading failed, falling back to default (diacritics may fail):", e);
     }
 
-    // --- 2. PREPARE DATA ---
-    const comp = order.companyDetailsSnapshot || settings.companyDetails || {};
+    // --- 2. PREPARE DATA (SNAPSHOT SELECTION) ---
+    // Rule: Proforma = Snapshot at creation. Final = Snapshot at Delivery (or fallback to creation if legacy).
+    let comp = {};
+    if (type === 'final') {
+        comp = order.deliveryCompanyDetailsSnapshot || order.companyDetailsSnapshot || settings.companyDetails || {};
+    } else {
+        comp = order.companyDetailsSnapshot || settings.companyDetails || {};
+    }
+
     const isVatPayer = !!comp.dic && comp.dic.trim().length > 0;
 
     const headerTitle = type === 'proforma' 
@@ -231,7 +257,9 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         try {
             if (comp.bankAccount) {
               const vs = order.id.replace(/\D/g, '');
-              const qrString = `SPD*1.0*ACC:${comp.bankAccount.replace(/\s/g, '')}*AM:${grandTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:OBJ${order.id}`;
+              const iban = calculateCzIban(comp.bankAccount);
+              const bic = comp.bic ? `+${comp.bic}` : '';
+              const qrString = `SPD*1.0*ACC:${iban}${bic}*AM:${grandTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:OBJ${order.id}`;
               const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
               const qrResp = await fetch(qrUrl);
               const qrBuf = await qrResp.arrayBuffer();

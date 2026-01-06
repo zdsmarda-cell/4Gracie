@@ -1,23 +1,20 @@
 
-import { CartItem, PackagingType, DiscountCode, DiscountType, OrderStatus, Order, Product, GlobalSettings, ProductCategory } from '../types';
+import { CartItem, PackagingType, DiscountCode, DiscountType, OrderStatus, Order, Product, GlobalSettings, ProductCategory, EventSlot, DayConfig } from '../types';
 
 export const calculatePackagingFeeLogic = (
     items: CartItem[], 
     packagingTypes: PackagingType[], 
     freeFromLimit: number
 ): number => {
-    // Volume logic: Sum only items that REQUIRE packaging
     const totalVolume = items.reduce((sum, item) => {
-        if (item.noPackaging) return sum; // Skip items marked as "Nebalí se"
+        if (item.noPackaging) return sum; 
         return sum + (item.volume || 0) * item.quantity;
     }, 0);
 
     const cartPrice = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
     
-    // If cart total price exceeds limit, packaging is free regardless of volume
     if (cartPrice >= freeFromLimit) return 0;
     
-    // If volume is 0 (e.g. only noPackaging items), fee is 0
     if (totalVolume === 0) return 0;
 
     const availableTypes = [...packagingTypes].sort((a, b) => a.volume - b.volume);
@@ -61,7 +58,7 @@ export const calculateDiscountAmountLogic = (
     const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
     
     if (!dc) return { success: false, error: 'Neplatný kód' };
-    if (!dc.enabled) return { success: false, error: 'Neplatný kód' }; // Same generic error for user
+    if (!dc.enabled) return { success: false, error: 'Neplatný kód' }; 
     
     const actualUsage = allOrders.filter(o => o.status !== OrderStatus.CANCELLED && o.appliedDiscounts?.some(ad => ad.code === dc.code)).length;
     if (dc.maxUsage > 0 && actualUsage >= dc.maxUsage) return { success: false, error: 'Kód již byl vyčerpán' };
@@ -103,64 +100,49 @@ export const calculateDailyLoad = (
     products: Product[],
     settings: GlobalSettings
 ): DailyLoadResult => {
-    // Initialize loads
-    const load: Record<string, number> = {};      // Standard Load
-    const eventLoad: Record<string, number> = {}; // Event Load
+    const load: Record<string, number> = {};      
+    const eventLoad: Record<string, number> = {}; 
     
-    // Init keys based on settings categories + hardcoded enum to be safe
     const allCategories = new Set([...settings.categories.map(c => c.id), ...Object.values(ProductCategory)]);
     allCategories.forEach(c => {
         load[c] = 0;
         eventLoad[c] = 0;
     });
     
-    // Global Trackers for the entire day
-    // 1. Independent products: Counted once per ProductID per day
-    // 2. Capacity Groups: Aggregated by Capacity Category ID (max overhead)
     const usedProductIds = new Set<string>(); 
     const ccGroups = new Map<string, { maxOverhead: number, maxOverheadCategory: string, hasEvent: boolean }>();
 
-    // FIRST PASS: Aggregate Everything
     orders.forEach(order => {
         if (!order.items) return;
 
         order.items.forEach(item => {
             const productDef = products.find(p => String(p.id) === String(item.id));
             
-            // Workload (Variable) - always add
             const workload = Number(productDef?.workload) || Number(item.workload) || 0;
             const quantity = item.quantity || 0;
-            
-            // Overhead (Fixed per day/group)
             const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
             
             const cat = item.category || productDef?.category || 'unknown';
             const isEvent = !!productDef?.isEventProduct;
             const capCatId = productDef?.capacityCategoryId;
 
-            // 1. Variable Workload
             if (isEvent) {
                 eventLoad[cat] = (eventLoad[cat] || 0) + (workload * quantity);
             } else {
                 load[cat] = (load[cat] || 0) + (workload * quantity);
             }
 
-            // 2. Prepare Overhead Calculation (Global Scope)
             if (capCatId) {
-                // Group Logic
                 const group = ccGroups.get(capCatId) || { maxOverhead: 0, maxOverheadCategory: cat, hasEvent: false };
                 if (overhead > group.maxOverhead) {
                     group.maxOverhead = overhead;
-                    group.maxOverheadCategory = cat; // Attributed to the category of the item with max overhead
+                    group.maxOverheadCategory = cat; 
                 }
                 if (isEvent) {
-                    group.hasEvent = true; // Mark group as containing event product
+                    group.hasEvent = true; 
                 }
                 ccGroups.set(capCatId, group);
             } else {
-                // Independent Product Logic
-                // We assume independent products overheads are separated by standard vs event purely by the item type
-                // But counted ONCE per day per product ID.
                 if (!usedProductIds.has(String(item.id))) {
                     if (isEvent) {
                         eventLoad[cat] = (eventLoad[cat] || 0) + overhead;
@@ -173,13 +155,79 @@ export const calculateDailyLoad = (
         });
     });
 
-    // SECOND PASS: Distribute Capacity Group Overheads
     ccGroups.forEach((group) => {
-        // RULE: If group contains ANY event product, the overhead goes to Event Capacity
         const targetMap = group.hasEvent ? eventLoad : load;
         const cat = group.maxOverheadCategory;
         targetMap[cat] = (targetMap[cat] || 0) + group.maxOverhead;
     });
 
     return { load, eventLoad, usedProductIds };
+};
+
+/**
+ * Calculates available dates for a specific Event Product.
+ * Returns valid dates ONLY if:
+ * 1. Date is in the future (respecting lead time)
+ * 2. Date is a valid Event Slot
+ * 3. Adding the Minimum Order Quantity of this product does NOT exceed the Event Capacity for that slot.
+ */
+export const getAvailableEventDatesLogic = (
+    product: Product,
+    settings: GlobalSettings,
+    orders: Order[],
+    allProducts: Product[],
+    todayDate: Date = new Date() // Allow injecting today for testing
+): string[] => {
+    if (!product.isEventProduct) return [];
+    
+    const slots = settings.eventSlots || [];
+    
+    // Normalize today to start of day
+    const today = new Date(todayDate);
+    today.setHours(0,0,0,0);
+    
+    const leadTime = product.leadTimeDays || 0;
+    const minDate = new Date(today);
+    minDate.setDate(minDate.getDate() + leadTime);
+
+    return slots
+      .filter(s => {
+          // 1. Date Check (Future & Lead Time)
+          const slotDate = new Date(s.date);
+          slotDate.setHours(0,0,0,0);
+          if (slotDate < minDate) return false;
+
+          // 2. Capacity Check
+          const catId = product.category;
+          const limit = s.capacityOverrides?.[catId] ?? 0;
+          
+          // If limit is 0, category is closed for this event
+          if (limit <= 0) return false;
+
+          // Get current load for this specific date
+          const relevantOrders = orders.filter(o => o.deliveryDate === s.date && o.status !== OrderStatus.CANCELLED);
+          const { eventLoad } = calculateDailyLoad(relevantOrders, allProducts, settings);
+          
+          const currentLoad = eventLoad[catId] || 0;
+          
+          // Calculate potential impact of this product (Min Order Qty)
+          // We must also account for Overhead if it's not already "paid" for by other items in the same group?
+          // For simplicity in "Can I order?", we assume worst case: full workload + full overhead 
+          // (unless sophisticated logic checks if overhead is shared with existing load, which is hard without cart context).
+          // Here we check: Workload * MinQty. Overhead is harder to predict without cart context, so we check Variable Load primarily.
+          
+          const minQty = product.minOrderQuantity || 1;
+          const productWorkload = (product.workload || 0) * minQty;
+          
+          // Note: Ideally we should also check overhead, but overhead depends on what's already in the cart or order.
+          // For "Menu Display" logic, checking variable workload fit is usually sufficient proxy.
+          // If strict: Add overhead.
+          const productOverhead = product.workloadOverhead || 0;
+
+          // Simplified check: Does (Current + New Variable + New Overhead) <= Limit?
+          // This is conservative. It might return false if overhead is actually shared, but safe.
+          return (currentLoad + productWorkload + productOverhead) <= limit;
+      })
+      .map(s => s.date)
+      .sort();
 };

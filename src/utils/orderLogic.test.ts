@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'vitest';
-import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, calculateDailyLoad } from './orderLogic';
+import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, calculateDailyLoad, getAvailableEventDatesLogic } from './orderLogic';
 import { PackagingType, CartItem, DiscountCode, DiscountType, Order, OrderStatus, Product, ProductCategory, GlobalSettings } from '../types';
 import { DEFAULT_SETTINGS } from '../constants';
 
@@ -32,8 +32,7 @@ describe('Packaging Logic', () => {
     });
 });
 
-describe('Capacity & Load Logic (calculateDailyLoad)', () => {
-    // Setup Mock Data
+describe('Capacity & Load Logic', () => {
     const mockSettings: GlobalSettings = {
         ...DEFAULT_SETTINGS,
         categories: [
@@ -41,7 +40,6 @@ describe('Capacity & Load Logic (calculateDailyLoad)', () => {
         ]
     };
 
-    // Helper to create product
     const createProduct = (id: string, isEvent: boolean, capCat?: string, workload = 10, overhead = 100): Product => ({
         id,
         name: `Prod ${id}`,
@@ -51,18 +49,17 @@ describe('Capacity & Load Logic (calculateDailyLoad)', () => {
         workload,
         workloadOverhead: overhead,
         description: '', price: 100, unit: 'ks', images: [], allergens: [], leadTimeDays: 1, shelfLifeDays: 1, volume: 0,
-        visibility: { online: true, store: true, stand: true }, commentsAllowed: false, vatRateInner: 12, vatRateTakeaway: 12
+        visibility: { online: true, store: true, stand: true }, commentsAllowed: false, vatRateInner: 12, vatRateTakeaway: 12,
+        minOrderQuantity: 1
     });
 
     const products: Product[] = [
         createProduct('p_std_indep', false, undefined, 10, 50),
         createProduct('p_evt_indep', true, undefined, 10, 50),
-        
         createProduct('p_std_group1', false, 'GRP1', 10, 100),
-        createProduct('p_std_group2', false, 'GRP1', 10, 200), // Higher overhead in same group
-        
+        createProduct('p_std_group2', false, 'GRP1', 10, 200), 
         createProduct('p_mix_std', false, 'GRP_MIX', 10, 100),
-        createProduct('p_mix_evt', true, 'GRP_MIX', 10, 200), // Event product in same group
+        createProduct('p_mix_evt', true, 'GRP_MIX', 10, 200), 
     ];
 
     it('should calculate independent products correctly (Event vs Standard)', () => {
@@ -70,13 +67,8 @@ describe('Capacity & Load Logic (calculateDailyLoad)', () => {
             { items: [{ id: 'p_std_indep', quantity: 1, category: 'warm' }] },
             { items: [{ id: 'p_evt_indep', quantity: 1, category: 'warm' }] }
         ];
-
         const result = calculateDailyLoad(orders, products, mockSettings);
-
-        // Standard: 10 (workload) + 50 (overhead) = 60
         expect(result.load['warm']).toBe(60);
-        
-        // Event: 10 (workload) + 50 (overhead) = 60
         expect(result.eventLoad['warm']).toBe(60);
     });
 
@@ -85,36 +77,96 @@ describe('Capacity & Load Logic (calculateDailyLoad)', () => {
             { items: [{ id: 'p_std_group1', quantity: 1, category: 'warm' }] },
             { items: [{ id: 'p_std_group2', quantity: 1, category: 'warm' }] }
         ];
-
         const result = calculateDailyLoad(orders, products, mockSettings);
-
-        // Variable Workload: 10 (p1) + 10 (p2) = 20
-        // Overhead: MAX(100, 200) = 200 (Single charge for the group per day)
-        // Total Standard: 220
         expect(result.load['warm']).toBe(220);
         expect(result.eventLoad['warm']).toBe(0);
     });
 
     it('should apply overhead to EVENT load if ANY product in group is Event', () => {
         const orders: any[] = [
-            { items: [{ id: 'p_mix_std', quantity: 1, category: 'warm' }] }, // Standard Item
-            { items: [{ id: 'p_mix_evt', quantity: 1, category: 'warm' }] }  // Event Item
+            { items: [{ id: 'p_mix_std', quantity: 1, category: 'warm' }] }, 
+            { items: [{ id: 'p_mix_evt', quantity: 1, category: 'warm' }] }  
         ];
-
         const result = calculateDailyLoad(orders, products, mockSettings);
-
-        // Variable Workload:
-        // Standard: 10
-        // Event: 10
-        
-        // Overhead: 
-        // Group GRP_MIX has max overhead 200.
-        // Since it contains an Event product, overhead goes to Event Load.
-        
-        // Total Standard: 10
         expect(result.load['warm']).toBe(10);
-        
-        // Total Event: 10 (variable) + 200 (overhead) = 210
         expect(result.eventLoad['warm']).toBe(210);
+    });
+});
+
+describe('Event Product Availability (getAvailableEventDatesLogic)', () => {
+    const mockSettings: GlobalSettings = {
+        ...DEFAULT_SETTINGS,
+        categories: [{ id: 'warm', name: 'Teplý', order: 1, enabled: true }],
+        eventSlots: [
+            { date: '2025-01-10', capacityOverrides: { 'warm': 100 } }, // Valid Slot
+            { date: '2025-01-11', capacityOverrides: { 'warm': 10 } },  // Low Capacity Slot
+            { date: '2025-01-01', capacityOverrides: { 'warm': 100 } }  // Past Slot
+        ]
+    };
+
+    const products: Product[] = [
+        {
+            id: 'evt_prod',
+            name: 'Event Product',
+            category: 'warm',
+            isEventProduct: true,
+            workload: 10,
+            workloadOverhead: 5,
+            leadTimeDays: 2,
+            minOrderQuantity: 1,
+            description: '', price: 100, unit: 'ks', images: [], allergens: [], shelfLifeDays: 1, volume: 0,
+            visibility: { online: true, store: true, stand: true }, commentsAllowed: false, vatRateInner: 12, vatRateTakeaway: 12
+        }
+    ];
+
+    // Mock Date: 2025-01-05
+    const today = new Date('2025-01-05T10:00:00Z');
+
+    it('should return future event dates where capacity is sufficient', () => {
+        // No orders yet
+        const dates = getAvailableEventDatesLogic(products[0], mockSettings, [], products, today);
+        
+        // 2025-01-01 is past (Lead time 2 days -> min date 2025-01-07)
+        // 2025-01-10 is valid
+        // 2025-01-11 is valid (Capacity 10 >= 10+5? No, wait. 10 workload + 5 overhead = 15 required. Limit 10. So it should fail!)
+        
+        // Wait, logic says: (currentLoad + productWorkload + productOverhead) <= limit
+        // Slot 11: 0 + 10 + 5 = 15. Limit 10. Should fail.
+        
+        expect(dates).toContain('2025-01-10');
+        expect(dates).not.toContain('2025-01-11');
+        expect(dates).not.toContain('2025-01-01');
+    });
+
+    it('should exclude dates where orders fill the capacity', () => {
+        // Create an order that fills the 2025-01-10 slot
+        // Limit 100.
+        // Existing Order: 90 workload.
+        // New Product needs 15.
+        // 90 + 15 = 105 > 100. Should be excluded.
+        
+        const existingOrder: any = {
+            id: 'o1',
+            deliveryDate: '2025-01-10',
+            status: 'confirmed',
+            items: [{ id: 'evt_prod', quantity: 9, category: 'warm' }] // 9 * 10 = 90 workload. + 5 overhead = 95 total used.
+        };
+
+        // Recalculate usage:
+        // Item: 9 qty * 10 workload = 90.
+        // Overhead: 5.
+        // Total Used: 95.
+        // Remaining: 5.
+        // Needed for new: 10 + 5 = 15.
+        // 95 + 15 = 110 > 100. Fail.
+
+        const dates = getAvailableEventDatesLogic(products[0], mockSettings, [existingOrder], products, today);
+        expect(dates).not.toContain('2025-01-10');
+    });
+
+    it('should respect lead time', () => {
+        const p = { ...products[0], leadTimeDays: 10 }; // Min date = Jan 15
+        const dates = getAvailableEventDatesLogic(p, mockSettings, [], products, today);
+        expect(dates).toHaveLength(0); // 10th and 11th are too soon
     });
 });

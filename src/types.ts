@@ -246,7 +246,8 @@ export interface Order {
   createdAt: string;
   note?: string;
   invoiceUrl?: string;
-  companyDetailsSnapshot?: CompanyDetails;
+  companyDetailsSnapshot?: CompanyDetails; // Snapshot at creation (Proforma)
+  deliveryCompanyDetailsSnapshot?: CompanyDetails; // Snapshot at delivery (Final Invoice)
   language: Language;
   pickupLocationId?: string; 
   finalInvoiceDate?: string; 
@@ -268,7 +269,6 @@ export interface DayConfig {
   capacityOverrides?: Partial<CategoryCapacities>;
 }
 
-// NEW: Event Slot Definition
 export interface EventSlot {
   date: string; // YYYY-MM-DD
   capacityOverrides: CategoryCapacities; // Specific capacities for this event day
@@ -282,7 +282,7 @@ export interface GlobalSettings {
   categories: Category[]; 
   capacityCategories: CapacityCategory[]; 
   defaultCapacities: CategoryCapacities;
-  eventSlots: EventSlot[]; // NEW: List of event days
+  eventSlots: EventSlot[]; 
   companyDetails: CompanyDetails;
   paymentMethods: PaymentMethodConfig[];
   deliveryRegions: DeliveryRegion[];
@@ -307,8 +307,23 @@ export interface BackupData {
 }
 
 export interface CookieSettings {
-  essential: boolean; // Always true
+  essential: boolean; 
   analytics: boolean;
   marketing: boolean;
   timestamp: string;
+}
+
+export interface OrdersSearchResult {
+  orders: Order[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export type DataSourceMode = 'local' | 'api';
+
+export interface ImportResult {
+  success: boolean;
+  collisions?: string[];
+  message?: string;
 }
