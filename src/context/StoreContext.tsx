@@ -8,6 +8,7 @@ import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, calculateDail
 import { removeDiacritics, formatDate, calculateCzIban } from '../utils/helpers';
 import { useAuth } from '../hooks/useAuth';
 import { useCart } from '../hooks/useCart';
+import { generateInvoicePdf } from '../utils/pdfGenerator'; // NEW IMPORT
 
 interface CheckResult {
   allowed: boolean;
@@ -808,10 +809,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
+  
+  // UPDATED: Using new utility for PDF generation
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => { 
-      const doc = new jsPDF(); 
-      doc.text(`Faktura ${o.id} (${type})`, 10, 10); 
-      doc.save(`faktura_${o.id}.pdf`); 
+      try {
+          // Visual feedback that something is happening
+          showNotify('Generuji fakturu...', 'success', false);
+          await generateInvoicePdf(o, type, settings);
+          dismissNotification(); // Hide 'generating' message
+      } catch (e) {
+          console.error("PDF Gen Error:", e);
+          showNotify('Chyba při generování PDF faktury.', 'error');
+      }
   };
   
   const checkOrderRestoration = (o: Order) => ({ valid: true, invalidCodes: [] }); 
