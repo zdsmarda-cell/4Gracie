@@ -106,10 +106,10 @@ interface StoreContextType {
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
   addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
   
-  searchUsers: (filters: { search: string }) => Promise<User[]>; // Added
+  searchUsers: (filters: { search: string }) => Promise<User[]>; 
   
   orders: Order[];
-  searchOrders: (filters: any) => Promise<{ orders: Order[], total: number }>; // Added
+  searchOrders: (filters: any) => Promise<{ orders: Order[], total: number }>;
   addOrder: (order: Order) => Promise<boolean>;
   updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
   updateOrder: (order: Order, sendNotify?: boolean, isUserEdit?: boolean) => Promise<boolean>;
@@ -158,7 +158,7 @@ interface StoreContextType {
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
   uploadImage: (base64: string, name: string) => Promise<string>;
-  getImageUrl: (path: string) => string; // Added
+  getImageUrl: (path: string) => string;
   
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
@@ -234,11 +234,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setDataSourceState(mode);
   };
 
-  const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
+  // Stable References
+  const showNotify = useCallback((message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
     setGlobalNotification({ message, type, autoClose });
-  };
+  }, []);
 
-  const getFullApiUrl = (endpoint: string) => {
+  const getFullApiUrl = useCallback((endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env || {};
     if (env.DEV) return endpoint;
@@ -251,16 +252,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     return `${baseUrl}${cleanEndpoint}`;
-  };
+  }, []);
 
-  const getImageUrl = (path: string) => {
+  const getImageUrl = useCallback((path: string) => {
       if (!path) return '';
       if (path.startsWith('data:')) return path;
       if (path.startsWith('http')) return path;
       return getFullApiUrl(path);
-  };
+  }, [getFullApiUrl]);
 
-  const apiCall = async (endpoint: string, method: string, body?: any) => {
+  const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
     setIsOperationPending(true);
     const timeoutPromise = new Promise((_, reject) => {
@@ -299,7 +300,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } finally {
         setIsOperationPending(false); 
     }
-  };
+  }, [getFullApiUrl, showNotify]);
 
   const fetchDataRef = useRef<() => Promise<void>>(async () => {});
   
@@ -365,7 +366,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       } finally {
         setIsLoading(false);
       }
-  }, [dataSource, setAllUsers, INITIAL_USERS]); // Added deps
+  }, [dataSource, setAllUsers, INITIAL_USERS, apiCall]); // Added apiCall dep
 
   useEffect(() => {
       fetchDataRef.current = fetchData;
@@ -373,7 +374,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => {
     fetchData();
-  }, [dataSource, fetchData]); // Added fetchData to deps
+  }, [dataSource, fetchData]);
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   // User session is handled by useAuth via local storage sync
@@ -441,7 +442,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart, discountCodes]);
 
-  const searchOrders = async (filters: any) => {
+  const searchOrders = useCallback(async (filters: any) => {
       if (dataSource === 'api') {
           const queryString = new URLSearchParams(filters).toString();
           const res = await apiCall(`/api/orders?${queryString}`, 'GET');
@@ -462,9 +463,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           const start = (page - 1) * limit;
           return { orders: filtered.slice(start, start + limit), total: filtered.length };
       }
-  };
+  }, [dataSource, apiCall, orders]);
 
-  const searchUsers = async (filters: { search: string }): Promise<User[]> => {
+  const searchUsers = useCallback(async (filters: { search: string }): Promise<User[]> => {
       if (dataSource === 'api') {
           const queryString = new URLSearchParams(filters).toString();
           const res = await apiCall(`/api/users?${queryString}`, 'GET');
@@ -476,7 +477,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               u.email.toLowerCase().includes(term)
           );
       }
-  };
+  }, [dataSource, apiCall, allUsers]);
 
   const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
