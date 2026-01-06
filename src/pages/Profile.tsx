@@ -766,6 +766,20 @@ export const Profile: React.FC = () => {
                            {Object.values(Language).map(lang => <option key={lang} value={lang}>{lang.toUpperCase()}</option>)}
                          </select>
                        </div>
+
+                       {/* PAYMENT METHOD SELECTOR (USER) */}
+                       <div>
+                            <label className="text-[9px] font-bold text-gray-400 uppercase block mb-1">{t('checkout.payment')}</label>
+                            <select
+                                className="w-full border rounded p-2 text-sm"
+                                value={editingOrder.paymentMethod}
+                                onChange={e => setEditingOrder({...editingOrder, paymentMethod: e.target.value as PaymentMethod})}
+                            >
+                                {settings.paymentMethods.filter(pm => pm.enabled).map(pm => (
+                                    <option key={pm.id} value={pm.id}>{pm.label}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
                  </div>
                  <div className="space-y-4">
@@ -808,7 +822,7 @@ export const Profile: React.FC = () => {
                       <button onClick={() => setIsAddProductModalOpen(true)} className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-xs font-bold text-gray-600 border-t">+ Přidat produkt</button>
                     </div>
                     
-                    {/* FEES SUMMARY */}
+                    {/* FEES & DISCOUNT SUMMARY */}
                     <div className="bg-gray-50 p-4 rounded-xl space-y-2">
                         <div className="flex justify-between text-xs text-gray-500">
                             <span>Zboží:</span>

@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Order, OrderStatus, DeliveryType, Language, Product } from '../../types';
+import { Order, OrderStatus, DeliveryType, Language, Product, PaymentMethod } from '../../types';
 import { Pagination } from '../../components/Pagination';
-import { FileText, ChevronDown, QrCode, Edit, Zap, X, Save, AlertCircle, FileCheck, Loader2, Minus, Plus, ImageIcon, Trash2, Search, Tag, Check, AlertTriangle, Filter } from 'lucide-react';
+import { FileText, ChevronDown, QrCode, Edit, Zap, X, Save, AlertCircle, FileCheck, Loader2, Minus, Plus, ImageIcon, Trash2, Search, Tag, Check, AlertTriangle, Filter, CreditCard } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 import * as XLSX from 'xlsx';
 
@@ -30,7 +30,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     
     const [filters, setFilters] = useState({ 
         id: '', dateFrom: '', dateTo: '', customer: '', status: '', 
-        ic: '', isEvent: '' 
+        ic: '', isEvent: '', isPaid: '' 
     });
 
     // Custom Filter State
@@ -149,7 +149,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         // 1. Reset local state
         setFilters({ 
             id: '', dateFrom: '', dateTo: '', customer: '', status: '', 
-            ic: '', isEvent: '' 
+            ic: '', isEvent: '', isPaid: '' 
         });
         setCurrentPage(1); // Reset pagination
         
@@ -301,7 +301,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
             <div className="flex justify-between mb-4">
                 <div className="flex gap-2">
                     <button onClick={exportToAccounting} className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm"><FileText size={16} className="mr-2 text-green-600" /> {t('admin.export')}</button>
-                    {(filters.dateFrom || filters.id || filters.customer || filters.isEvent || filters.status) && (
+                    {(filters.dateFrom || filters.id || filters.customer || filters.isEvent || filters.status || filters.isPaid) && (
                         <button onClick={handleClearAllFilters} className="text-xs text-red-500 hover:underline px-2">Zrušit filtry</button>
                     )}
                 </div>
@@ -335,24 +335,32 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
             </div>
 
             {/* Filter Bar */}
-            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
-                <div>
+            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-7 gap-4 mb-4">
+                <div className="col-span-1">
                     <label className="text-xs font-bold text-gray-400 block mb-1">ID</label>
                     <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={filters.id} onChange={e => setFilters({...filters, id: e.target.value})} />
                 </div>
-                <div>
+                <div className="col-span-1">
                     <label className="text-xs font-bold text-gray-400 block mb-1">Datum Od</label>
                     <input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateFrom} onChange={e => setFilters({...filters, dateFrom: e.target.value})} />
                 </div>
-                <div>
+                <div className="col-span-1">
                     <label className="text-xs font-bold text-gray-400 block mb-1">Datum Do</label>
                     <input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateTo} onChange={e => setFilters({...filters, dateTo: e.target.value})} />
                 </div>
-                <div>
+                <div className="col-span-1">
                     <label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label>
                     <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={filters.customer} onChange={e => setFilters({...filters, customer: e.target.value})} />
                 </div>
-                <div>
+                <div className="col-span-1">
+                    <label className="text-xs font-bold text-gray-400 block mb-1">{t('filter.payment')}</label>
+                    <select className="w-full border rounded p-2 text-xs bg-white" value={filters.isPaid} onChange={e => setFilters({...filters, isPaid: e.target.value})}>
+                        <option value="">{t('filter.all')}</option>
+                        <option value="yes">{t('common.yes')}</option>
+                        <option value="no">{t('common.no')}</option>
+                    </select>
+                </div>
+                <div className="col-span-1">
                     <label className="text-xs font-bold text-gray-400 block mb-1">Stav</label>
                     <div className="relative">
                         <button 
@@ -388,8 +396,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                         )}
                     </div>
                 </div>
-                <div>
-                    <label className="text-xs font-bold text-gray-400 block mb-1">Akce (Event)</label>
+                <div className="col-span-1">
+                    <label className="text-xs font-bold text-gray-400 block mb-1">Akce</label>
                     <select className="w-full border rounded p-2 text-xs bg-white" value={filters.isEvent} onChange={e => setFilters({...filters, isEvent: e.target.value})}>
                         <option value="">Vše</option>
                         <option value="yes">Ano (Jen akční)</option>
@@ -648,6 +656,33 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                         <select className="w-full border rounded p-2 text-sm" value={editingOrder.language || Language.CS} onChange={e => setEditingOrder({...editingOrder, language: e.target.value as Language})}>
                                             {Object.values(Language).map(lang => <option key={lang} value={lang}>{lang.toUpperCase()}</option>)}
                                         </select>
+                                    </div>
+
+                                    {/* PAYMENT STATUS & METHOD TOGGLE */}
+                                    <div className="pt-4 border-t mt-2">
+                                        <label className="text-[9px] font-bold text-gray-400 uppercase block mb-2">Platba</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <select 
+                                                    className="w-full border rounded p-2 text-xs" 
+                                                    value={editingOrder.paymentMethod} 
+                                                    onChange={e => setEditingOrder({...editingOrder, paymentMethod: e.target.value as PaymentMethod})}
+                                                >
+                                                    {settings.paymentMethods.map(pm => (
+                                                        <option key={pm.id} value={pm.id}>{pm.label}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <label className={`flex items-center justify-center gap-2 p-1.5 border rounded cursor-pointer transition ${editingOrder.isPaid ? 'bg-green-100 border-green-300 text-green-800' : 'bg-white hover:bg-gray-50 text-gray-600'}`}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="rounded text-green-600 focus:ring-green-600"
+                                                    checked={editingOrder.isPaid} 
+                                                    onChange={e => setEditingOrder({...editingOrder, isPaid: e.target.checked})} 
+                                                />
+                                                <span className="text-xs font-bold">{editingOrder.isPaid ? 'ZAPLACENO' : 'Nezaplaceno'}</span>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

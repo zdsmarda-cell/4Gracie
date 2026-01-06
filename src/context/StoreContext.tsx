@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, EventSlot, OrdersSearchResult, CookieSettings, DataSourceMode } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
@@ -84,7 +85,7 @@ interface StoreContextType {
   toggleUserBlock: (userId: string) => Promise<boolean>;
   sendPasswordReset: (email: string) => Promise<{ success: boolean; message: string }>;
   resetPasswordByToken: (token: string, newPass: string) => Promise<PasswordChangeResult>;
-  changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
+  changePassword: (oldPass: string, newPass: string) => Promise<PasswordChangeResult>;
   addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
   searchUsers: (filters: any) => Promise<User[]>;
   
@@ -586,6 +587,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                       return false;
                   }
               }
+
+              if (filters.isPaid === 'yes' && !o.isPaid) return false;
+              if (filters.isPaid === 'no' && o.isPaid) return false;
 
               if (filters.dateFrom && o.deliveryDate < filters.dateFrom) return false;
               if (filters.dateTo && o.deliveryDate > filters.dateTo) return false;

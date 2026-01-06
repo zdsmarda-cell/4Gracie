@@ -6,7 +6,7 @@ import { queueOrderEmail } from '../services/email.js'; // CHANGED
 const router = express.Router();
 
 router.get('/', withDb(async (req, res, db) => {
-    const { id, dateFrom, dateTo, userId, status, customer, isEvent, page = 1, limit = 50 } = req.query;
+    const { id, dateFrom, dateTo, userId, status, customer, isEvent, isPaid, page = 1, limit = 50 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     let query = 'SELECT full_json, final_invoice_date FROM orders WHERE 1=1';
     const params = [];
@@ -23,6 +23,10 @@ router.get('/', withDb(async (req, res, db) => {
             params.push(statuses); 
         }
     }
+    
+    // Payment Status Filter
+    if (isPaid === 'yes') { query += ' AND is_paid = 1'; }
+    if (isPaid === 'no') { query += ' AND is_paid = 0'; }
     
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
     
