@@ -109,7 +109,10 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     doc.text(comp.street || '', 14, yPos); yPos += 5;
     doc.text(`${comp.zip || ''} ${comp.city || ''}`, 14, yPos); yPos += 5;
     doc.text(`IČ: ${comp.ic || ''}`, 14, yPos); yPos += 5;
-    if(comp.dic) doc.text(`DIČ: ${comp.dic}`, 14, yPos);
+    if(comp.dic) { doc.text(`DIČ: ${comp.dic}`, 14, yPos); yPos += 5; }
+    if(comp.bankAccount) { doc.text(`Účet: ${comp.bankAccount}`, 14, yPos); yPos += 5; }
+    const vs = order.id.replace(/\D/g, '');
+    if(vs) { doc.text(`Var. symbol: ${vs}`, 14, yPos); yPos += 5; }
 
     yPos = 61;
     doc.text(order.billingName || order.userName || 'Zákazník', 110, yPos); yPos += 5;
