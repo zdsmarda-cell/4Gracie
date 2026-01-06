@@ -327,3 +327,14 @@ export interface ImportResult {
   collisions?: string[];
   message?: string;
 }
+
+export interface EmailLog {
+    id: number;
+    type: string;
+    recipient_email: string;
+    subject: string;
+    status: 'pending' | 'processing' | 'sent' | 'error';
+    error_message?: string;
+    created_at: string;
+    processed_at?: string;
+}

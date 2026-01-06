@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
-import { initEmail } from './services/email.js';
+import { initEmail, startEmailWorker } from './services/email.js';
 
 // ROUTES IMPORTS
 import authRoutes from './routes/users.js'; 
@@ -57,7 +57,7 @@ app.use('/api/users', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
-app.use('/api/admin', adminRoutes); // Upload & Import
+app.use('/api/admin', adminRoutes); // Upload & Import & Emails
 app.use('/api/admin', aiRoutes); // Translation (/translate)
 app.use('/api/admin/stats', statsRoutes); // Stats (/load)
 app.use('/api', settingsRoutes); // Settings, Discounts, Calendar
@@ -77,6 +77,19 @@ const initDb = async () => {
         await db.query(`CREATE TABLE IF NOT EXISTS discounts (id VARCHAR(50) PRIMARY KEY, code VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         await db.query(`CREATE TABLE IF NOT EXISTS calendar_exceptions (date VARCHAR(20) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         
+        // EMAIL QUEUE TABLE
+        await db.query(`CREATE TABLE IF NOT EXISTS email_queue (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            type VARCHAR(50),
+            recipient_email VARCHAR(255),
+            subject VARCHAR(255),
+            status ENUM('pending', 'processing', 'sent', 'error') DEFAULT 'pending',
+            error_message TEXT,
+            payload JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processed_at TIMESTAMP NULL
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
         try { await db.query('SELECT full_json FROM products LIMIT 1'); } 
         catch (e) { await db.query('ALTER TABLE products ADD COLUMN full_json JSON'); }
 
@@ -91,8 +104,9 @@ const initDb = async () => {
 
 // --- START SERVER ---
 const startServer = async () => {
-  initDb();
+  await initDb();
   await initEmail();
+  startEmailWorker(); // START THE WORKER
 
   const sslKey = process.env.SSL_KEY_PATH;
   const sslCert = process.env.SSL_CERT_PATH; 

@@ -4,7 +4,7 @@ import { withDb, parseJsonCol } from '../db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { sendEventNotification } from '../services/email.js';
+import { sendEventNotification } from '../services/email.js'; // This now queues internally
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -58,7 +58,7 @@ router.post('/import', withDb(async (req, res, db) => {
     }
 }));
 
-// NOTIFY EVENT
+// NOTIFY EVENT (Queues emails now)
 router.post('/notify-event', withDb(async (req, res, db) => {
     const { date } = req.body;
     if (!date) return res.status(400).json({ error: 'Date required' });
@@ -82,7 +82,7 @@ router.post('/notify-event', withDb(async (req, res, db) => {
             return res.json({ success: true, message: 'No active event products found' });
         }
 
-        // 3. Send Emails
+        // 3. Send Emails (Queues them)
         await sendEventNotification(date, eventProducts, recipients);
 
         res.json({ success: true, count: recipients.length });
@@ -90,6 +90,30 @@ router.post('/notify-event', withDb(async (req, res, db) => {
         console.error("Notify Event Error:", e);
         res.status(500).json({ error: e.message });
     }
+}));
+
+// EMAIL MANAGEMENT ROUTES
+router.get('/emails', withDb(async (req, res, db) => {
+    const { status, limit = 100 } = req.query;
+    let query = "SELECT * FROM email_queue WHERE 1=1";
+    const params = [];
+    if (status) {
+        query += " AND status = ?";
+        params.push(status);
+    }
+    query += " ORDER BY created_at DESC LIMIT ?";
+    params.push(Number(limit));
+    
+    const [rows] = await db.query(query, params);
+    res.json({ success: true, emails: rows });
+}));
+
+router.post('/emails/retry', withDb(async (req, res, db) => {
+    const { ids } = req.body; // array of IDs
+    if (!ids || ids.length === 0) return res.status(400).json({ error: "No IDs provided" });
+    
+    await db.query("UPDATE email_queue SET status = 'pending', error_message = NULL WHERE id IN (?)", [ids]);
+    res.json({ success: true, count: ids.length });
 }));
 
 export default router;

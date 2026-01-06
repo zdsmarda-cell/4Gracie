@@ -612,7 +612,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'filter.is_event': 'Show Event Only',
     
     'calendar.months': 'January,February,March,April,May,June,July,August,September,October,November,December',
-    'calendar.days': 'Mo,Tu,We,Th,Fr,Sa,Su',
+    'calendar.days': 'Mo,Di,Mi,Do,Fr,Sa,So',
 
     'confirm.cancel_order': 'Are you sure you want to cancel this order?',
     'confirm.delete_exception': 'Are you sure you want to delete this exception?',
@@ -822,7 +822,6 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.fill_code': 'Füllen Sie den Code aus.',
     'admin.event_add': 'Eventdatum hinzufügen',
     'admin.event_capacities': 'Eventkapazitäten',
-    'filter.is_event': 'Nur Events anzeigen',
     
     'notification.added_to_cart': 'Produkt "{name}" in den Warenkorb gelegt',
     'notification.saved': 'Gespeichert',
@@ -924,6 +923,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'filter.payment': 'Bezahlt',
     'filter.ic': 'Firmen-ID',
     'filter.note': 'Notiz',
+    'filter.is_event': 'Nur Events anzeigen',
     
     'calendar.months': 'Januar,Februar,März,April,Mai,Juni,Juli,August,September,Oktober,November,Dezember',
     'calendar.days': 'Mo,Di,Mi,Do,Fr,Sa,So',

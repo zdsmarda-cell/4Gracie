@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer';
 import fs from 'fs';
 import path from 'path';
 import { generateInvoicePdf } from './pdf.js';
+import { getDb } from '../db.js'; // Need DB access here
 
 let transporter = null;
 
@@ -26,6 +27,231 @@ export const initEmail = async () => {
     }
 };
 
+// --- ASYNC QUEUE LOGIC ---
+
+export const queueOrderEmail = async (order, type, settings, customStatus = null) => {
+    const db = await getDb();
+    if (!db) return;
+
+    // Determine Recipient (Customer)
+    let customerEmail = null;
+    if (order.userId) {
+        const [u] = await db.query('SELECT email FROM users WHERE id=?', [order.userId]);
+        customerEmail = u[0]?.email;
+    }
+
+    if (!customerEmail) {
+        console.warn(`⚠️ Cannot queue email: No customer email found for Order #${order.id}`);
+        return;
+    }
+
+    const payload = {
+        order,
+        settings,
+        customStatus
+    };
+
+    // 1. Queue Customer Email
+    await db.query(
+        'INSERT INTO email_queue (type, recipient_email, subject, payload, status) VALUES (?, ?, ?, ?, ?)',
+        [`customer_${type}`, customerEmail, `Order #${order.id} - ${type}`, JSON.stringify(payload), 'pending']
+    );
+
+    // 2. Queue Operator Email (if applicable)
+    if ((type === 'created' || type === 'updated') && settings.companyDetails?.email) {
+        await db.query(
+            'INSERT INTO email_queue (type, recipient_email, subject, payload, status) VALUES (?, ?, ?, ?, ?)',
+            [`operator_${type}`, settings.companyDetails.email, `Admin Alert: Order #${order.id}`, JSON.stringify(payload), 'pending']
+        );
+    }
+};
+
+export const startEmailWorker = () => {
+    console.log("⚙️ Starting Email Worker (Interval: 60s)...");
+    
+    const runWorker = async () => {
+        const db = await getDb();
+        if (!db || !transporter) return;
+
+        // Fetch Pending
+        const [rows] = await db.query("SELECT * FROM email_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 10");
+        
+        if (rows.length === 0) return;
+
+        console.log(`⚙️ Processing ${rows.length} queued emails...`);
+
+        for (const row of rows) {
+            // Mark as processing
+            await db.query("UPDATE email_queue SET status = 'processing' WHERE id = ?", [row.id]);
+
+            try {
+                const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+                
+                // Route to specific handler based on type
+                if (row.type.startsWith('customer_')) {
+                    const subtype = row.type.replace('customer_', '');
+                    await processCustomerEmail(row.recipient_email, payload.order, subtype, payload.settings, payload.customStatus);
+                } else if (row.type.startsWith('operator_')) {
+                    const subtype = row.type.replace('operator_', '');
+                    await processOperatorEmail(row.recipient_email, payload.order, subtype, payload.settings);
+                } else if (row.type === 'event_notification') {
+                    await processEventNotification(row.recipient_email, payload.products, payload.date);
+                }
+
+                // Mark as sent
+                await db.query("UPDATE email_queue SET status = 'sent', processed_at = NOW(), error_message = NULL WHERE id = ?", [row.id]);
+                console.log(`✅ Email ID ${row.id} sent successfully.`);
+
+            } catch (err) {
+                console.error(`❌ Email ID ${row.id} failed:`, err.message);
+                await db.query("UPDATE email_queue SET status = 'error', processed_at = NOW(), error_message = ? WHERE id = ?", [err.message, row.id]);
+            }
+        }
+    };
+
+    // Run immediately then interval
+    // setTimeout(runWorker, 5000); 
+    setInterval(runWorker, 60000); // Check every minute
+};
+
+// --- INTERNAL PROCESSORS (Actually send via Transporter) ---
+
+const processCustomerEmail = async (to, order, type, settings, customStatus) => {
+    const lang = order.language || 'cs';
+    const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
+    const attachments = [];
+
+    // Attachments Logic (Same as before)
+    // VOP
+    if (type === 'created' && process.env.VOP_PATH && fs.existsSync(process.env.VOP_PATH)) {
+        attachments.push({ filename: 'VOP.pdf', path: process.env.VOP_PATH });
+    }
+    // Invoice
+    if (type === 'created') {
+        const pdfBuffer = await generateInvoicePdf(order, 'proforma', settings);
+        attachments.push({ filename: `Zalohova_faktura_${order.id}.pdf`, content: pdfBuffer });
+    } else if (type === 'status' && customStatus === 'delivered') {
+        const pdfBuffer = await generateInvoicePdf(order, 'final', settings);
+        attachments.push({ filename: `Danovy_doklad_${order.id}.pdf`, content: pdfBuffer });
+    }
+
+    let subject = '';
+    let messageHtml = '';
+    let title = '';
+
+    if (type === 'created') {
+        subject = `${t.created_subject} #${order.id}`;
+        title = t.created_subject;
+        messageHtml = generateOrderHtml(order, title, "Děkujeme za Vaši objednávku.", lang, settings);
+    } else if (type === 'updated') {
+        subject = `${t.updated_subject} #${order.id}`;
+        title = t.updated_subject;
+        messageHtml = generateOrderHtml(order, title, "Vaše objednávka byla upravena.", lang, settings);
+    } else if (type === 'status') {
+        subject = `${t.status_update_subject} #${order.id}`;
+        title = t.status_update_subject;
+        const localizedStatus = STATUS_TRANSLATIONS[lang]?.[customStatus] || customStatus;
+        const statusMsg = `${t.status_prefix} ${localizedStatus}`;
+        messageHtml = generateOrderHtml(order, title, statusMsg, lang, settings);
+    }
+
+    await transporter.sendMail({
+        from: process.env.EMAIL_FROM,
+        to: to,
+        subject: subject,
+        html: messageHtml,
+        encoding: 'base64',
+        attachments: attachments
+    });
+};
+
+const processOperatorEmail = async (to, order, type, settings) => {
+    const operatorSubject = type === 'created' ? `Nová objednávka #${order.id}` : `Aktualizace objednávky #${order.id}`;
+    const operatorTitle = type === 'created' ? "Nová objednávka" : "Úprava objednávky";
+    const operatorMsg = type === 'created' ? "Přišla nová objednávka z e-shopu." : "Zákazník upravil existující objednávku.";
+    
+    const operatorHtml = generateOrderHtml(order, operatorTitle, operatorMsg, 'cs', settings);
+    
+    await transporter.sendMail({
+        from: process.env.EMAIL_FROM,
+        to: to,
+        subject: operatorSubject,
+        html: operatorHtml,
+        encoding: 'base64'
+    });
+};
+
+const processEventNotification = async (to, products, eventDate) => {
+    const formattedDate = formatDate(eventDate);
+    const subject = `Speciální akce na ${formattedDate} - Objednejte si včas!`;
+    const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || '#';
+
+    // Helper to calculate deadline date
+    const getDeadline = (leadTime) => {
+        const d = new Date(eventDate);
+        d.setDate(d.getDate() - leadTime);
+        return formatDate(d.toISOString());
+    };
+
+    const productsHtml = products.map(p => {
+        const leadTimeMsg = p.leadTimeDays > 0 
+            ? `Objednat do: <strong>${getDeadline(p.leadTimeDays)}</strong>` 
+            : 'Objednat lze ihned';
+            
+        return `
+        <div style="display: flex; gap: 15px; border-bottom: 1px solid #eee; padding: 15px 0; align-items: center;">
+            <div style="width: 80px; height: 80px; flex-shrink: 0; background-color: #f9fafb; border-radius: 8px; overflow: hidden;">
+                ${p.images && p.images[0] 
+                    ? `<img src="${getImgUrl(p.images[0])}" style="width: 100%; height: 100%; object-fit: cover;" alt="${p.name}">` 
+                    : ''}
+            </div>
+            <div>
+                <h3 style="margin: 0 0 5px 0; font-size: 16px; color: #1f2937;">${p.name}</h3>
+                <p style="margin: 0 0 5px 0; font-size: 14px; color: #666;">${p.description || ''}</p>
+                <div style="font-size: 12px; color: #9333ea; font-weight: bold;">
+                    ${leadTimeMsg}
+                </div>
+            </div>
+        </div>
+    `}).join('');
+
+    const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <div style="background-color: #9333ea; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
+                <h1 style="color: white; margin: 0; font-size: 24px;">Nová cateringová akce!</h1>
+                <p style="color: #f3e8ff; margin: 5px 0 0 0; font-size: 16px;">Připravili jsme pro vás speciální nabídku na den ${formattedDate}.</p>
+            </div>
+            
+            <div style="padding: 20px; background-color: #ffffff; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+                <p style="margin-bottom: 20px;">Využijte naši nabídku akčních produktů. Pozor na termíny objednání!</p>
+                
+                ${productsHtml}
+                
+                <div style="text-align: center; margin-top: 30px;">
+                    <a href="${appUrl}" target="_blank" style="display: inline-block; background-color: #9333ea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold;">
+                        Objednat nyní
+                    </a>
+                </div>
+            </div>
+            
+            <div style="text-align: center; margin-top: 20px; font-size: 11px; color: #9ca3af;">
+                Tento email jste obdrželi, protože jste přihlášeni k odběru novinek.<br>
+                Pokud si nepřejete dostávat tato sdělení, můžete změnit nastavení ve svém profilu.
+            </div>
+        </div>
+    `;
+
+    await transporter.sendMail({
+        from: process.env.EMAIL_FROM,
+        to: to,
+        subject: subject,
+        html: htmlContent,
+        encoding: 'base64'
+    });
+};
+
+// --- HELPERS & TEMPLATES ---
+
 const formatDate = (dateStr) => {
     if (!dateStr) return '';
     const d = new Date(dateStr);
@@ -34,97 +260,21 @@ const formatDate = (dateStr) => {
 };
 
 const STATUS_TRANSLATIONS = {
-    cs: {
-        created: 'Zadaná',
-        confirmed: 'Potvrzená',
-        preparing: 'Připravuje se',
-        ready: 'Připravena',
-        on_way: 'Na cestě',
-        delivered: 'Doručena',
-        not_picked_up: 'Nedoručena/Nevyzvednuta',
-        cancelled: 'Stornována'
-    },
-    en: {
-        created: 'Created',
-        confirmed: 'Confirmed',
-        preparing: 'Preparing',
-        ready: 'Ready',
-        on_way: 'On the way',
-        delivered: 'Delivered',
-        not_picked_up: 'Not picked up',
-        cancelled: 'Cancelled'
-    },
-    de: {
-        created: 'Erstellt',
-        confirmed: 'Bestätigt',
-        preparing: 'In Vorbereitung',
-        ready: 'Bereit',
-        on_way: 'Unterwegs',
-        delivered: 'Geliefert',
-        not_picked_up: 'Nicht abgeholt',
-        cancelled: 'Storniert'
-    }
+    cs: { created: 'Zadaná', confirmed: 'Potvrzená', preparing: 'Připravuje se', ready: 'Připravena', on_way: 'Na cestě', delivered: 'Doručena', not_picked_up: 'Nedoručena/Nevyzvednuta', cancelled: 'Stornována' },
+    en: { created: 'Created', confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready', on_way: 'On the way', delivered: 'Delivered', not_picked_up: 'Not picked up', cancelled: 'Cancelled' },
+    de: { created: 'Erstellt', confirmed: 'Bestätigt', preparing: 'In Vorbereitung', ready: 'Bereit', on_way: 'Unterwegs', delivered: 'Geliefert', not_picked_up: 'Nicht abgeholt', cancelled: 'Storniert' }
 };
 
 const TRANSLATIONS = {
-    cs: {
-        created_subject: 'Potvrzení objednávky',
-        updated_subject: 'Úprava objednávky',
-        status_update_subject: 'Změna stavu objednávky',
-        status_prefix: 'Nový stav objednávky:',
-        total: 'Celkem',
-        shipping: 'Doprava',
-        packaging: 'Balné',
-        discount: 'Sleva',
-        items: 'Položky'
-    },
-    en: {
-        created_subject: 'Order Confirmation',
-        updated_subject: 'Order Update',
-        status_update_subject: 'Order Status Update',
-        status_prefix: 'New Order Status:',
-        total: 'Total',
-        shipping: 'Shipping',
-        packaging: 'Packaging',
-        discount: 'Discount',
-        items: 'Items'
-    },
-    de: {
-        created_subject: 'Bestellbestätigung',
-        updated_subject: 'Bestellaktualisierung',
-        status_update_subject: 'Bestellstatusänderung',
-        status_prefix: 'Neuer Bestellstatus:',
-        total: 'Gesamt',
-        shipping: 'Versand',
-        packaging: 'Verpackung',
-        discount: 'Rabatt',
-        items: 'Artikel'
-    }
-};
-
-// Helper for image URLs
-const getImgUrl = (url) => {
-    if (!url) return '';
-    if (url.startsWith('http')) return url;
-    
-    const port = process.env.PORT || 3000;
-    let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost';
-    
-    if (!baseUrl.includes(':', 6)) { 
-        baseUrl = `${baseUrl}:${port}`;
-    }
-    
-    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-    const cleanPath = url.startsWith('/') ? url : `/${url}`;
-    
-    return `${baseUrl}${cleanPath}`;
+    cs: { created_subject: 'Potvrzení objednávky', updated_subject: 'Úprava objednávky', status_update_subject: 'Změna stavu objednávky', status_prefix: 'Nový stav objednávky:', total: 'Celkem', shipping: 'Doprava', packaging: 'Balné', discount: 'Sleva', items: 'Položky' },
+    en: { created_subject: 'Order Confirmation', updated_subject: 'Order Update', status_update_subject: 'Order Status Update', status_prefix: 'New Order Status:', total: 'Total', shipping: 'Shipping', packaging: 'Packaging', discount: 'Discount', items: 'Items' },
+    de: { created_subject: 'Bestellbestätigung', updated_subject: 'Bestellaktualisierung', status_update_subject: 'Bestellstatusänderung', status_prefix: 'Neuer Bestellstatus:', total: 'Gesamt', shipping: 'Versand', packaging: 'Verpackung', discount: 'Rabatt', items: 'Artikel' }
 };
 
 const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) => {
     const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
     const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
     
-    // Construct Address Logic
     let addressDisplay = '';
     if (order.deliveryStreet && order.deliveryCity) {
         addressDisplay = `${order.deliveryName || ''}<br>${order.deliveryStreet}<br>${order.deliveryZip} ${order.deliveryCity}`;
@@ -191,202 +341,18 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
         </div>
     `;
     
-    if (settings.server?.consoleLogging) {
-        console.log("--- DEBUG EMAIL HTML ---");
-        console.log(htmlContent);
-        console.log("------------------------");
-    }
-
     return htmlContent;
 };
 
-// Event Notification Email Logic
+// Queue Event Notification (instead of sending directly)
 export const sendEventNotification = async (eventDate, products, recipients) => {
-    if (!transporter || recipients.length === 0) return;
+    const db = await getDb();
+    if (!db) return;
 
-    const formattedDate = formatDate(eventDate);
-    const subject = `Speciální akce na ${formattedDate} - Objednejte si včas!`;
-    const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || '#';
-
-    // Helper to calculate deadline date
-    const getDeadline = (leadTime) => {
-        const d = new Date(eventDate);
-        d.setDate(d.getDate() - leadTime);
-        return formatDate(d.toISOString());
-    };
-
-    const productsHtml = products.map(p => {
-        const leadTimeMsg = p.leadTimeDays > 0 
-            ? `Objednat do: <strong>${getDeadline(p.leadTimeDays)}</strong>` 
-            : 'Objednat lze ihned';
-            
-        return `
-        <div style="display: flex; gap: 15px; border-bottom: 1px solid #eee; padding: 15px 0; align-items: center;">
-            <div style="width: 80px; height: 80px; flex-shrink: 0; background-color: #f9fafb; border-radius: 8px; overflow: hidden;">
-                ${p.images && p.images[0] 
-                    ? `<img src="${getImgUrl(p.images[0])}" style="width: 100%; height: 100%; object-fit: cover;" alt="${p.name}">` 
-                    : ''}
-            </div>
-            <div>
-                <h3 style="margin: 0 0 5px 0; font-size: 16px; color: #1f2937;">${p.name}</h3>
-                <p style="margin: 0 0 5px 0; font-size: 14px; color: #666;">${p.description || ''}</p>
-                <div style="font-size: 12px; color: #9333ea; font-weight: bold;">
-                    ${leadTimeMsg}
-                </div>
-            </div>
-        </div>
-    `}).join('');
-
-    const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-            <div style="background-color: #9333ea; padding: 20px; border-radius: 8px 8px 0 0; text-align: center;">
-                <h1 style="color: white; margin: 0; font-size: 24px;">Nová cateringová akce!</h1>
-                <p style="color: #f3e8ff; margin: 5px 0 0 0; font-size: 16px;">Připravili jsme pro vás speciální nabídku na den ${formattedDate}.</p>
-            </div>
-            
-            <div style="padding: 20px; background-color: #ffffff; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
-                <p style="margin-bottom: 20px;">Využijte naši nabídku akčních produktů. Pozor na termíny objednání!</p>
-                
-                ${productsHtml}
-                
-                <div style="text-align: center; margin-top: 30px;">
-                    <a href="${appUrl}" target="_blank" style="display: inline-block; background-color: #9333ea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold;">
-                        Objednat nyní
-                    </a>
-                </div>
-            </div>
-            
-            <div style="text-align: center; margin-top: 20px; font-size: 11px; color: #9ca3af;">
-                Tento email jste obdrželi, protože jste přihlášeni k odběru novinek.<br>
-                Pokud si nepřejete dostávat tato sdělení, můžete změnit nastavení ve svém profilu.
-            </div>
-        </div>
-    `;
-
-    try {
-        await transporter.sendMail({
-            from: process.env.EMAIL_FROM,
-            bcc: recipients,
-            subject: subject,
-            html: htmlContent,
-            encoding: 'base64'
-        });
-        console.log(`✅ Event notification sent to ${recipients.length} recipients.`);
-    } catch (e) {
-        console.error('❌ Failed to send event notification:', e.message);
-    }
-};
-
-export const sendOrderEmail = async (order, type, settings, customStatus = null) => {
-    if (!transporter) {
-        console.warn('⚠️ Cannot send email: Transporter not initialized.');
-        return;
-    }
-
-    const lang = order.language || 'cs';
-    const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
-    const attachments = [];
-
-    // --- 1. PREPARE ATTACHMENTS (Only for Customer on Created/Delivered) ---
-    // VOP
-    if (type === 'created' && process.env.VOP_PATH && fs.existsSync(process.env.VOP_PATH)) {
-        attachments.push({
-            filename: 'VOP.pdf',
-            path: process.env.VOP_PATH
-        });
-    }
-
-    // Invoice
-    try {
-        if (type === 'created') {
-            const pdfBuffer = await generateInvoicePdf(order, 'proforma', settings);
-            attachments.push({
-                filename: `Zalohova_faktura_${order.id}.pdf`,
-                content: pdfBuffer
-            });
-        } else if (type === 'status' && customStatus === 'delivered') {
-            const pdfBuffer = await generateInvoicePdf(order, 'final', settings);
-            attachments.push({
-                filename: `Danovy_doklad_${order.id}.pdf`,
-                content: pdfBuffer
-            });
-        }
-    } catch (err) {
-        console.error("❌ PDF Generation failed:", err);
-        // Continue sending email without PDF if generation fails
-    }
-
-    // --- 2. FETCH CUSTOMER EMAIL ---
-    let customerEmail = null;
-    try {
-        const { getDb } = await import('../db.js');
-        const db = await getDb();
-        const [u] = await db.query('SELECT email FROM users WHERE id=?', [order.userId]);
-        customerEmail = u[0]?.email;
-    } catch (err) {
-        console.error("❌ Failed to fetch customer email:", err);
-    }
-
-    let subject = '';
-    let messageHtml = '';
-    let title = '';
-
-    // --- 3. DETERMINE CONTENT ---
-    if (type === 'created') {
-        subject = `${t.created_subject} #${order.id}`;
-        title = t.created_subject;
-        messageHtml = generateOrderHtml(order, title, "Děkujeme za Vaši objednávku.", lang, settings);
-    } else if (type === 'updated') {
-        subject = `${t.updated_subject} #${order.id}`;
-        title = t.updated_subject;
-        messageHtml = generateOrderHtml(order, title, "Vaše objednávka byla upravena.", lang, settings);
-    } else if (type === 'status') {
-        subject = `${t.status_update_subject} #${order.id}`;
-        title = t.status_update_subject;
-        const localizedStatus = STATUS_TRANSLATIONS[lang]?.[customStatus] || customStatus;
-        const statusMsg = `${t.status_prefix} ${localizedStatus}`;
-        messageHtml = generateOrderHtml(order, title, statusMsg, lang, settings);
-    }
-
-    // --- 4. SEND TO CUSTOMER ---
-    if (customerEmail) {
-        try {
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM,
-                to: customerEmail,
-                subject,
-                html: messageHtml,
-                encoding: 'base64',
-                attachments: attachments // Attachments only for customer
-            });
-            console.log(`📧 Customer email sent to: ${customerEmail} (${type})`);
-        } catch (e) {
-            console.error(`❌ Failed to send customer email (${type}):`, e.message);
-        }
-    } else {
-        console.warn(`⚠️ No customer email found for User ID: ${order.userId}`);
-    }
-
-    // --- 5. SEND TO OPERATOR (Only on Created or Updated by User) ---
-    if ((type === 'created' || type === 'updated') && settings.companyDetails?.email) {
-        try {
-            const operatorSubject = type === 'created' ? `Nová objednávka #${order.id}` : `Aktualizace objednávky #${order.id}`;
-            const operatorTitle = type === 'created' ? "Nová objednávka" : "Úprava objednávky";
-            const operatorMsg = type === 'created' ? "Přišla nová objednávka z e-shopu." : "Zákazník upravil existující objednávku.";
-            
-            const operatorHtml = generateOrderHtml(order, operatorTitle, operatorMsg, 'cs', settings);
-            
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM,
-                to: settings.companyDetails.email,
-                subject: operatorSubject,
-                html: operatorHtml,
-                encoding: 'base64'
-                // No attachments for operator usually needed, or can add if requested
-            });
-            console.log(`📧 Operator email sent to: ${settings.companyDetails.email} (${type})`);
-        } catch (e) {
-            console.error(`❌ Failed to send operator email:`, e.message);
-        }
+    for (const recipient of recipients) {
+        await db.query(
+            'INSERT INTO email_queue (type, recipient_email, subject, payload, status) VALUES (?, ?, ?, ?, ?)',
+            ['event_notification', recipient, 'Nová cateringová akce!', JSON.stringify({ date: eventDate, products }), 'pending']
+        );
     }
 };

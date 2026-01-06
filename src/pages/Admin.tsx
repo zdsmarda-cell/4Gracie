@@ -10,7 +10,7 @@ import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar 
+    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar, Mail 
 } from 'lucide-react';
 import { OrdersTab } from './admin/OrdersTab';
 import { UsersTab } from './admin/UsersTab';
@@ -25,6 +25,7 @@ import { PaymentsTab } from './admin/PaymentsTab';
 import { LoadTab } from './admin/LoadTab';
 import { SettingsTab } from './admin/SettingsTab';
 import { EventsTab } from './admin/EventsTab';
+import { EmailsTab } from './admin/EmailsTab';
 import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
@@ -64,7 +65,7 @@ export const Admin: React.FC = () => {
     const availableTabs = [
         'orders', 'users', 'load', 'products', 'categories', 
         'delivery', 'pickup', 'capacities', 'events', 'discounts', 
-        'packaging', 'operator', 'payments', 'app_settings'
+        'packaging', 'operator', 'payments', 'emails', 'app_settings'
     ];
 
     if (isPreviewEnvironment) {
@@ -84,7 +85,8 @@ export const Admin: React.FC = () => {
                     >
                     {tab === 'app_settings' && <Settings size={12} className="mr-1"/>}
                     {tab === 'events' && <Calendar size={12} className="mr-1"/>}
-                    {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : t(`admin.${tab}`)}
+                    {tab === 'emails' && <Mail size={12} className="mr-1"/>}
+                    {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : tab === 'emails' ? 'Emaily' : t(`admin.${tab}`)}
                     </button>
                 ))}
                 </div>
@@ -104,6 +106,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'operator' && <OperatorTab />}
             {activeTab === 'payments' && <PaymentsTab />}
             {activeTab === 'app_settings' && <SettingsTab />}
+            {activeTab === 'emails' && <EmailsTab />}
             {activeTab === 'load' && <LoadTab onNavigateToDate={handleNavigateToDate} />}
 
             {/* Inline Tabs (DB) */}

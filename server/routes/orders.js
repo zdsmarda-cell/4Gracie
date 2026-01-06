@@ -1,7 +1,7 @@
 
 import express from 'express';
 import { withDb, parseJsonCol } from '../db.js';
-import { sendOrderEmail } from '../services/email.js';
+import { queueOrderEmail } from '../services/email.js'; // CHANGED
 
 const router = express.Router();
 
@@ -59,9 +59,9 @@ router.post('/', withDb(async (req, res, db) => {
              try {
                  const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
                  const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
-                 await sendOrderEmail(order, 'updated', settings);
+                 await queueOrderEmail(order, 'updated', settings); // QUEUED
              } catch(e) {
-                 console.error("Failed to send update email:", e);
+                 console.error("Failed to queue update email:", e);
              }
         }
 
@@ -93,10 +93,10 @@ router.post('/', withDb(async (req, res, db) => {
         try {
             const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
             const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
-            console.log(`📧 Attempting to send CREATED email for order #${order.id}`);
-            await sendOrderEmail(order, 'created', settings);
+            console.log(`📧 Queueing CREATED email for order #${order.id}`);
+            await queueOrderEmail(order, 'created', settings); // QUEUED
         } catch (e) {
-            console.error("❌ Critical: Failed to trigger order created email:", e);
+            console.error("❌ Critical: Failed to queue order created email:", e);
         }
     }
     res.json({ success: true });
@@ -161,9 +161,9 @@ router.put('/status', withDb(async (req, res, db) => {
                 o.deliveryCompanyDetailsSnapshot = deliveryCompanyDetailsSnapshot;
             }
             try {
-                await sendOrderEmail(o, 'status', settings, status);
+                await queueOrderEmail(o, 'status', settings, status); // QUEUED
             } catch (e) {
-                console.error(`Failed to send status update email for order ${o.id}:`, e);
+                console.error(`Failed to queue status update email for order ${o.id}:`, e);
             }
         }
     }
