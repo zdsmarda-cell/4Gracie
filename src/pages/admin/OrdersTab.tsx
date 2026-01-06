@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Language, Product } from '../../types';
 import { Pagination } from '../../components/Pagination';
-import { FileText, ChevronDown, QrCode, Edit, Zap, X, Save, AlertCircle, FileCheck, Loader2, Minus, Plus, ImageIcon, Trash2, Search, Tag, Check, AlertTriangle } from 'lucide-react';
+import { FileText, ChevronDown, QrCode, Edit, Zap, X, Save, AlertCircle, FileCheck, Loader2, Minus, Plus, ImageIcon, Trash2, Search, Tag, Check, AlertTriangle, Filter } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 import * as XLSX from 'xlsx';
 
@@ -32,6 +32,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         id: '', dateFrom: '', dateTo: '', customer: '', status: '', 
         ic: '', isEvent: '' 
     });
+
+    // Custom Filter State
+    const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
 
     const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
     const [bulkTargetStatus, setBulkTargetStatus] = useState<OrderStatus | ''>('');
@@ -140,6 +143,18 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         } finally {
             setIsLoadingOrders(false);
         }
+    };
+
+    const handleClearAllFilters = () => {
+        // 1. Reset local state
+        setFilters({ 
+            id: '', dateFrom: '', dateTo: '', customer: '', status: '', 
+            ic: '', isEvent: '' 
+        });
+        setCurrentPage(1); // Reset pagination
+        
+        // 2. Notify parent to clear props (if linked from other tabs)
+        onClearFilters();
     };
 
     const exportToAccounting = () => {
@@ -266,13 +281,28 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         }
     };
 
+    // Filter Logic Helpers
+    const selectedStatuses = useMemo(() => {
+        return filters.status ? filters.status.split(',').filter(Boolean) : [];
+    }, [filters.status]);
+
+    const toggleStatusFilter = (status: OrderStatus) => {
+        const current = new Set(selectedStatuses);
+        if (current.has(status)) {
+            current.delete(status);
+        } else {
+            current.add(status);
+        }
+        setFilters(prev => ({ ...prev, status: Array.from(current).join(',') }));
+    };
+
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between mb-4">
                 <div className="flex gap-2">
                     <button onClick={exportToAccounting} className="bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm"><FileText size={16} className="mr-2 text-green-600" /> {t('admin.export')}</button>
-                    {(filters.dateFrom || filters.id || filters.customer || filters.isEvent) && (
-                        <button onClick={onClearFilters} className="text-xs text-red-500 hover:underline px-2">Zrušit filtry</button>
+                    {(filters.dateFrom || filters.id || filters.customer || filters.isEvent || filters.status) && (
+                        <button onClick={handleClearAllFilters} className="text-xs text-red-500 hover:underline px-2">Zrušit filtry</button>
                     )}
                 </div>
                 {selectedOrders.length > 0 && (
@@ -324,10 +354,39 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                 </div>
                 <div>
                     <label className="text-xs font-bold text-gray-400 block mb-1">Stav</label>
-                    <select className="w-full border rounded p-2 text-xs bg-white" value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})}>
-                        <option value="">Všechny stavy</option>
-                        {Object.values(OrderStatus).map(s => <option key={s} value={s}>{t(`status.${s}`)}</option>)}
-                    </select>
+                    <div className="relative">
+                        <button 
+                            className="w-full border rounded p-2 text-xs bg-white text-left flex justify-between items-center"
+                            onClick={() => setIsStatusFilterOpen(!isStatusFilterOpen)}
+                        >
+                            <span className="truncate">
+                                {selectedStatuses.length === 0 ? 'Všechny stavy' : `Vybráno (${selectedStatuses.length})`}
+                            </span>
+                            <ChevronDown size={14} className="text-gray-400" />
+                        </button>
+                        
+                        {/* Backdrop to close */}
+                        {isStatusFilterOpen && (
+                            <div className="fixed inset-0 z-10" onClick={() => setIsStatusFilterOpen(false)}></div>
+                        )}
+
+                        {/* Dropdown Content */}
+                        {isStatusFilterOpen && (
+                            <div className="absolute top-full left-0 right-0 z-20 bg-white border rounded-lg shadow-xl mt-1 p-2 max-h-60 overflow-y-auto">
+                                {Object.values(OrderStatus).map(s => (
+                                    <label key={s} className="flex items-center space-x-2 p-1.5 hover:bg-gray-50 rounded cursor-pointer">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={selectedStatuses.includes(s)}
+                                            onChange={() => toggleStatusFilter(s)}
+                                            className="rounded text-accent"
+                                        />
+                                        <span className="text-xs font-medium">{t(`status.${s}`)}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div>
                     <label className="text-xs font-bold text-gray-400 block mb-1">Akce (Event)</label>

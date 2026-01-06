@@ -14,7 +14,16 @@ router.get('/', withDb(async (req, res, db) => {
     if (userId) { query += ' AND user_id = ?'; params.push(userId); }
     if (dateFrom) { query += ' AND delivery_date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND delivery_date <= ?'; params.push(dateTo); }
-    if (status) { query += ' AND status = ?'; params.push(status); }
+    
+    // Updated Status Logic for Multi-select
+    if (status) { 
+        const statuses = status.split(',').filter(s => s.trim() !== '');
+        if (statuses.length > 0) {
+            query += ' AND status IN (?)'; 
+            params.push(statuses); 
+        }
+    }
+    
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
     
     // Heuristic JSON search for Event Product flag
