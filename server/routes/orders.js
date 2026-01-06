@@ -95,58 +95,58 @@ router.post('/', withDb(async (req, res, db) => {
 router.put('/status', withDb(async (req, res, db) => {
     const { ids, status, notifyCustomer, deliveryCompanyDetailsSnapshot } = req.body;
     
-    // Batch update status
+    // 1. Batch update status column in DB
     await db.query('UPDATE orders SET status = ? WHERE id IN (?)', [status, ids]);
     
-    // If status is DELIVERED, verify if finalInvoiceDate needs setting and update JSON snapshot
+    const nowIso = new Date().toISOString();
+
+    // 2. If status is DELIVERED, set final_invoice_date column if not set
     if (status === 'delivered') {
-        const nowIso = new Date().toISOString();
         const nowDb = nowIso.slice(0, 19).replace('T', ' '); // Format for MySQL: YYYY-MM-DD HH:MM:SS
-        
-        // 1. Set final_invoice_date only if NULL
         await db.query('UPDATE orders SET final_invoice_date = ? WHERE id IN (?) AND final_invoice_date IS NULL', [nowDb, ids]);
+    }
+
+    // 3. Update full_json blob for ALL affected orders to reflect the new status
+    const [orders] = await db.query('SELECT id, full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
+    
+    for(const o of orders) {
+        let json = parseJsonCol(o, 'full_json');
         
-        // 2. Fetch current full_json for affected orders to patch the snapshot
-        const [orders] = await db.query('SELECT id, full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
-        
-        for(const o of orders) {
-            let json = parseJsonCol(o, 'full_json');
-            
+        // Always update status in JSON
+        json.status = status;
+        if (!json.statusHistory) json.statusHistory = [];
+        json.statusHistory.push({ status, date: nowIso });
+
+        // Additional logic for DELIVERED status
+        if (status === 'delivered') {
             // Only update snapshot if not already present
             if (!json.deliveryCompanyDetailsSnapshot && deliveryCompanyDetailsSnapshot) {
                 json.deliveryCompanyDetailsSnapshot = deliveryCompanyDetailsSnapshot;
             }
             // Ensure finalInvoiceDate is in JSON too
-            if (!json.finalInvoiceDate && o.final_invoice_date) {
-                json.finalInvoiceDate = o.final_invoice_date;
-            } else if (!json.finalInvoiceDate) {
-                json.finalInvoiceDate = nowIso;
+            if (!json.finalInvoiceDate) {
+                // Use existing from DB (if present) or now
+                json.finalInvoiceDate = o.final_invoice_date 
+                    ? new Date(o.final_invoice_date).toISOString() 
+                    : nowIso;
             }
+        }
 
-            await db.query('UPDATE orders SET full_json = ? WHERE id = ?', [JSON.stringify(json), o.id]);
-        }
-    } else {
-        // Just update status history in JSON for other statuses
-        const [orders] = await db.query('SELECT id, full_json FROM orders WHERE id IN (?)', [ids]);
-        for(const o of orders) {
-            let json = parseJsonCol(o, 'full_json');
-            json.status = status;
-            if (!json.statusHistory) json.statusHistory = [];
-            json.statusHistory.push({ status, date: new Date().toISOString() });
-            await db.query('UPDATE orders SET full_json = ? WHERE id = ?', [JSON.stringify(json), o.id]);
-        }
+        await db.query('UPDATE orders SET full_json = ? WHERE id = ?', [JSON.stringify(json), o.id]);
     }
 
+    // 4. Notifications
     if (notifyCustomer) {
         const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
         const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
-        const [orders] = await db.query('SELECT full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
         
+        // Re-iterate (or use cached data) to send emails
         for (const r of orders) {
             const o = parseJsonCol(r, 'full_json');
-            if(r.final_invoice_date) o.finalInvoiceDate = r.final_invoice_date;
-            // If snapshot was just added in loop above, it might be in DB but not in this select unless transaction is strict, 
-            // but for email we pass the explicit snapshot if we have it from request body or rely on updated object.
+            // Patch current status for email template if we used cached object
+            o.status = status;
+            if (r.final_invoice_date) o.finalInvoiceDate = r.final_invoice_date;
+            
             if (status === 'delivered' && !o.deliveryCompanyDetailsSnapshot && deliveryCompanyDetailsSnapshot) {
                 o.deliveryCompanyDetailsSnapshot = deliveryCompanyDetailsSnapshot;
             }
