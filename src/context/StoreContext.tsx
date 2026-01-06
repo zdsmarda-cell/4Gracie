@@ -299,16 +299,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
-              
-              // Auth hook handles users separately via its own logic or we pass initial users here?
-              // The useAuth hook manages users state, but we need to populate it from bootstrap if possible.
-              // We'll expose a setter in useAuth or let useAuth fetch its own data.
-              // For now, let's assume useAuth will fetch or we pass data to it.
-              // Actually, useAuth fetches on its own or we can pass initial data. 
-              // To avoid refactoring useAuth too much, we will trigger its internal fetch or set state.
-              // But useAuth internal state is not exposed to set directly easily unless we change it.
-              // Let's rely on useAuth fetching or passed via props.
-              // The provided useAuth doesn't accept initial data in props, so we might need to manually set it via setAllUsers if exposed.
           }
         } else {
           // Local Mode
@@ -346,14 +336,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       fetchData();
   }, [fetchData]);
 
-  // Sync Auth Users with Bootstrap Data (Only for API mode if not handled by useAuth)
-  // useAuth calls /api/users/login and /api/users, but doesn't have a bulk set from bootstrap. 
-  // We can add a specialized fetch in useAuth or just let useAuth load independently.
-  // Ideally useAuth should export a way to set users from bootstrap. 
-  // For now, we assume useAuth fetches its own data or we accept slight inefficiency.
-  // Actually, useAuth calls `setAllUsers` internally. We can't access it unless exposed. 
-  // `useAuth` returns `allUsers` and `setAllUsers`. So we can set it!
-  
   useEffect(() => {
       if (dataSource === 'api') {
           // Fetch users explicitly to ensure they are loaded
@@ -445,14 +427,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const { load, eventLoad } = getDailyLoad(date, excludeOrderId);
     
     // Simulate current cart load
-    // Note: We need to properly account for overhead sharing if possible, but simplest is to just add it raw
     const simulatedLoad = { ...load };
     const simulatedEventLoad = { ...eventLoad };
     
     items.forEach(item => {
        const productDef = products.find(p => String(p.id) === String(item.id));
        const workload = (Number(productDef?.workload) || Number(item.workload) || 0) * item.quantity;
-       // Overhead is tricky to simulate without full recalc, assume worst case (add it)
        const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
        
        const cat = item.category;
@@ -507,12 +487,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const res = await apiCall('/api/orders', 'POST', orderWithHistory);
       if (res && res.success) {
         setOrders(prev => [orderWithHistory, ...prev]);
+        // Notification removed for admin silence
         return true;
       }
       return false;
     } else {
       setOrders(prev => [orderWithHistory, ...prev]);
-      showNotify(t('notification.order_created', { id: order.id }));
+      // Notification removed for admin silence
       return true;
     }
   };
@@ -532,13 +513,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
        if (res && res.success) {
           setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
           if (sendNotify) showNotify(t('notification.email_sent'));
-          else showNotify(t('notification.db_saved'));
+          // Success notification suppressed for standard saves
           return true;
        }
        return false;
     } else {
        setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-       showNotify(t('notification.saved'));
+       // Success notification suppressed for standard saves
        return true;
     }
   };
@@ -553,8 +534,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
             return o;
           }));
-          const msg = notify ? t('notification.email_sent') : t('notification.db_saved');
-          showNotify(msg, 'success', !notify);
+          if (notify) showNotify(t('notification.email_sent'), 'success', false);
           return true;
        }
        return false;
@@ -565,7 +545,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
           return o;
         }));
-        showNotify(`Status changed to: ${t(`status.${status}`)}`);
+        if (notify) showNotify(`Status changed to: ${t(`status.${status}`)}`);
         return true;
     }
   };
@@ -633,11 +613,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addProduct = async (p: Product) => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setProducts(prev => [...prev, p]); return true; }
         return false;
     } else {
         setProducts(prev => [...prev, p]); 
-        showNotify(t('notification.saved'));
         return true;
     }
   };
@@ -645,11 +624,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateProduct = async (p: Product) => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true; }
         return false;
     } else {
         setProducts(prev => prev.map(x => x.id === p.id ? p : x)); 
-        showNotify(t('notification.saved'));
         return true;
     }
   };
@@ -657,7 +635,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteProduct = async (id: string) => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); return true; }
         return false;
     } else {
         setProducts(prev => prev.filter(x => x.id !== id)); 
@@ -668,11 +646,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateSettings = async (s: GlobalSettings) => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/settings', 'POST', s);
-        if (res && res.success) { setSettings(s); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setSettings(s); return true; }
         return false;
     } else {
         setSettings(s); 
-        showNotify(t('notification.saved'));
         return true;
     }
   };
@@ -682,7 +659,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const res = await apiCall('/api/calendar', 'POST', c);
         if (res && res.success) {
             setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-            showNotify(t('notification.db_saved')); return true;
+            return true;
         }
         return false;
     } else {
@@ -694,7 +671,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const removeDayConfig = async (date: string) => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); return true; }
         return false;
     } else {
         setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
@@ -704,7 +681,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addDiscountCode = async (c: DiscountCode) => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
-        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); return true; }
         return false;
     } else {
         setDiscountCodes(prev => [...prev, c]); return true;
@@ -714,7 +691,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateDiscountCode = async (code: DiscountCode) => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', code);
-        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
@@ -724,7 +701,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteDiscountCode = async (id: string) => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
