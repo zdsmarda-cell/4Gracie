@@ -94,18 +94,66 @@ router.post('/notify-event', withDb(async (req, res, db) => {
 
 // EMAIL MANAGEMENT ROUTES
 router.get('/emails', withDb(async (req, res, db) => {
-    const { status, limit = 100 } = req.query;
+    const { status, recipient, subject, dateFrom, dateTo, page = 1, limit = 50 } = req.query;
+    
+    const offset = (Number(page) - 1) * Number(limit);
     let query = "SELECT * FROM email_queue WHERE 1=1";
+    let countQuery = "SELECT COUNT(*) as t FROM email_queue WHERE 1=1";
+    
     const params = [];
+
     if (status) {
-        query += " AND status = ?";
+        const cond = " AND status = ?";
+        query += cond;
+        countQuery += cond;
         params.push(status);
     }
-    query += " ORDER BY created_at DESC LIMIT ?";
-    params.push(Number(limit));
+    
+    if (recipient) {
+        const cond = " AND recipient_email LIKE ?";
+        query += cond;
+        countQuery += cond;
+        params.push(`%${recipient}%`);
+    }
+
+    if (subject) {
+        const cond = " AND subject LIKE ?";
+        query += cond;
+        countQuery += cond;
+        params.push(`%${subject}%`);
+    }
+
+    if (dateFrom) {
+        const cond = " AND created_at >= ?";
+        query += cond;
+        countQuery += cond;
+        params.push(`${dateFrom} 00:00:00`);
+    }
+
+    if (dateTo) {
+        const cond = " AND created_at <= ?";
+        query += cond;
+        countQuery += cond;
+        params.push(`${dateTo} 23:59:59`);
+    }
+
+    // Get Total Count
+    const [cnt] = await db.query(countQuery, params);
+    const total = cnt[0].t;
+
+    // Get Data
+    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
+    params.push(Number(limit), Number(offset));
     
     const [rows] = await db.query(query, params);
-    res.json({ success: true, emails: rows });
+    
+    res.json({ 
+        success: true, 
+        emails: rows,
+        total: total,
+        page: Number(page),
+        pages: Math.ceil(total / Number(limit))
+    });
 }));
 
 router.post('/emails/retry', withDb(async (req, res, db) => {

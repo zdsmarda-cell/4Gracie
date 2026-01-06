@@ -337,4 +337,5 @@ export interface EmailLog {
     error_message?: string;
     created_at: string;
     processed_at?: string;
+    payload?: any; // Added payload for inspection
 }
