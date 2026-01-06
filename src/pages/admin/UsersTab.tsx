@@ -4,6 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { User } from '../../types';
 import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { Pagination } from '../../components/Pagination';
 
 export const UsersTab: React.FC = () => {
     const { searchUsers, orders, t, addUser, updateUserAdmin, searchOrders } = useStore();
@@ -13,6 +14,10 @@ export const UsersTab: React.FC = () => {
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
     const [userFilters, setUserFilters] = useState({ search: '', spentMin: '', spentMax: '', ordersMin: '', ordersMax: '', marketing: '', status: '' });
     
+    // Pagination
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(50);
+
     // Modal
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -54,6 +59,11 @@ export const UsersTab: React.FC = () => {
             return true;
         });
     }, [fetchedUsers, userFilters]);
+
+    const paginatedUsers = useMemo(() => {
+        const start = (currentPage - 1) * itemsPerPage;
+        return filteredUsers.slice(start, start + itemsPerPage);
+    }, [filteredUsers, currentPage, itemsPerPage]);
 
     const handleUserExport = () => {
         const usersToExport = filteredUsers.filter(u => selectedUserIds.includes(u.id));
@@ -164,51 +174,61 @@ export const UsersTab: React.FC = () => {
             {isLoading ? (
                 <div className="text-center py-8 text-gray-400">Načítám uživatele...</div>
             ) : (
-            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
-                <table className="min-w-full divide-y">
-                <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                    <tr>
-                    <th className="px-6 py-4 text-center w-10">
-                        <input 
-                            type="checkbox" 
-                            onChange={e => setSelectedUserIds(e.target.checked ? filteredUsers.map(u => u.id) : [])} 
-                            checked={selectedUserIds.length > 0 && selectedUserIds.length === filteredUsers.length} 
-                        />
-                    </th>
-                    <th className="px-6 py-4 text-left">{t('common.name')}</th>
-                    <th className="px-6 py-4 text-left">{t('common.email')}</th>
-                    <th className="px-6 py-4 text-left">{t('common.role')}</th>
-                    <th className="px-6 py-4 text-center">Marketing</th>
-                    <th className="px-6 py-4 text-center">{t('common.status')}</th>
-                    <th className="px-6 py-4 text-right">{t('common.actions')}</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y text-xs">
-                    {filteredUsers.map(u => (
-                        <tr key={u.id} className={`hover:bg-gray-50 ${u.isBlocked ? 'bg-red-50' : ''}`}>
-                        <td className="px-6 py-4 text-center">
+            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col">
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y">
+                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                        <tr>
+                        <th className="px-6 py-4 text-center w-10">
                             <input 
                                 type="checkbox" 
-                                checked={selectedUserIds.includes(u.id)} 
-                                onChange={() => setSelectedUserIds(prev => prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id])} 
+                                onChange={e => setSelectedUserIds(e.target.checked ? filteredUsers.map(u => u.id) : [])} 
+                                checked={selectedUserIds.length > 0 && selectedUserIds.length === filteredUsers.length} 
                             />
-                        </td>
-                        <td className="px-6 py-4 font-bold">{u.name}</td>
-                        <td className="px-6 py-4 text-gray-600">{u.email}<br/><span className="text-[10px]">{u.phone}</span></td>
-                        <td className="px-6 py-4 uppercase font-bold text-[10px]">{u.role}</td>
-                        <td className="px-6 py-4 text-center">
-                            {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                            {u.isBlocked ? <span className="text-red-600 font-bold flex items-center justify-center"><Ban size={14} className="mr-1"/> {t('common.blocked')}</span> : <span className="text-green-600 font-bold">{t('common.active')}</span>}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                            <button onClick={() => openUserModal(u)} className="text-blue-600 font-bold hover:underline">{t('common.detail_edit')}</button>
-                        </td>
+                        </th>
+                        <th className="px-6 py-4 text-left">{t('common.name')}</th>
+                        <th className="px-6 py-4 text-left">{t('common.email')}</th>
+                        <th className="px-6 py-4 text-left">{t('common.role')}</th>
+                        <th className="px-6 py-4 text-center">Marketing</th>
+                        <th className="px-6 py-4 text-center">{t('common.status')}</th>
+                        <th className="px-6 py-4 text-right">{t('common.actions')}</th>
                         </tr>
-                    ))}
-                </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y text-xs">
+                        {paginatedUsers.map(u => (
+                            <tr key={u.id} className={`hover:bg-gray-50 ${u.isBlocked ? 'bg-red-50' : ''}`}>
+                            <td className="px-6 py-4 text-center">
+                                <input 
+                                    type="checkbox" 
+                                    checked={selectedUserIds.includes(u.id)} 
+                                    onChange={() => setSelectedUserIds(prev => prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id])} 
+                                />
+                            </td>
+                            <td className="px-6 py-4 font-bold">{u.name}</td>
+                            <td className="px-6 py-4 text-gray-600">{u.email}<br/><span className="text-[10px]">{u.phone}</span></td>
+                            <td className="px-6 py-4 uppercase font-bold text-[10px]">{u.role}</td>
+                            <td className="px-6 py-4 text-center">
+                                {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                                {u.isBlocked ? <span className="text-red-600 font-bold flex items-center justify-center"><Ban size={14} className="mr-1"/> {t('common.blocked')}</span> : <span className="text-green-600 font-bold">{t('common.active')}</span>}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                                <button onClick={() => openUserModal(u)} className="text-blue-600 font-bold hover:underline">{t('common.detail_edit')}</button>
+                            </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                    </table>
+                </div>
+                <Pagination 
+                    currentPage={currentPage}
+                    totalPages={Math.ceil(filteredUsers.length / itemsPerPage)}
+                    onPageChange={setCurrentPage}
+                    limit={itemsPerPage}
+                    onLimitChange={(l) => { setItemsPerPage(l); setCurrentPage(1); }}
+                    totalItems={filteredUsers.length}
+                />
             </div>
             )}
 

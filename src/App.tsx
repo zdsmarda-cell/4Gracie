@@ -12,10 +12,9 @@ import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Terms } from './pages/Terms';
 import { Contacts } from './pages/Contacts';
-import { X, Info, Truck, AlertCircle, CheckCircle, Loader2, Store, Settings, RefreshCw } from 'lucide-react';
+import { X, Truck, AlertCircle, CheckCircle, Loader2, Store, Settings, RefreshCw } from 'lucide-react';
 
 const MaintenancePage = () => {
-    const { refreshData } = useStore();
     return (
         <div className="min-h-screen bg-primary flex flex-col items-center justify-center p-6 text-center">
             {/* Logo Section */}
@@ -222,7 +221,6 @@ const MainContent = () => {
     const [isRegionsModalOpen, setIsRegionsModalOpen] = useState(false);
     const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
 
-    // If critical DB error in production, show maintenance page
     if (dbConnectionError) {
         return <MaintenancePage />;
     }

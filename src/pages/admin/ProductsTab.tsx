@@ -5,6 +5,7 @@ import { Product } from '../../types';
 import { ALLERGENS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
 import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe, Upload, Layers, Search, AlertCircle, Filter } from 'lucide-react';
+import { Pagination } from '../../components/Pagination';
 
 const TranslationViewModal: React.FC<{
     isOpen: boolean;
@@ -77,7 +78,11 @@ export const ProductsTab: React.FC = () => {
     const [isUploading, setIsUploading] = useState(false);
     const [viewingTranslations, setViewingTranslations] = useState<Product | null>(null);
     const [saveError, setSaveError] = useState<string | null>(null);
-    const [filterEventOnly, setFilterEventOnly] = useState(false); // NEW Filter
+    
+    // Filters & Pagination
+    const [filters, setFilters] = useState({ name: '', category: '', event: 'all', online: 'all' });
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(50);
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     const capCategories = useMemo(() => settings.capacityCategories || [], [settings.capacityCategories]);
@@ -198,22 +203,84 @@ export const ProductsTab: React.FC = () => {
     };
 
     const filteredProducts = useMemo(() => {
-        if (!filterEventOnly) return products;
-        return products.filter(p => p.isEventProduct);
-    }, [products, filterEventOnly]);
+        return products.filter(p => {
+            if (filters.name && !p.name.toLowerCase().includes(filters.name.toLowerCase())) return false;
+            if (filters.category && p.category !== filters.category) return false;
+            if (filters.event !== 'all') {
+                if (filters.event === 'yes' && !p.isEventProduct) return false;
+                if (filters.event === 'no' && p.isEventProduct) return false;
+            }
+            if (filters.online !== 'all') {
+                if (filters.online === 'yes' && !p.visibility.online) return false;
+                if (filters.online === 'no' && p.visibility.online) return false;
+            }
+            return true;
+        });
+    }, [products, filters]);
+
+    const paginatedProducts = useMemo(() => {
+        const start = (currentPage - 1) * itemsPerPage;
+        return filteredProducts.slice(start, start + itemsPerPage);
+    }, [filteredProducts, currentPage, itemsPerPage]);
 
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center gap-4">
                     <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
-                    <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer bg-white px-3 py-1.5 rounded-lg border hover:bg-gray-50 transition">
-                        <input type="checkbox" checked={filterEventOnly} onChange={e => setFilterEventOnly(e.target.checked)} className="rounded text-purple-600 focus:ring-purple-600"/>
-                        <span className={filterEventOnly ? "text-purple-700" : "text-gray-500"}>{t('filter.is_event')}</span>
-                    </label>
                 </div>
                 <button onClick={handleAddClick} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
             </div>
+
+            {/* FILTERS BAR */}
+            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <label className="text-xs font-bold text-gray-400 block mb-1">Název produktu</label>
+                    <input 
+                        type="text" 
+                        className="w-full border rounded p-2 text-xs" 
+                        placeholder="Hledat..." 
+                        value={filters.name} 
+                        onChange={e => setFilters({...filters, name: e.target.value})} 
+                    />
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie</label>
+                    <select 
+                        className="w-full border rounded p-2 text-xs bg-white" 
+                        value={filters.category} 
+                        onChange={e => setFilters({...filters, category: e.target.value})}
+                    >
+                        <option value="">{t('filter.all')}</option>
+                        {sortedCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-gray-400 block mb-1">V akci</label>
+                    <select 
+                        className="w-full border rounded p-2 text-xs bg-white" 
+                        value={filters.event} 
+                        onChange={e => setFilters({...filters, event: e.target.value})}
+                    >
+                        <option value="all">{t('filter.all')}</option>
+                        <option value="yes">{t('common.yes')}</option>
+                        <option value="no">{t('common.no')}</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-gray-400 block mb-1">Online</label>
+                    <select 
+                        className="w-full border rounded p-2 text-xs bg-white" 
+                        value={filters.online} 
+                        onChange={e => setFilters({...filters, online: e.target.value})}
+                    >
+                        <option value="all">{t('filter.all')}</option>
+                        <option value="yes">{t('common.yes')}</option>
+                        <option value="no">{t('common.no')}</option>
+                    </select>
+                </div>
+            </div>
+
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
                 <table className="min-w-full divide-y">
                 <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
@@ -228,7 +295,7 @@ export const ProductsTab: React.FC = () => {
                     </tr>
                 </thead>
                 <tbody className="divide-y text-xs">
-                    {filteredProducts.map(p => (
+                    {paginatedProducts.map(p => (
                     <tr key={p.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4">
                         {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
@@ -253,6 +320,14 @@ export const ProductsTab: React.FC = () => {
                     ))}
                 </tbody>
                 </table>
+                <Pagination 
+                    currentPage={currentPage}
+                    totalPages={Math.ceil(filteredProducts.length / itemsPerPage)}
+                    onPageChange={setCurrentPage}
+                    limit={itemsPerPage}
+                    onLimitChange={(l) => { setItemsPerPage(l); setCurrentPage(1); }}
+                    totalItems={filteredProducts.length}
+                />
             </div>
 
             <TranslationViewModal isOpen={!!viewingTranslations} onClose={() => setViewingTranslations(null)} item={viewingTranslations} />

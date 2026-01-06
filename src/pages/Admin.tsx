@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { 
     Product, Category, DiscountCode, PackagingType, DayConfig, 
@@ -29,7 +29,7 @@ import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
     const { 
-        dataSource, setDataSource, t, isPreviewEnvironment, user, refreshData
+        dataSource, setDataSource, t, isPreviewEnvironment, user
     } = useStore();
 
     // Guard Clause: Redirect if not logged in or not admin
@@ -39,12 +39,25 @@ export const Admin: React.FC = () => {
 
     const [activeTab, setActiveTab] = useState('orders');
     
-    // Navigation State (Load -> Orders)
+    // Navigation State
     const [filterDate, setFilterDate] = useState<string | null>(null);
+    const [filterEventOnly, setFilterEventOnly] = useState(false);
 
     const handleNavigateToDate = (date: string) => {
         setFilterDate(date);
+        setFilterEventOnly(false);
         setActiveTab('orders');
+    };
+
+    const handleNavigateToEventOrders = (date: string) => {
+        setFilterDate(date);
+        setFilterEventOnly(true);
+        setActiveTab('orders');
+    };
+
+    const clearFilters = () => {
+        setFilterDate(null);
+        setFilterEventOnly(false);
     };
 
     // Determine available tabs
@@ -54,7 +67,6 @@ export const Admin: React.FC = () => {
         'packaging', 'operator', 'payments', 'app_settings'
     ];
 
-    // Only show 'db' tab in preview environment (localhost, dev, blob)
     if (isPreviewEnvironment) {
         availableTabs.push('db');
     }
@@ -79,7 +91,7 @@ export const Admin: React.FC = () => {
             </div>
 
             {/* Modular Tabs */}
-            {activeTab === 'orders' && <OrdersTab initialDate={filterDate} onClearInitialDate={() => setFilterDate(null)} />}
+            {activeTab === 'orders' && <OrdersTab initialDate={filterDate} initialEventOnly={filterEventOnly} onClearFilters={clearFilters} />}
             {activeTab === 'users' && <UsersTab />}
             {activeTab === 'products' && <ProductsTab />}
             {activeTab === 'discounts' && <DiscountsTab />}
@@ -88,7 +100,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'categories' && <CategoriesTab />}
             {activeTab === 'packaging' && <PackagingTab />}
             {activeTab === 'capacities' && <CapacitiesTab />}
-            {activeTab === 'events' && <EventsTab />}
+            {activeTab === 'events' && <EventsTab onNavigateToOrders={handleNavigateToEventOrders} />}
             {activeTab === 'operator' && <OperatorTab />}
             {activeTab === 'payments' && <PaymentsTab />}
             {activeTab === 'app_settings' && <SettingsTab />}
@@ -102,7 +114,6 @@ export const Admin: React.FC = () => {
                         <Database className="text-accent" /> Databázové připojení
                     </h2>
                     
-                    {/* PRODUCTION ALERT */}
                     {!isPreviewEnvironment && (
                         <div className="bg-blue-50 text-blue-700 p-4 rounded-xl mb-6 text-sm font-bold border border-blue-200">
                             Aplikace běží v produkčním režimu. Připojení k DB je vynuceno.

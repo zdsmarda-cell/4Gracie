@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { EventSlot, OrderStatus } from '../../types';
-import { Plus, Edit, Trash2, Calendar, AlertTriangle } from 'lucide-react';
+import { Plus, Edit, Trash2, Calendar, AlertTriangle, ListFilter } from 'lucide-react';
 
 const WarningModal: React.FC<{
     isOpen: boolean;
@@ -53,15 +53,42 @@ const DeleteConfirmModal: React.FC<{
     );
 };
 
-export const EventsTab: React.FC = () => {
+interface EventsTabProps {
+    onNavigateToOrders: (date: string) => void;
+}
+
+export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
     const { settings, updateEventSlot, removeEventSlot, t, formatDate, orders } = useStore();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingSlot, setEditingSlot] = useState<Partial<EventSlot> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
     const [warningMessage, setWarningMessage] = useState<string | null>(null);
+    
+    // Toggle state: 'active' (today+future) or 'history' (past)
+    const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
-    const eventSlots = useMemo(() => [...(settings.eventSlots || [])].sort((a, b) => a.date.localeCompare(b.date)), [settings.eventSlots]);
+    
+    const eventSlots = useMemo(() => {
+        const today = new Date().toISOString().split('T')[0];
+        const allSlots = [...(settings.eventSlots || [])].sort((a, b) => a.date.localeCompare(b.date));
+        
+        if (viewMode === 'active') {
+            return allSlots.filter(s => s.date >= today);
+        } else {
+            return allSlots.filter(s => s.date < today).reverse(); // Show recent history first
+        }
+    }, [settings.eventSlots, viewMode]);
+
+    const getActiveOrdersCount = (date: string) => {
+        // Count active orders for this date that contain AT LEAST ONE event product
+        // This matches the criteria for "Event Load" usually
+        return orders.filter(o => 
+            o.deliveryDate === date && 
+            o.status !== OrderStatus.CANCELLED &&
+            o.items.some(i => i.isEventProduct)
+        ).length;
+    };
 
     const saveEventSlot = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -97,48 +124,91 @@ export const EventsTab: React.FC = () => {
     };
 
     return (
-        <div className="animate-fade-in space-y-8">
+        <div className="animate-fade-in space-y-6">
+            
+            {/* View Mode Toggle */}
+            <div className="flex justify-center">
+                <div className="bg-gray-100 p-1 rounded-xl flex gap-1 shadow-inner border border-gray-200">
+                    <button 
+                        onClick={() => setViewMode('active')}
+                        className={`px-6 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${viewMode === 'active' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        Aktivní & Budoucí
+                    </button>
+                    <button 
+                        onClick={() => setViewMode('history')}
+                        className={`px-6 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 ${viewMode === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                        Historie
+                    </button>
+                </div>
+            </div>
+
             <div className="bg-white p-6 rounded-2xl border shadow-sm">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold flex items-center gap-2"><Calendar className="text-accent" /> {t('admin.events')}</h3>
-                    <button 
-                        onClick={() => { setEditingSlot({ date: '', capacityOverrides: {} }); setIsModalOpen(true); }} 
-                        className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"
-                    >
-                        <Plus size={14} className="mr-1"/> {t('admin.event_add')}
-                    </button>
+                    <h3 className="font-bold flex items-center gap-2 text-lg text-primary">
+                        <Calendar className="text-accent" /> {viewMode === 'active' ? 'Nadcházející Akce' : 'Proběhlé Akce'}
+                    </h3>
+                    {viewMode === 'active' && (
+                        <button 
+                            onClick={() => { setEditingSlot({ date: '', capacityOverrides: {} }); setIsModalOpen(true); }} 
+                            className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"
+                        >
+                            <Plus size={14} className="mr-1"/> {t('admin.event_add')}
+                        </button>
+                    )}
                 </div>
                 
                 <div className="space-y-3">
-                    {eventSlots.length === 0 && <p className="text-gray-400 text-center text-sm p-4">Žádné naplánované akce.</p>}
+                    {eventSlots.length === 0 && <p className="text-gray-400 text-center text-sm p-4">Žádné akce v tomto seznamu.</p>}
                     
-                    {eventSlots.map((slot) => (
-                        <div key={slot.date} className="flex flex-col md:flex-row justify-between items-center p-4 rounded-xl border bg-purple-50 border-purple-100 hover:shadow-sm transition">
-                            <div className="mb-2 md:mb-0">
-                                <span className="font-mono font-bold text-lg text-primary block">{formatDate(slot.date)}</span>
-                                <span className="text-xs text-purple-700 font-bold uppercase">Aktivní akce</span>
-                            </div>
-                            
-                            <div className="flex-grow md:mx-8 w-full md:w-auto mb-2 md:mb-0">
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                                    {sortedCategories.map(cat => {
-                                        const limit = slot.capacityOverrides?.[cat.id];
-                                        return (
-                                            <div key={cat.id} className="bg-white px-2 py-1 rounded border border-purple-100 text-center">
-                                                <span className="block text-gray-400 text-[10px] uppercase truncate">{cat.name}</span>
-                                                <span className="font-bold text-gray-800">{limit !== undefined ? limit : '-'}</span>
-                                            </div>
-                                        );
-                                    })}
+                    {eventSlots.map((slot) => {
+                        const orderCount = getActiveOrdersCount(slot.date);
+                        return (
+                            <div key={slot.date} className={`flex flex-col md:flex-row justify-between items-center p-4 rounded-xl border transition ${viewMode === 'active' ? 'bg-purple-50 border-purple-100 hover:shadow-sm' : 'bg-gray-50 border-gray-100 opacity-80'}`}>
+                                <div className="mb-2 md:mb-0">
+                                    <span className="font-mono font-bold text-lg text-primary block">{formatDate(slot.date)}</span>
+                                    <span className={`text-xs font-bold uppercase ${viewMode === 'active' ? 'text-purple-700' : 'text-gray-500'}`}>
+                                        {viewMode === 'active' ? 'Aktivní akce' : 'Ukončeno'}
+                                    </span>
+                                </div>
+                                
+                                <div className="flex-grow md:mx-8 w-full md:w-auto mb-2 md:mb-0 space-y-2">
+                                    {/* Capacities Grid */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                                        {sortedCategories.map(cat => {
+                                            const limit = slot.capacityOverrides?.[cat.id];
+                                            return (
+                                                <div key={cat.id} className="bg-white px-2 py-1 rounded border border-gray-100 text-center">
+                                                    <span className="block text-gray-400 text-[10px] uppercase truncate">{cat.name}</span>
+                                                    <span className="font-bold text-gray-800">{limit !== undefined ? limit : '-'}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    
+                                    {/* Active Orders Info */}
+                                    {orderCount > 0 && (
+                                        <div className="flex justify-center md:justify-start">
+                                            <button 
+                                                onClick={() => onNavigateToOrders(slot.date)}
+                                                className="flex items-center gap-1 text-[10px] font-bold bg-white border border-purple-200 text-purple-700 px-3 py-1.5 rounded-full hover:bg-purple-100 transition shadow-sm"
+                                                title="Zobrazit objednávky z této akce"
+                                            >
+                                                <ListFilter size={12}/>
+                                                {orderCount} aktivních objednávek (akční produkty)
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <button onClick={() => { setEditingSlot(JSON.parse(JSON.stringify(slot))); setIsModalOpen(true); }} className="p-2 bg-white rounded-lg hover:bg-gray-100 text-gray-600 border border-gray-200 transition"><Edit size={16}/></button>
+                                    <button onClick={() => handleDeleteRequest(slot.date)} className="p-2 bg-white rounded-lg hover:bg-red-50 text-red-500 border border-red-100 transition"><Trash2 size={16}/></button>
                                 </div>
                             </div>
-
-                            <div className="flex gap-2">
-                                <button onClick={() => { setEditingSlot(JSON.parse(JSON.stringify(slot))); setIsModalOpen(true); }} className="p-2 bg-white rounded-lg hover:bg-purple-100 text-purple-700 border border-purple-100 transition"><Edit size={16}/></button>
-                                <button onClick={() => handleDeleteRequest(slot.date)} className="p-2 bg-white rounded-lg hover:bg-red-50 text-red-500 border border-red-100 transition"><Trash2 size={16}/></button>
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
             
@@ -157,7 +227,7 @@ export const EventsTab: React.FC = () => {
                                 className="w-full border rounded p-2" 
                                 value={editingSlot?.date || ''} 
                                 onChange={e => setEditingSlot({...editingSlot, date: e.target.value})} 
-                                disabled={!!editingSlot?.date && eventSlots.some(s => s.date === editingSlot.date && s !== editingSlot)} 
+                                disabled={!!editingSlot?.date && settings.eventSlots.some(s => s.date === editingSlot.date && s !== editingSlot)} 
                             />
                         </div>
                         
