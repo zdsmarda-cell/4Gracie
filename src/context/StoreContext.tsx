@@ -263,6 +263,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
+    if (type === 'success') return;
     setGlobalNotification({ message, type, autoClose });
   };
 
@@ -600,7 +601,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
     if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Email již existuje.'); return false; }
-    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
     
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', newUser);
