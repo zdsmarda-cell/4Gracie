@@ -34,11 +34,4 @@ router.delete('/calendar/:date', withDb(async (req, res, db) => {
     res.json({ success: true }); 
 }));
 
-// App Version (Cache Busting)
-router.post('/version', withDb(async (req, res, db) => {
-    const { version } = req.body;
-    await db.query('INSERT INTO app_settings (key_name, data) VALUES ("app_version", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(version), JSON.stringify(version)]);
-    res.json({ success: true });
-}));
-
 export default router;

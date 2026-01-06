@@ -1,14 +1,14 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, EventSlot, OrdersSearchResult, CookieSettings, DataSourceMode } from '../types';
-import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS, BUILD_VERSION } from '../constants';
+import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, calculateDailyLoad, getAvailableEventDatesLogic } from '../utils/orderLogic';
 import { removeDiacritics, formatDate, calculateCzIban } from '../utils/helpers';
 import { useAuth } from '../hooks/useAuth';
 import { useCart } from '../hooks/useCart';
-import { generateInvoicePdf } from '../utils/pdfGenerator'; // NEW IMPORT
+import { generateInvoicePdf } from '../utils/pdfGenerator';
 
 interface CheckResult {
   allowed: boolean;
@@ -163,7 +163,18 @@ const loadFromStorage = <T,>(key: string, fallback: T): T => {
 };
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // @ts-ignore
+  const isPreviewEnvironment = (import.meta && import.meta.env && import.meta.env.DEV) || false;
+  // @ts-ignore
+  const isProduction = (import.meta && import.meta.env && import.meta.env.PROD) || false;
+
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
+    // STRICT PRODUCTION ENFORCEMENT:
+    // If we are in production build (PROD=true), ALWAYS force 'api'.
+    // Ignores localStorage preferences to prevent "local memory" fallback.
+    if (isProduction) {
+        return 'api';
+    }
     return (localStorage.getItem('app_data_source') as DataSourceMode) || 'local';
   });
   
@@ -182,15 +193,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_SETTINGS);
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
-
-  const isPreviewEnvironment = useMemo(() => {
-      try {
-          // @ts-ignore
-          return (import.meta && import.meta.env && import.meta.env.DEV) || false;
-      } catch {
-          return false;
-      }
-  }, []);
 
   const t = (key: string, params?: Record<string, string>) => {
     let text = TRANSLATIONS[language]?.[key] || key;
@@ -222,7 +224,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     let baseUrl = env.VITE_API_URL;
     if (!baseUrl) {
-       baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
+       // Robust fallback for preview/production if env var is missing
+       const proto = window.location.protocol.startsWith('http') ? window.location.protocol : 'http:';
+       const host = window.location.hostname || 'localhost';
+       baseUrl = `${proto}//${host}:3000`;
     }
     if (baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
@@ -261,11 +266,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setDbConnectionError(false);
       return json;
     } catch (e: any) {
-      if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
+      console.warn(`[API] Call to ${endpoint} failed:`, e);
+      
+      // Treat network errors as critical connection errors that trigger Maintenance page
+      if (
+          e.message === 'TIMEOUT_LIMIT_REACHED' || 
+          e.name === 'AbortError' || 
+          e.message.includes('Failed to fetch') || 
+          e.message.includes('NetworkError')
+      ) {
          showNotify('Server neodpovídá.', 'error');
          setDbConnectionError(true);
       } else {
-         console.warn(`[API] Call to ${endpoint} failed:`, e);
          showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
       }
       return null;
@@ -287,23 +299,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data) {
-              // --- VERSION CHECK LOGIC ---
-              const dbVersion = Number(data.appVersion || 0);
-              const localVersion = Number(BUILD_VERSION);
-
-              if (localVersion > dbVersion) {
-                  // I am the first one with new code. Update DB.
-                  console.log(`[Version] Upgrading DB from ${dbVersion} to ${localVersion}`);
-                  await apiCall('/api/version', 'POST', { version: localVersion });
-              } else if (localVersion < dbVersion) {
-                  // My code is old. DB has newer version. Force Reload.
-                  console.warn(`[Version] Outdated client (${localVersion} < ${dbVersion}). Reloading...`);
-                  // Append timestamp to force bypass cache
-                  window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now();
-                  return; // Stop processing
-              }
-              // ---------------------------
-
               setProducts(data.products || []);
               setOrders(data.orders || []);
               if (data.settings) {
@@ -341,6 +336,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, [dataSource, apiCall]);
 
   const setDataSource = (mode: DataSourceMode) => {
+    // Prevent switching to local in production
+    if (isProduction && mode === 'local') {
+        console.warn("Local mode is strictly forbidden in production.");
+        return;
+    }
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
   };
@@ -827,10 +827,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   
-  // UPDATED: Using new utility for PDF generation
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => { 
       try {
-          // Visual feedback that something is happening
           showNotify('Generuji fakturu...', 'success', false);
           await generateInvoicePdf(o, type, settings);
           dismissNotification(); // Hide 'generating' message

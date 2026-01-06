@@ -1,10 +1,6 @@
 
 import { Product, ProductCategory, Allergen, OrderStatus, Order, DeliveryType, PaymentMethod, GlobalSettings, Language, PickupLocation } from './types';
 
-// Změňte toto číslo při každém buildu/nasazení, pokud chcete vynutit refresh u všech klientů.
-// Formát: YYYYMMDDHHMM
-export const BUILD_VERSION = 202505201200; 
-
 export const ALLERGENS: Allergen[] = [
   { id: 1, code: '1', name: 'Obiloviny obsahující lepek' },
   { id: 2, code: '2', name: 'Korýši a výrobky z nich' },
