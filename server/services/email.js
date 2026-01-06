@@ -116,7 +116,7 @@ export const startEmailWorker = () => {
 
 // --- INTERNAL PROCESSORS (Actually send via Transporter) ---
 
-const processCustomerEmail = async (to, order, type, settings, customStatus) => {
+export const processCustomerEmail = async (to, order, type, settings, customStatus) => {
     const lang = order.language || 'cs';
     const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
     const attachments = [];
@@ -165,7 +165,7 @@ const processCustomerEmail = async (to, order, type, settings, customStatus) => 
     });
 };
 
-const processOperatorEmail = async (to, order, type, settings) => {
+export const processOperatorEmail = async (to, order, type, settings) => {
     const operatorSubject = type === 'created' ? `Nová objednávka #${order.id}` : `Aktualizace objednávky #${order.id}`;
     const operatorTitle = type === 'created' ? "Nová objednávka" : "Úprava objednávky";
     const operatorMsg = type === 'created' ? "Přišla nová objednávka z e-shopu." : "Zákazník upravil existující objednávku.";
@@ -181,7 +181,7 @@ const processOperatorEmail = async (to, order, type, settings) => {
     });
 };
 
-const processEventNotification = async (to, products, eventDate) => {
+export const processEventNotification = async (to, products, eventDate) => {
     const formattedDate = formatDate(eventDate);
     const subject = `Speciální akce na ${formattedDate} - Objednejte si včas!`;
     const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || '#';
@@ -355,4 +355,22 @@ export const sendEventNotification = async (eventDate, products, recipients) => 
             ['event_notification', recipient, 'Nová cateringová akce!', JSON.stringify({ date: eventDate, products }), 'pending']
         );
     }
+};
+
+// Helper for image URLs
+const getImgUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    
+    const port = process.env.PORT || 3000;
+    let baseUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost';
+    
+    if (!baseUrl.includes(':', 6)) { 
+        baseUrl = `${baseUrl}:${port}`;
+    }
+    
+    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    
+    return `${baseUrl}${cleanPath}`;
 };

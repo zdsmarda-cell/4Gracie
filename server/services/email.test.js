@@ -1,6 +1,6 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sendOrderEmail, initEmail } from './email.js';
+import { processCustomerEmail, processOperatorEmail, initEmail } from './email.js';
 
 // Mock Nodemailer
 const sendMailMock = vi.fn();
@@ -34,7 +34,7 @@ describe('Email Service', () => {
         initEmail(); // Initialize transporter
     });
 
-    it('should send created order email with attachments', async () => {
+    it('should send created order email with attachments (Customer)', async () => {
         const order = {
             id: '123',
             userId: 'u1',
@@ -47,16 +47,39 @@ describe('Email Service', () => {
         };
         const settings = { companyDetails: { email: 'admin@test.com' } };
 
-        await sendOrderEmail(order, 'created', settings);
+        // Test customer processing directly
+        await processCustomerEmail('customer@test.com', order, 'created', settings);
 
-        // Expect 2 calls: 1 to customer, 1 to admin
-        expect(sendMailMock).toHaveBeenCalledTimes(2);
+        expect(sendMailMock).toHaveBeenCalledTimes(1);
         
-        // Check customer email (using .mock.calls)
-        const customerCall = sendMailMock.mock.calls.find(call => call[0].to === 'customer@test.com');
-        expect(customerCall).toBeDefined();
-        expect(customerCall[0].subject).toContain('Potvrzení objednávky');
-        expect(customerCall[0].attachments).toHaveLength(1); // Invoice PDF
+        // Check customer email arguments
+        const customerCall = sendMailMock.mock.calls[0][0];
+        expect(customerCall.to).toBe('customer@test.com');
+        expect(customerCall.subject).toContain('Potvrzení objednávky');
+        expect(customerCall.attachments).toHaveLength(1); // Invoice PDF
+    });
+
+    it('should send created order email to Operator', async () => {
+        const order = {
+            id: '123',
+            userId: 'u1',
+            status: 'created',
+            items: [],
+            totalPrice: 100,
+            packagingFee: 0,
+            deliveryFee: 0,
+            language: 'cs'
+        };
+        const settings = { companyDetails: { email: 'admin@test.com' } };
+
+        // Test operator processing directly
+        await processOperatorEmail('admin@test.com', order, 'created', settings);
+
+        expect(sendMailMock).toHaveBeenCalledTimes(1);
+        
+        const operatorCall = sendMailMock.mock.calls[0][0];
+        expect(operatorCall.to).toBe('admin@test.com');
+        expect(operatorCall.subject).toContain('Nová objednávka');
     });
 
     it('should send status update email', async () => {
@@ -72,7 +95,8 @@ describe('Email Service', () => {
         };
         const settings = {};
 
-        await sendOrderEmail(order, 'status', settings, 'confirmed');
+        // Test customer status update logic
+        await processCustomerEmail('customer@test.com', order, 'status', settings, 'confirmed');
 
         expect(sendMailMock).toHaveBeenCalledTimes(1);
         const call = sendMailMock.mock.calls[0][0];
