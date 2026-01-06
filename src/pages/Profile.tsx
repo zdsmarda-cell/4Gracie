@@ -269,7 +269,7 @@ export const Profile: React.FC = () => {
 
   // --- PASSWORD & MISC ---
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassMsg(null);
     
@@ -282,7 +282,7 @@ export const Profile: React.FC = () => {
       return;
     }
 
-    const result = changePassword(oldPass, newPass);
+    const result = await changePassword(oldPass, newPass);
     if (result.success) {
       setPassMsg({ type: 'success', text: result.message });
       setOldPass('');

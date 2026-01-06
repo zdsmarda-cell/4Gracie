@@ -169,11 +169,11 @@ export const useAuth = (
         } 
     };
 
-    const changePassword = (o: string, n: string) => { 
+    const changePassword = async (o: string, n: string) => { 
         if (!user) return { success: false, message: 'Login required' }; 
         if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; 
         const u = { ...user, passwordHash: hashPassword(n) }; 
-        updateUser(u); 
+        await updateUser(u); 
         return { success: true, message: 'Změněno' }; 
     };
 
