@@ -106,8 +106,10 @@ interface StoreContextType {
   changePassword: (oldPass: string, newPass: string) => PasswordChangeResult;
   addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
   
+  searchUsers: (filters: { search: string }) => Promise<User[]>; // Added
+  
   orders: Order[];
-  searchOrders: (filters: any) => Promise<{ orders: Order[], total: number }>;
+  searchOrders: (filters: any) => Promise<{ orders: Order[], total: number }>; // Added
   addOrder: (order: Order) => Promise<boolean>;
   updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
   updateOrder: (order: Order, sendNotify?: boolean, isUserEdit?: boolean) => Promise<boolean>;
@@ -156,7 +158,7 @@ interface StoreContextType {
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
   uploadImage: (base64: string, name: string) => Promise<string>;
-  getImageUrl: (path: string) => string;
+  getImageUrl: (path: string) => string; // Added
   
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
@@ -452,12 +454,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               if (filters.status && o.status !== filters.status) return false;
               if (filters.dateFrom && o.deliveryDate < filters.dateFrom) return false;
               if (filters.dateTo && o.deliveryDate > filters.dateTo) return false;
+              if (filters.customer && !o.userName?.toLowerCase().includes(filters.customer.toLowerCase())) return false;
               return true;
           });
           const page = Number(filters.page) || 1;
           const limit = Number(filters.limit) || 50;
           const start = (page - 1) * limit;
           return { orders: filtered.slice(start, start + limit), total: filtered.length };
+      }
+  };
+
+  const searchUsers = async (filters: { search: string }): Promise<User[]> => {
+      if (dataSource === 'api') {
+          const queryString = new URLSearchParams(filters).toString();
+          const res = await apiCall(`/api/users?${queryString}`, 'GET');
+          return res?.users || [];
+      } else {
+          const term = filters.search.toLowerCase();
+          return allUsers.filter(u => 
+              u.name.toLowerCase().includes(term) || 
+              u.email.toLowerCase().includes(term)
+          );
       }
   };
 
@@ -1054,8 +1071,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     <StoreContext.Provider value={{
       dataSource, setDataSource,
       isLoading, isOperationPending, dbConnectionError,
-      language, setLanguage, cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
+      language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
+      searchUsers, 
       orders, searchOrders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, products, addProduct, updateProduct, deleteProduct,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, updateEventSlot, removeEventSlot,
