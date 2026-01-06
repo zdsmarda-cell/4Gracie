@@ -139,6 +139,7 @@ interface StoreContextType {
   t: (key: string, params?: Record<string, string>) => string;
   tData: (obj: any, field: string) => string;
   getImageUrl: (url?: string) => string;
+  getFullApiUrl: (endpoint: string) => string;
   
   generateInvoice: (order: Order) => string;
   printInvoice: (order: Order, type?: 'proforma' | 'final') => Promise<void>;
@@ -265,7 +266,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type, autoClose });
   };
 
-  const getFullApiUrl = (endpoint: string) => {
+  const getFullApiUrl = useCallback((endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env;
     let baseUrl = env.VITE_API_URL;
@@ -277,7 +278,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     return `${baseUrl}${cleanEndpoint}`;
-  };
+  }, []);
 
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
@@ -317,7 +318,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } finally {
         setIsOperationPending(false); 
     }
-  }, []);
+  }, [getFullApiUrl]);
 
   const fetchData = async () => {
       setIsLoading(true);
@@ -1036,7 +1037,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       cookieSettings, saveCookieSettings,
       checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo,
       calculatePackagingFee, getAvailableEventDates, isEventCapacityAvailable,
-      t, tData, getImageUrl, generateInvoice, printInvoice, generateCzIban, importDatabase, uploadImage,
+      t, tData, getImageUrl, getFullApiUrl, generateInvoice, printInvoice, generateCzIban, importDatabase, uploadImage,
       globalNotification, dismissNotification,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate
     }}>
