@@ -21,6 +21,8 @@ export const initEmail = async () => {
         } catch (e) {
             console.error('❌ SMTP Init Error:', e.message);
         }
+    } else {
+        console.warn('⚠️ SMTP_HOST not set. Emails will not be sent.');
     }
 };
 
@@ -184,6 +186,7 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
             <div style="margin-top: 20px; font-size: 12px; color: #666;">
                 <p><strong>Termín:</strong> ${formatDate(order.deliveryDate)}</p>
                 <p><strong>Místo dodání / odběru:</strong><br> ${addressDisplay}</p>
+                ${order.note ? `<p><strong>Poznámka:</strong><br> ${order.note}</p>` : ''}
             </div>
         </div>
     `;
@@ -197,12 +200,13 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
     return htmlContent;
 };
 
-// NEW: Event Notification Email Logic
+// Event Notification Email Logic
 export const sendEventNotification = async (eventDate, products, recipients) => {
     if (!transporter || recipients.length === 0) return;
 
     const formattedDate = formatDate(eventDate);
     const subject = `Speciální akce na ${formattedDate} - Objednejte si včas!`;
+    const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || '#';
 
     // Helper to calculate deadline date
     const getDeadline = (leadTime) => {
@@ -246,7 +250,7 @@ export const sendEventNotification = async (eventDate, products, recipients) => 
                 ${productsHtml}
                 
                 <div style="text-align: center; margin-top: 30px;">
-                    <a href="${process.env.VITE_APP_URL || '#'}" style="display: inline-block; background-color: #9333ea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold;">
+                    <a href="${appUrl}" target="_blank" style="display: inline-block; background-color: #9333ea; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold;">
                         Objednat nyní
                     </a>
                 </div>
@@ -260,12 +264,12 @@ export const sendEventNotification = async (eventDate, products, recipients) => 
     `;
 
     try {
-        // Send as BCC to protect privacy
         await transporter.sendMail({
             from: process.env.EMAIL_FROM,
-            bcc: recipients, // Array of email strings
+            bcc: recipients,
             subject: subject,
-            html: htmlContent
+            html: htmlContent,
+            encoding: 'base64'
         });
         console.log(`✅ Event notification sent to ${recipients.length} recipients.`);
     } catch (e) {
@@ -274,119 +278,115 @@ export const sendEventNotification = async (eventDate, products, recipients) => 
 };
 
 export const sendOrderEmail = async (order, type, settings, customStatus = null) => {
-    if (!transporter) return;
+    if (!transporter) {
+        console.warn('⚠️ Cannot send email: Transporter not initialized.');
+        return;
+    }
 
     const lang = order.language || 'cs';
     const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
     const attachments = [];
 
+    // --- 1. PREPARE ATTACHMENTS (Only for Customer on Created/Delivered) ---
+    // VOP
+    if (type === 'created' && process.env.VOP_PATH && fs.existsSync(process.env.VOP_PATH)) {
+        attachments.push({
+            filename: 'VOP.pdf',
+            path: process.env.VOP_PATH
+        });
+    }
+
+    // Invoice
+    try {
+        if (type === 'created') {
+            const pdfBuffer = await generateInvoicePdf(order, 'proforma', settings);
+            attachments.push({
+                filename: `Zalohova_faktura_${order.id}.pdf`,
+                content: pdfBuffer
+            });
+        } else if (type === 'status' && customStatus === 'delivered') {
+            const pdfBuffer = await generateInvoicePdf(order, 'final', settings);
+            attachments.push({
+                filename: `Danovy_doklad_${order.id}.pdf`,
+                content: pdfBuffer
+            });
+        }
+    } catch (err) {
+        console.error("❌ PDF Generation failed:", err);
+        // Continue sending email without PDF if generation fails
+    }
+
+    // --- 2. FETCH CUSTOMER EMAIL ---
+    let customerEmail = null;
+    try {
+        const { getDb } = await import('../db.js');
+        const db = await getDb();
+        const [u] = await db.query('SELECT email FROM users WHERE id=?', [order.userId]);
+        customerEmail = u[0]?.email;
+    } catch (err) {
+        console.error("❌ Failed to fetch customer email:", err);
+    }
+
     let subject = '';
     let messageHtml = '';
     let title = '';
 
-    const customerEmail = (await import('../db.js')).getDb().then(async pool => {
-        const [u] = await pool.query('SELECT email FROM users WHERE id=?', [order.userId]);
-        return u[0]?.email;
-    });
-    
-    if (type === 'created' && process.env.VOP_PATH) {
-        if (fs.existsSync(process.env.VOP_PATH)) {
-            attachments.push({
-                filename: 'VOP.pdf',
-                path: process.env.VOP_PATH
-            });
-        }
-    }
-
-    if (type === 'created') {
-        const pdfBuffer = await generateInvoicePdf(order, 'proforma', settings);
-        attachments.push({
-            filename: `Zalohova_faktura_${order.id}.pdf`,
-            content: pdfBuffer
-        });
-    } else if (type === 'status' && customStatus === 'delivered') {
-        const pdfBuffer = await generateInvoicePdf(order, 'final', settings);
-        attachments.push({
-            filename: `Danovy_doklad_${order.id}.pdf`,
-            content: pdfBuffer
-        });
-    }
-
+    // --- 3. DETERMINE CONTENT ---
     if (type === 'created') {
         subject = `${t.created_subject} #${order.id}`;
         title = t.created_subject;
         messageHtml = generateOrderHtml(order, title, "Děkujeme za Vaši objednávku.", lang, settings);
-        
-        const email = await customerEmail;
-        if (email) {
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM,
-                to: email,
-                subject,
-                html: messageHtml,
-                encoding: 'base64', 
-                attachments
-            });
-        }
-
-        if (settings.companyDetails?.email) {
-            const operatorHtml = generateOrderHtml(order, "Nová objednávka", "Přišla nová objednávka z e-shopu.", 'cs', settings);
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM,
-                to: settings.companyDetails.email,
-                subject: `Nová objednávka #${order.id}`,
-                html: operatorHtml,
-                encoding: 'base64'
-            });
-        }
-
     } else if (type === 'updated') {
         subject = `${t.updated_subject} #${order.id}`;
         title = t.updated_subject;
         messageHtml = generateOrderHtml(order, title, "Vaše objednávka byla upravena.", lang, settings);
-
-        const email = await customerEmail;
-        if (email) {
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM,
-                to: email,
-                subject,
-                html: messageHtml,
-                encoding: 'base64', 
-                attachments 
-            });
-        }
-        
-        if (settings.companyDetails?.email) {
-            const operatorHtml = generateOrderHtml(order, "Úprava objednávky", "Zákazník upravil existující objednávku.", 'cs', settings);
-            await transporter.sendMail({
-                from: process.env.EMAIL_FROM,
-                to: settings.companyDetails.email,
-                subject: `Aktualizace objednávky #${order.id}`,
-                html: operatorHtml,
-                encoding: 'base64'
-            });
-        }
-
     } else if (type === 'status') {
         subject = `${t.status_update_subject} #${order.id}`;
         title = t.status_update_subject;
-        
         const localizedStatus = STATUS_TRANSLATIONS[lang]?.[customStatus] || customStatus;
         const statusMsg = `${t.status_prefix} ${localizedStatus}`;
-        
         messageHtml = generateOrderHtml(order, title, statusMsg, lang, settings);
+    }
 
-        const email = await customerEmail;
-        if (email) {
+    // --- 4. SEND TO CUSTOMER ---
+    if (customerEmail) {
+        try {
             await transporter.sendMail({
                 from: process.env.EMAIL_FROM,
-                to: email,
+                to: customerEmail,
                 subject,
                 html: messageHtml,
                 encoding: 'base64',
-                attachments
+                attachments: attachments // Attachments only for customer
             });
+            console.log(`📧 Customer email sent to: ${customerEmail} (${type})`);
+        } catch (e) {
+            console.error(`❌ Failed to send customer email (${type}):`, e.message);
+        }
+    } else {
+        console.warn(`⚠️ No customer email found for User ID: ${order.userId}`);
+    }
+
+    // --- 5. SEND TO OPERATOR (Only on Created or Updated by User) ---
+    if ((type === 'created' || type === 'updated') && settings.companyDetails?.email) {
+        try {
+            const operatorSubject = type === 'created' ? `Nová objednávka #${order.id}` : `Aktualizace objednávky #${order.id}`;
+            const operatorTitle = type === 'created' ? "Nová objednávka" : "Úprava objednávky";
+            const operatorMsg = type === 'created' ? "Přišla nová objednávka z e-shopu." : "Zákazník upravil existující objednávku.";
+            
+            const operatorHtml = generateOrderHtml(order, operatorTitle, operatorMsg, 'cs', settings);
+            
+            await transporter.sendMail({
+                from: process.env.EMAIL_FROM,
+                to: settings.companyDetails.email,
+                subject: operatorSubject,
+                html: operatorHtml,
+                encoding: 'base64'
+                // No attachments for operator usually needed, or can add if requested
+            });
+            console.log(`📧 Operator email sent to: ${settings.companyDetails.email} (${type})`);
+        } catch (e) {
+            console.error(`❌ Failed to send operator email:`, e.message);
         }
     }
 };

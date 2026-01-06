@@ -56,9 +56,13 @@ router.post('/', withDb(async (req, res, db) => {
         
         // Handle User Edit Notification or general update
         if (req.body.sendNotify) {
-             const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
-             const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
-             sendOrderEmail(order, 'updated', settings);
+             try {
+                 const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
+                 const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
+                 await sendOrderEmail(order, 'updated', settings);
+             } catch(e) {
+                 console.error("Failed to send update email:", e);
+             }
         }
 
     } else {
@@ -85,9 +89,15 @@ router.post('/', withDb(async (req, res, db) => {
             await db.query('INSERT INTO order_items (id, order_id, product_id, name, quantity, price, category, unit, workload, workload_overhead) VALUES ?', [itemValues]);
         }
 
-        const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
-        const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
-        sendOrderEmail(order, 'created', settings);
+        // Email Trigger
+        try {
+            const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
+            const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
+            console.log(`📧 Attempting to send CREATED email for order #${order.id}`);
+            await sendOrderEmail(order, 'created', settings);
+        } catch (e) {
+            console.error("❌ Critical: Failed to trigger order created email:", e);
+        }
     }
     res.json({ success: true });
 }));
@@ -150,7 +160,11 @@ router.put('/status', withDb(async (req, res, db) => {
             if (status === 'delivered' && !o.deliveryCompanyDetailsSnapshot && deliveryCompanyDetailsSnapshot) {
                 o.deliveryCompanyDetailsSnapshot = deliveryCompanyDetailsSnapshot;
             }
-            sendOrderEmail(o, 'status', settings, status);
+            try {
+                await sendOrderEmail(o, 'status', settings, status);
+            } catch (e) {
+                console.error(`Failed to send status update email for order ${o.id}:`, e);
+            }
         }
     }
     

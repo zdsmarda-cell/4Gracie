@@ -36,7 +36,10 @@ export const useAuth = (
             const foundUser = allUsers.find(u => u.email === email);
             if (foundUser) {
                 if (foundUser.isBlocked) return { success: false, message: 'Blokován.' };
-                if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo.' };
+                // Strict password check
+                if (!password || foundUser.passwordHash !== hashPassword(password)) {
+                    return { success: false, message: 'Chybné heslo.' };
+                }
                 setUser(foundUser);
                 localStorage.setItem('session_user', JSON.stringify(foundUser));
                 return { success: true };
@@ -80,13 +83,13 @@ export const useAuth = (
             const res = await apiCall('/api/users', 'POST', newUser);
             if (res && res.success) {
                 setAllUsers(prev => [...prev, newUser]);
-                showNotify(`Uživatel ${name} vytvořen a email odeslán.`, 'success', false);
+                // Success notification removed
                 return true;
             }
             return false;
         } else {
             setAllUsers(prev => [...prev, newUser]);
-            showNotify(`Uživatel ${name} vytvořen.`);
+            // Success notification removed
             return true;
         }
     };
@@ -98,7 +101,7 @@ export const useAuth = (
                 setUser(u);
                 localStorage.setItem('session_user', JSON.stringify(u));
                 setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-                showNotify('Uživatel aktualizován v DB.');
+                // Success notification removed
                 return true;
             }
             return false;
@@ -119,7 +122,7 @@ export const useAuth = (
                     setUser(u);
                     localStorage.setItem('session_user', JSON.stringify(u));
                 }
-                showNotify('Uživatel aktualizován v DB.');
+                // Success notification removed
                 return true;
             }
             return false;

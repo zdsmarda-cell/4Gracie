@@ -44,12 +44,27 @@ router.post('/', withDb(async (req, res, db) => {
 
 // AUTH LOGIN
 router.post('/login', withDb(async (req, res, db) => {
-    const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [req.body.email]);
+    const { email, password } = req.body;
+    const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    
     if (rows.length > 0) {
         const u = rows[0];
+        
+        // CRITICAL FIX: Verify password
+        const reqHash = hashPassword(password || '');
+        if (u.password_hash !== reqHash) {
+            return res.json({ success: false, message: 'Chybné heslo.' });
+        }
+
+        if (Boolean(u.is_blocked)) {
+            return res.json({ success: false, message: 'Účet je zablokován.' });
+        }
+
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
         res.json({ success: true, user: { id: u.id, email: u.email, name: u.name, phone: u.phone, role: u.role, isBlocked: Boolean(u.is_blocked), marketingConsent: Boolean(u.marketing_consent), passwordHash: u.password_hash, deliveryAddresses: addrs.filter(a => a.type === 'delivery'), billingAddresses: addrs.filter(a => a.type === 'billing') } });
-    } else { res.json({ success: false, message: 'User not found' }); }
+    } else { 
+        res.json({ success: false, message: 'Uživatel nenalezen.' }); 
+    }
 }));
 
 // PASSWORD RESET

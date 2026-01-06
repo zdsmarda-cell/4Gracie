@@ -407,7 +407,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
     setCartBump(true);
     setTimeout(() => setCartBump(false), 300);
-    showNotify(t('notification.added_to_cart', { name: product.name }));
+    // Success notification removed as requested
   };
 
   const removeFromCart = (id: string) => {
@@ -493,13 +493,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (res && res.success) {
         // Refresh orders if needed or just add locally
         setOrders(prev => [orderWithHistory, ...prev]);
-        showNotify(t('notification.order_created', { id: order.id }));
+        // Success notification removed
         return true;
       }
       return false;
     } else {
       setOrders(prev => [orderWithHistory, ...prev]);
-      showNotify(t('notification.order_created', { id: order.id }));
+      // Success notification removed
       return true;
     }
   };
@@ -511,14 +511,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
        const res = await apiCall('/api/orders', 'POST', { ...updatedOrder, sendNotify });
        if (res && res.success) {
           setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-          if (isUserEdit) showNotify('Objednávka byla upravena.');
-          else showNotify(t('notification.db_saved'));
+          // Success notification removed
           return true;
        }
        return false;
     } else {
        setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-       showNotify(t('notification.saved'));
+       // Success notification removed
        return true;
     }
   };
@@ -541,7 +540,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
             return o;
           }));
-          showNotify(`Stav změněn.`, 'success', !notify);
+          // Success notification removed
           return true;
        }
        return false;
@@ -557,7 +556,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
           return o;
         }));
-        showNotify(`Stav změněn.`);
+        // Success notification removed
         return true;
     }
   };
@@ -565,40 +564,40 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setProducts(prev => [...prev, p]); return true; }
         return false;
     } else {
-        setProducts(prev => [...prev, p]); showNotify(t('notification.saved')); return true;
+        setProducts(prev => [...prev, p]); return true;
     }
   };
 
   const updateProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true; }
         return false;
     } else {
-        setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify(t('notification.saved')); return true;
+        setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
     }
   };
 
   const deleteProduct = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Smazáno.'); return true; }
+        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); return true; }
         return false;
     } else {
-        setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Smazáno.'); return true;
+        setProducts(prev => prev.filter(x => x.id !== id)); return true;
     }
   };
 
   const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/settings', 'POST', s);
-        if (res && res.success) { setSettings(s); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setSettings(s); return true; }
         return false;
     } else {
-        setSettings(s); showNotify(t('notification.saved')); return true;
+        setSettings(s); return true;
     }
   };
 
@@ -607,7 +606,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const res = await apiCall('/api/calendar', 'POST', c);
         if (res && res.success) {
             setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-            showNotify(t('notification.db_saved')); return true;
+            return true;
         }
         return false;
     } else {
@@ -619,7 +618,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const removeDayConfig = async (date: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify('Smazáno.'); return true; }
+        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); return true; }
         return false;
     } else {
         setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
@@ -651,7 +650,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       const res = await apiCall('/api/admin/notify-event', 'POST', { date });
       if (res && res.success) {
-          showNotify(`Notifikace odeslána ${res.count} odběratelům.`);
+          // Success notification removed
           return true;
       }
       return false;
@@ -660,7 +659,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
-        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); return true; }
         return false;
     } else {
         setDiscountCodes(prev => [...prev, c]); return true;
@@ -670,7 +669,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', code);
-        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify(t('notification.db_saved')); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
@@ -680,7 +679,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteDiscountCode = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Smazáno.'); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
