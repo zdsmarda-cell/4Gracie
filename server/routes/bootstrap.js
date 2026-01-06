@@ -43,6 +43,10 @@ router.get('/', withDb(async (req, res, db) => {
     const [cRows] = await db.query('SELECT data FROM calendar_exceptions');
     const dayConfigs = cRows.map(r => parseJsonCol(r));
 
+    // 7. System Version
+    const [vRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "app_version"');
+    const appVersion = vRows.length > 0 ? parseJsonCol(vRows[0]) : 0;
+
     res.json({
         success: true,
         users,
@@ -50,7 +54,8 @@ router.get('/', withDb(async (req, res, db) => {
         orders,
         settings,
         discountCodes,
-        dayConfigs
+        dayConfigs,
+        appVersion
     });
 }));
 

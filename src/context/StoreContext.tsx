@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, EventSlot, OrdersSearchResult, CookieSettings, DataSourceMode } from '../types';
-import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
+import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS, BUILD_VERSION } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, calculateDailyLoad, getAvailableEventDatesLogic } from '../utils/orderLogic';
@@ -287,6 +287,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data) {
+              // --- VERSION CHECK LOGIC ---
+              const dbVersion = Number(data.appVersion || 0);
+              const localVersion = Number(BUILD_VERSION);
+
+              if (localVersion > dbVersion) {
+                  // I am the first one with new code. Update DB.
+                  console.log(`[Version] Upgrading DB from ${dbVersion} to ${localVersion}`);
+                  await apiCall('/api/version', 'POST', { version: localVersion });
+              } else if (localVersion < dbVersion) {
+                  // My code is old. DB has newer version. Force Reload.
+                  console.warn(`[Version] Outdated client (${localVersion} < ${dbVersion}). Reloading...`);
+                  // Append timestamp to force bypass cache
+                  window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now();
+                  return; // Stop processing
+              }
+              // ---------------------------
+
               setProducts(data.products || []);
               setOrders(data.orders || []);
               if (data.settings) {
