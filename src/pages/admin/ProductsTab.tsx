@@ -4,7 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { ALLERGENS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
-import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe, Upload } from 'lucide-react';
+import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe, Upload, Layers, Search, AlertCircle, Filter } from 'lucide-react';
 
 const TranslationViewModal: React.FC<{
     isOpen: boolean;
@@ -25,7 +25,6 @@ const TranslationViewModal: React.FC<{
                 </div>
 
                 <div className="space-y-6">
-                    {/* English Section */}
                     <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100">
                         <h4 className="font-bold text-blue-800 mb-3 flex items-center">
                             <span className="bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded mr-2">EN</span> 
@@ -43,7 +42,6 @@ const TranslationViewModal: React.FC<{
                         </div>
                     </div>
 
-                    {/* German Section */}
                     <div className="bg-yellow-50/50 rounded-xl p-4 border border-yellow-100">
                         <h4 className="font-bold text-yellow-800 mb-3 flex items-center">
                             <span className="bg-yellow-500 text-white text-[10px] font-bold px-2 py-0.5 rounded mr-2">DE</span> 
@@ -55,7 +53,7 @@ const TranslationViewModal: React.FC<{
                                 <p className="text-sm font-medium text-gray-800">{item.translations.de?.name || '-'}</p>
                             </div>
                             <div>
-                                <span className="text-[10px] font-bold text-yellow-500 uppercase block mb-1">Beschreibung</span>
+                                <span className="text-[10px] font-bold text-yellow-500 uppercase block mb-1">Description</span>
                                 <p className="text-sm text-gray-600 leading-relaxed">{item.translations.de?.description || '-'}</p>
                             </div>
                         </div>
@@ -77,18 +75,20 @@ export const ProductsTab: React.FC = () => {
     const [confirmDelete, setConfirmDelete] = useState<{type: string, id: string, name?: string} | null>(null);
     const [isTranslating, setIsTranslating] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
-    
-    // Translation View State
     const [viewingTranslations, setViewingTranslations] = useState<Product | null>(null);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [filterEventOnly, setFilterEventOnly] = useState(false); // NEW Filter
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
+    const capCategories = useMemo(() => settings.capacityCategories || [], [settings.capacityCategories]);
+    
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
 
     const handleAddClick = () => {
-        // Initialize with sensible defaults to avoid NULL values
+        setSaveError(null);
         setEditingProduct({
-            category: sortedCategories[0]?.id || '', // Default to first category
-            unit: 'ks', // Default unit
+            category: sortedCategories[0]?.id || '', 
+            unit: 'ks', 
             visibility: { online: true, store: true, stand: true },
             allergens: [],
             images: [],
@@ -97,36 +97,53 @@ export const ProductsTab: React.FC = () => {
             vatRateTakeaway: 12,
             workload: 0,
             workloadOverhead: 0,
-            noPackaging: false
+            volume: 0,
+            noPackaging: false,
+            capacityCategoryId: undefined,
+            isEventProduct: false
         });
         setIsProductModalOpen(true);
     };
 
     const saveProduct = async (e: React.FormEvent) => {
         e.preventDefault();
+        setSaveError(null);
         if (!editingProduct) return;
         
-        setIsUploading(true); // Start loading state
+        const prod = { ...editingProduct } as Product;
+
+        // --- VALIDACE KAPACITNÍ KATEGORIE ---
+        if (prod.capacityCategoryId) {
+            const conflictingProduct = products.find(p => 
+                p.capacityCategoryId === prod.capacityCategoryId && 
+                p.category !== prod.category &&
+                p.id !== prod.id
+            );
+            
+            if (conflictingProduct) {
+                const catName = getCategoryName(conflictingProduct.category);
+                const capName = capCategories.find(c => c.id === prod.capacityCategoryId)?.name || prod.capacityCategoryId;
+                setSaveError(`Kapacitní skupina "${capName}" je již používána v kategorii "${catName}". Všechny produkty sdílející stejnou kapacitu musí patřit do stejné hlavní kategorie.`);
+                return;
+            }
+        }
+        
+        setIsUploading(true); 
         
         try {
-            const prod = { ...editingProduct } as Product;
             if (!prod.id) prod.id = Date.now().toString();
             
-            // 1. Process Images (Upload ONLY new Base64 images)
             if (prod.images && prod.images.length > 0) {
                 const processedImages = await Promise.all(prod.images.map(async (img, index) => {
-                    // Check if it is a new Base64 image
                     if (img.startsWith('data:')) {
                         try {
                             const fileName = `prod-${prod.id}-${Date.now()}-${index}.jpg`;
-                            // Upload to server and get URL
                             return await uploadImage(img, fileName);
                         } catch (err) {
                             console.error("Failed to upload image:", err);
-                            return img; // Fallback (though DB might reject large string if column size limited)
+                            return img; 
                         }
                     }
-                    // It's already a URL (existing image), keep as is
                     return img;
                 }));
                 prod.images = processedImages;
@@ -134,7 +151,6 @@ export const ProductsTab: React.FC = () => {
                 prod.images = [];
             }
 
-            // Safety checks for required fields
             if (!prod.category && sortedCategories.length > 0) prod.category = sortedCategories[0].id;
             if (!prod.unit) prod.unit = 'ks';
             if (!prod.visibility) prod.visibility = { online: true, store: true, stand: true };
@@ -146,7 +162,6 @@ export const ProductsTab: React.FC = () => {
             prod.workloadOverhead = Number(prod.workloadOverhead ?? 0);
             prod.volume = Number(prod.volume ?? 0); 
             
-            // Generate Translations if enabled
             if (settings.enableAiTranslation) {
                 setIsTranslating(true);
                 const translations = await generateTranslations({ 
@@ -163,7 +178,7 @@ export const ProductsTab: React.FC = () => {
             setIsProductModalOpen(false);
         } catch (e) {
             console.error("Save error:", e);
-            alert("Chyba při ukládání produktu.");
+            setSaveError("Chyba při ukládání produktu na server.");
         } finally {
             setIsUploading(false);
             setIsTranslating(false);
@@ -173,7 +188,6 @@ export const ProductsTab: React.FC = () => {
     const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file && editingProduct) {
-            // Just read as Base64 for Preview. Upload happens on Save.
             const reader = new FileReader();
             reader.onloadend = () => {
                 const base64 = reader.result as string;
@@ -183,19 +197,21 @@ export const ProductsTab: React.FC = () => {
         }
     };
 
-    React.useEffect(() => {
-        if (confirmDelete && confirmDelete.type === 'product') {
-            if (confirm(`Opravdu smazat ${confirmDelete.name}?`)) {
-                deleteProduct(confirmDelete.id);
-            }
-            setConfirmDelete(null);
-        }
-    }, [confirmDelete]);
+    const filteredProducts = useMemo(() => {
+        if (!filterEventOnly) return products;
+        return products.filter(p => p.isEventProduct);
+    }, [products, filterEventOnly]);
 
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
+                <div className="flex items-center gap-4">
+                    <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
+                    <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer bg-white px-3 py-1.5 rounded-lg border hover:bg-gray-50 transition">
+                        <input type="checkbox" checked={filterEventOnly} onChange={e => setFilterEventOnly(e.target.checked)} className="rounded text-purple-600 focus:ring-purple-600"/>
+                        <span className={filterEventOnly ? "text-purple-700" : "text-gray-500"}>{t('filter.is_event')}</span>
+                    </label>
+                </div>
                 <button onClick={handleAddClick} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
             </div>
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -205,14 +221,14 @@ export const ProductsTab: React.FC = () => {
                     <th className="px-6 py-4 text-left">Foto</th>
                     <th className="px-6 py-4 text-left">Název</th>
                     <th className="px-6 py-4 text-left">Kategorie</th>
+                    <th className="px-6 py-4 text-center">V akci</th>
                     <th className="px-6 py-4 text-left">Cena</th>
-                    <th className="px-6 py-4 text-left">Objem</th>
                     <th className="px-6 py-4 text-center">Online</th>
                     <th className="px-6 py-4 text-right">Akce</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y text-xs">
-                    {products.map(p => (
+                    {filteredProducts.map(p => (
                     <tr key={p.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4">
                         {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
@@ -220,26 +236,17 @@ export const ProductsTab: React.FC = () => {
                         <td className="px-6 py-4 font-bold">
                             {p.name}
                             {p.translations && (
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); setViewingTranslations(p); }}
-                                    className="flex gap-1 mt-1 cursor-pointer hover:bg-gray-100 p-1 rounded -ml-1 transition items-center w-fit"
-                                    title="Zobrazit překlady"
-                                >
-                                    <Languages size={10} className="text-gray-400" />
-                                    <span className="text-[8px] px-1 bg-blue-100 rounded text-blue-700 font-bold">EN</span>
-                                    <span className="text-[8px] px-1 bg-yellow-100 rounded text-yellow-700 font-bold">DE</span>
-                                </button>
+                                <button onClick={() => setViewingTranslations(p)} className="ml-1 inline-flex items-center text-gray-300 hover:text-accent"><Languages size={12}/></button>
                             )}
                         </td>
                         <td className="px-6 py-4">{getCategoryName(p.category)}</td>
-                        <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
-                        <td className="px-6 py-4 font-mono text-gray-500">
-                            {p.volume > 0 ? `${p.volume} ml` : '-'}
-                            {p.noPackaging && <span className="block text-[9px] text-orange-500 font-bold mt-1">Nebalí se</span>}
+                        <td className="px-6 py-4 text-center">
+                            {p.isEventProduct && <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 font-bold rounded-full text-[9px] uppercase">AKCE</span>}
                         </td>
+                        <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
                         <td className="px-6 py-4 text-center">{p.visibility?.online ? <Check size={16} className="inline text-green-500"/> : <X size={16} className="inline text-gray-300"/>}</td>
                         <td className="px-6 py-4 text-right flex justify-end gap-2">
-                        <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                        <button onClick={() => { setSaveError(null); setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
                         <button onClick={() => setConfirmDelete({type: 'product', id: p.id, name: p.name})} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
                         </td>
                     </tr>
@@ -248,17 +255,17 @@ export const ProductsTab: React.FC = () => {
                 </table>
             </div>
 
-            <TranslationViewModal 
-                isOpen={!!viewingTranslations} 
-                onClose={() => setViewingTranslations(null)} 
-                item={viewingTranslations} 
-            />
+            <TranslationViewModal isOpen={!!viewingTranslations} onClose={() => setViewingTranslations(null)} item={viewingTranslations} />
 
             {isProductModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-                <form onSubmit={saveProduct} className="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
-                    <h3 className="font-bold text-lg">{editingProduct?.id ? t('admin.edit_product') : t('admin.add_product')}</h3>
-                    <div className="space-y-4">
+                <form onSubmit={saveProduct} className="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
+                    <div className="flex justify-between items-center border-b pb-4 flex-shrink-0">
+                        <h3 className="font-bold text-lg">{editingProduct?.id ? t('admin.edit_product') : t('admin.add_product')}</h3>
+                        <button type="button" onClick={() => setIsProductModalOpen(false)} className="p-1 hover:bg-gray-100 rounded-full transition"><X size={20}/></button>
+                    </div>
+
+                    <div className="flex-grow overflow-y-auto pr-2 space-y-4 pt-2">
                         <div className="grid grid-cols-2 gap-4">
                             <div className="col-span-2">
                                 <label className="text-xs font-bold text-gray-400 block mb-1">Název produktu</label>
@@ -275,11 +282,7 @@ export const ProductsTab: React.FC = () => {
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-400 block mb-1">Jednotka</label>
-                                    <select 
-                                        className="w-full border rounded p-2 bg-white" 
-                                        value={editingProduct?.unit || 'ks'} 
-                                        onChange={e => setEditingProduct({...editingProduct, unit: e.target.value as 'ks'|'kg'})}
-                                    >
+                                    <select className="w-full border rounded p-2 bg-white" value={editingProduct?.unit || 'ks'} onChange={e => setEditingProduct({...editingProduct, unit: e.target.value as 'ks'|'kg'})}>
                                         <option value="ks">ks (Kusy)</option>
                                         <option value="kg">kg (Kilogramy)</option>
                                     </select>
@@ -287,11 +290,7 @@ export const ProductsTab: React.FC = () => {
                             </div>
                             <div className="col-span-2">
                                 <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie</label>
-                                <select 
-                                    className="w-full border rounded p-2 bg-white" 
-                                    value={editingProduct?.category} 
-                                    onChange={e => setEditingProduct({...editingProduct, category: e.target.value})}
-                                >
+                                <select className="w-full border rounded p-2 bg-white" value={editingProduct?.category} onChange={e => setEditingProduct({...editingProduct, category: e.target.value})}>
                                     {sortedCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                             </div>
@@ -303,28 +302,34 @@ export const ProductsTab: React.FC = () => {
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Objednat předem (dny)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.leadTimeDays || ''} onChange={e => setEditingProduct({...editingProduct, leadTimeDays: Number(e.target.value)})} /></div>
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Trvanlivost (dny)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.shelfLifeDays || ''} onChange={e => setEditingProduct({...editingProduct, shelfLifeDays: Number(e.target.value)})} /></div>
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.minOrderQuantity || ''} onChange={e => setEditingProduct({...editingProduct, minOrderQuantity: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.volume || ''} onChange={e => setEditingProduct({...editingProduct, volume: Number(e.target.value)})} placeholder="Nutné pro balné"/></div>
+                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.volume || ''} onChange={e => setEditingProduct({...editingProduct, volume: Number(e.target.value)})} /></div>
                             </div>
-                            
-                            {/* NO PACKAGING CHECKBOX */}
-                            <label className="flex items-center space-x-2 text-sm pt-1">
-                                <input 
-                                    type="checkbox" 
-                                    checked={editingProduct?.noPackaging ?? false} 
-                                    onChange={e => setEditingProduct({...editingProduct, noPackaging: e.target.checked})} 
-                                    className="rounded text-accent"
-                                />
-                                <span>Nebalí se (nezapočítávat do objemu krabic)</span>
-                            </label>
+                            <div className="flex flex-col gap-2 pt-1">
+                                <label className="flex items-center space-x-2 text-sm"><input type="checkbox" checked={editingProduct?.noPackaging ?? false} onChange={e => setEditingProduct({...editingProduct, noPackaging: e.target.checked})} className="rounded text-accent"/><span>Nebalí se (nezapočítávat do objemu krabic)</span></label>
+                                <label className="flex items-center space-x-2 text-sm font-bold text-purple-700 bg-purple-50 p-2 rounded border border-purple-100"><input type="checkbox" checked={editingProduct?.isEventProduct ?? false} onChange={e => setEditingProduct({...editingProduct, isEventProduct: e.target.checked})} className="rounded text-purple-600 focus:ring-purple-600"/><span>PRODUKT JE V AKCI (Event)</span></label>
+                            </div>
                         </div>
 
                         <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
                             <h4 className="font-bold text-sm text-gray-500 uppercase">Ekonomika a Kapacity</h4>
                             <div className="grid grid-cols-4 gap-4">
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Pracnost (body)</label><input type="number" min="0" className="w-full border rounded p-2 text-sm" value={editingProduct?.workload ?? ''} onChange={e => setEditingProduct({...editingProduct, workload: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Kap. přípravy</label><input type="number" min="0" className="w-full border rounded p-2 text-sm" value={editingProduct?.workloadOverhead ?? ''} onChange={e => setEditingProduct({...editingProduct, workloadOverhead: Number(e.target.value)})} /></div>
+                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Režie přípravy</label><input type="number" min="0" className="w-full border rounded p-2 text-sm" value={editingProduct?.workloadOverhead ?? ''} onChange={e => setEditingProduct({...editingProduct, workloadOverhead: Number(e.target.value)})} /></div>
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">DPH Prodejna (%)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.vatRateInner ?? ''} onChange={e => setEditingProduct({...editingProduct, vatRateInner: Number(e.target.value)})} /></div>
                                 <div><label className="text-[10px] font-bold text-gray-400 block mb-1">DPH S sebou (%)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.vatRateTakeaway ?? ''} onChange={e => setEditingProduct({...editingProduct, vatRateTakeaway: Number(e.target.value)})} /></div>
+                            </div>
+                            <div className="pt-2">
+                                <label className="text-xs font-bold text-gray-400 block mb-1">Kapacitní skupina (sdílená režie přípravy)</label>
+                                <select 
+                                    className="w-full border rounded p-2 text-sm bg-white" 
+                                    value={editingProduct?.capacityCategoryId || ''} 
+                                    onChange={e => setEditingProduct({...editingProduct, capacityCategoryId: e.target.value || undefined})}
+                                >
+                                    <option value="">- Žádná (příprava samostatně) -</option>
+                                    {capCategories.map(cc => (
+                                        <option key={cc.id} value={cc.id}>{cc.name}</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
 
@@ -342,7 +347,16 @@ export const ProductsTab: React.FC = () => {
                             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
                                 {ALLERGENS.map(a => (
                                     <label key={a.id} className={`flex flex-col items-center justify-center p-2 border rounded cursor-pointer transition hover:bg-gray-50 min-h-[80px] text-center ${editingProduct?.allergens?.includes(a.id) ? 'bg-orange-100 border-orange-300 text-orange-700' : 'bg-white border-gray-200'}`}>
-                                        <input type="checkbox" className="sr-only" checked={editingProduct?.allergens?.includes(a.id) ?? false} onChange={e => { const current = editingProduct?.allergens || []; const updated = e.target.checked ? [...current, a.id] : current.filter(id => id !== a.id); setEditingProduct({...editingProduct, allergens: updated}); }} />
+                                        <input 
+                                            type="checkbox" 
+                                            className="sr-only"
+                                            checked={editingProduct?.allergens?.includes(a.id) ?? false}
+                                            onChange={e => {
+                                                const current = editingProduct?.allergens || [];
+                                                const updated = e.target.checked ? [...current, a.id] : current.filter(id => id !== a.id);
+                                                setEditingProduct({...editingProduct, allergens: updated});
+                                            }}
+                                        />
                                         <span className="font-bold text-lg leading-none mb-1">{a.code}</span>
                                         <span className="text-[9px] leading-tight text-gray-600 line-clamp-2">{a.name}</span>
                                     </label>
@@ -361,24 +375,25 @@ export const ProductsTab: React.FC = () => {
                                 ))}
                                 <label className={`w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
                                     <Plus size={24} />
-                                    <span className="text-[10px] mt-1">Nahrát</span>
                                     <input type="file" className="hidden" onChange={handleImageFileChange} disabled={isUploading} />
                                 </label>
                             </div>
                         </div>
                     </div>
 
-                    <div className="flex gap-2 pt-4 border-t">
-                    <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
-                    <button type="submit" disabled={isTranslating || isUploading} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
-                        {isUploading ? (
-                            <><Upload size={14} className="mr-2 animate-bounce"/> Nahrávám obrázky...</>
-                        ) : isTranslating ? (
-                            <><Languages size={14} className="mr-2 animate-pulse"/> Překládám...</>
-                        ) : (
-                            t('common.save')
+                    <div className="flex-shrink-0 pt-4 border-t mt-2">
+                        {saveError && (
+                            <div className="bg-red-50 border-l-4 border-red-500 p-3 rounded flex items-start gap-2 mb-4 animate-in slide-in-from-bottom-2">
+                                <AlertCircle className="text-red-500 flex-shrink-0 mt-0.5" size={16} />
+                                <p className="text-xs text-red-700 font-bold">{saveError}</p>
+                            </div>
                         )}
-                    </button>
+                        <div className="flex gap-2">
+                            <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
+                            <button type="submit" disabled={isTranslating || isUploading} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
+                                {isUploading ? 'Nahrávám...' : isTranslating ? 'Překládám...' : t('common.save')}
+                            </button>
+                        </div>
                     </div>
                 </form>
                 </div>

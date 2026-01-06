@@ -77,7 +77,7 @@ export interface DeliveryRegion {
   deliveryTimeStart?: string; // Format HH:MM
   deliveryTimeEnd?: string;   // Format HH:MM
   exceptions?: RegionException[];
-  translations?: Translations; // Added translations
+  translations?: Translations; 
 }
 
 export interface OpeningHoursDay {
@@ -95,7 +95,7 @@ export interface PickupLocation {
   enabled: boolean;
   openingHours: { [key: number]: OpeningHoursDay }; // 0 = Sunday, 1 = Monday, ... 6 = Saturday
   exceptions?: RegionException[];
-  translations?: Translations; // Added translations
+  translations?: Translations; 
 }
 
 export interface DiscountCode {
@@ -123,7 +123,7 @@ export interface Allergen {
   id: number;
   code: string;
   name: string;
-  }
+}
 
 export interface PackagingType {
   id: string;
@@ -131,7 +131,7 @@ export interface PackagingType {
   volume: number;
   price: number;
   enabled?: boolean;
-  translations?: Translations; // Added translations
+  translations?: Translations;
 }
 
 export interface Category {
@@ -139,7 +139,13 @@ export interface Category {
   name: string; // Display name
   order: number;
   enabled: boolean;
-  translations?: Translations; // Added translations
+  translations?: Translations;
+}
+
+export interface CapacityCategory {
+  id: string;
+  name: string;
+  translations?: Translations;
 }
 
 export interface Product {
@@ -149,6 +155,7 @@ export interface Product {
   price: number;
   unit: 'ks' | 'kg';
   category: string; 
+  capacityCategoryId?: string; // LINK TO CAPACITY GROUP
   images: string[];
   allergens: number[];
   leadTimeDays: number;
@@ -156,7 +163,8 @@ export interface Product {
   workload: number;
   workloadOverhead?: number;
   volume: number;
-  noPackaging?: boolean; // IF TRUE: Does not require packaging, volume is ignored in calculation
+  noPackaging?: boolean;
+  isEventProduct?: boolean; // NEW: Flag for event products
   minOrderQuantity?: number;
   visibility: {
     online: boolean;
@@ -166,7 +174,7 @@ export interface Product {
   commentsAllowed: boolean;
   vatRateInner: number;
   vatRateTakeaway: number;
-  translations?: Translations; // Added translations
+  translations?: Translations;
 }
 
 export interface CartItem extends Product {
@@ -177,7 +185,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  phone: string; // NEW FIELD
+  phone: string; 
   role: 'customer' | 'admin' | 'driver';
   billingAddresses: Address[];
   deliveryAddresses: Address[];
@@ -217,7 +225,6 @@ export interface Order {
   deliveryType: DeliveryType;
   deliveryDate: string;
   
-  // Split Delivery Address Attributes
   deliveryName?: string;
   deliveryStreet?: string;
   deliveryCity?: string;
@@ -225,7 +232,6 @@ export interface Order {
   deliveryPhone?: string;
   deliveryAddress?: string;
 
-  // Split Billing Address Attributes
   billingName?: string;
   billingStreet?: string;
   billingCity?: string;
@@ -243,7 +249,7 @@ export interface Order {
   companyDetailsSnapshot?: CompanyDetails;
   language: Language;
   pickupLocationId?: string; 
-  finalInvoiceDate?: string; // New field for Tax Document date
+  finalInvoiceDate?: string; 
 }
 
 export type CategoryCapacities = Record<string, number>; 
@@ -253,7 +259,7 @@ export interface PaymentMethodConfig {
   label: string;
   description: string;
   enabled: boolean;
-  translations?: Translations; // Added translations
+  translations?: Translations; 
 }
 
 export interface DayConfig {
@@ -262,13 +268,21 @@ export interface DayConfig {
   capacityOverrides?: Partial<CategoryCapacities>;
 }
 
+// NEW: Event Slot Definition
+export interface EventSlot {
+  date: string; // YYYY-MM-DD
+  capacityOverrides: CategoryCapacities; // Specific capacities for this event day
+}
+
 export interface ServerSettings {
   consoleLogging: boolean;
 }
 
 export interface GlobalSettings {
   categories: Category[]; 
+  capacityCategories: CapacityCategory[]; 
   defaultCapacities: CategoryCapacities;
+  eventSlots: EventSlot[]; // NEW: List of event days
   companyDetails: CompanyDetails;
   paymentMethods: PaymentMethodConfig[];
   deliveryRegions: DeliveryRegion[];
@@ -280,7 +294,7 @@ export interface GlobalSettings {
   enabledLanguages: Language[]; 
   enableAiTranslation: boolean;
   sqlDebug: boolean;
-  server?: ServerSettings; // NEW FIELD
+  server?: ServerSettings; 
 }
 
 export interface BackupData {
@@ -290,4 +304,11 @@ export interface BackupData {
   discountCodes?: DiscountCode[];
   dayConfigs?: DayConfig[];
   settings?: GlobalSettings;
+}
+
+export interface CookieSettings {
+  essential: boolean; // Always true
+  analytics: boolean;
+  marketing: boolean;
+  timestamp: string;
 }

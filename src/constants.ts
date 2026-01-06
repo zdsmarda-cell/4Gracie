@@ -98,12 +98,14 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     { id: ProductCategory.DESSERT, name: 'Zákusky', order: 3, enabled: true },
     { id: ProductCategory.DRINK, name: 'Nápoje', order: 4, enabled: true }
   ],
+  capacityCategories: [], 
   defaultCapacities: {
     [ProductCategory.WARM]: 1000,
     [ProductCategory.COLD]: 2000,
     [ProductCategory.DESSERT]: 500,
     [ProductCategory.DRINK]: 5000
   },
+  eventSlots: [], // DEFAULT EMPTY
   companyDetails: {
     name: '4Gracie s.r.o.',
     ic: '12345678',
@@ -154,7 +156,9 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
 
 export const EMPTY_SETTINGS: GlobalSettings = {
   categories: [],
+  capacityCategories: [],
   defaultCapacities: {},
+  eventSlots: [],
   companyDetails: {
     name: '',
     ic: '',

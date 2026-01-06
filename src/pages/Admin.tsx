@@ -9,8 +9,8 @@ import {
 import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
-    Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, Filter, Settings 
+    Download, Upload, FileText, Check, X, User as UserIcon, 
+    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar 
 } from 'lucide-react';
 import { OrdersTab } from './admin/OrdersTab';
 import { UsersTab } from './admin/UsersTab';
@@ -24,6 +24,7 @@ import { OperatorTab } from './admin/OperatorTab';
 import { PaymentsTab } from './admin/PaymentsTab';
 import { LoadTab } from './admin/LoadTab';
 import { SettingsTab } from './admin/SettingsTab';
+import { EventsTab } from './admin/EventsTab';
 import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
@@ -49,7 +50,7 @@ export const Admin: React.FC = () => {
     // Determine available tabs
     const availableTabs = [
         'orders', 'users', 'load', 'products', 'categories', 
-        'delivery', 'pickup', 'capacities', 'discounts', 
+        'delivery', 'pickup', 'capacities', 'events', 'discounts', 
         'packaging', 'operator', 'payments', 'app_settings'
     ];
 
@@ -70,6 +71,7 @@ export const Admin: React.FC = () => {
                     className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition whitespace-nowrap flex items-center ${activeTab === tab ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:bg-white/50'}`}
                     >
                     {tab === 'app_settings' && <Settings size={12} className="mr-1"/>}
+                    {tab === 'events' && <Calendar size={12} className="mr-1"/>}
                     {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : t(`admin.${tab}`)}
                     </button>
                 ))}
@@ -86,6 +88,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'categories' && <CategoriesTab />}
             {activeTab === 'packaging' && <PackagingTab />}
             {activeTab === 'capacities' && <CapacitiesTab />}
+            {activeTab === 'events' && <EventsTab />}
             {activeTab === 'operator' && <OperatorTab />}
             {activeTab === 'payments' && <PaymentsTab />}
             {activeTab === 'app_settings' && <SettingsTab />}

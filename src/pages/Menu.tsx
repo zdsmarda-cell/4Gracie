@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { ALLERGENS } from '../constants';
 import { Product } from '../types';
-import { Filter, Info, ChevronLeft, ChevronRight, X, Maximize2, Clock, AlertCircle } from 'lucide-react';
+import { Filter, Info, ChevronLeft, ChevronRight, X, Maximize2, Clock, AlertCircle, Plus, Minus, Ban } from 'lucide-react';
 
 const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
   const { getImageUrl } = useStore();
@@ -49,6 +49,15 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
         <div className="absolute inset-0 bg-black/0 group-hover/gallery:bg-black/10 transition flex items-center justify-center">
           <Maximize2 className="text-white opacity-0 group-hover/gallery:opacity-100 transition shadow-sm" size={24} />
         </div>
+
+        {/* Event Ribbon */}
+        {product.isEventProduct && (
+            <div className="absolute top-0 right-0 w-24 h-24 overflow-hidden z-10 pointer-events-none">
+                <div className="absolute top-4 -right-8 bg-purple-600 text-white text-[9px] font-bold py-1 w-32 text-center transform rotate-45 shadow-sm uppercase tracking-widest border-2 border-white/20">
+                    AKCE
+                </div>
+            </div>
+        )}
 
         {product.images.length > 1 && (
           <>
@@ -121,38 +130,144 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
   );
 };
 
+const ProductCard: React.FC<{ 
+    product: Product; 
+    onOpenAllergens: (p: Product) => void; 
+}> = ({ product, onOpenAllergens }) => {
+    const { t, tData, addToCart, isEventCapacityAvailable } = useStore();
+    const minQty = product.minOrderQuantity || 1;
+    const [quantity, setQuantity] = useState(minQty);
+
+    const hasCapacity = !product.isEventProduct || isEventCapacityAvailable(product);
+
+    return (
+        <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden group border border-gray-100 flex flex-col h-full relative">
+              
+            {/* Allergen Badge Trigger */}
+            {product.allergens && product.allergens.length > 0 && (
+            <button 
+                onClick={(e) => { e.stopPropagation(); onOpenAllergens(product); }}
+                className="absolute top-2 left-2 z-20 bg-white/90 backdrop-blur-md shadow-sm px-2 py-1 rounded-lg text-[10px] font-bold text-gray-700 flex items-center hover:bg-white hover:text-orange-600 transition border border-transparent hover:border-orange-200"
+                title="Zobrazit alergeny"
+            >
+                <AlertCircle size={12} className="mr-1 text-orange-500" />
+                <span>{product.allergens.length}</span>
+            </button>
+            )}
+
+            <ProductImageGallery product={product} />
+
+            <div className="p-6 flex flex-col flex-grow">
+            <div className="flex justify-between items-start mb-2">
+                <h3 className="text-xl font-serif font-bold text-gray-900">{tData(product, 'name')}</h3>
+                <span className="text-lg font-bold text-accent whitespace-nowrap ml-2">{product.price} Kč</span>
+            </div>
+            <p className="text-gray-500 text-sm mb-4 line-clamp-2 flex-grow">{tData(product, 'description')}</p>
+            
+            <div className="flex flex-col space-y-3 mt-auto">
+                <div className="flex items-center justify-between text-[11px] text-gray-400 font-medium">
+                <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
+                    <Info size={14} className="mr-1.5 text-gray-300" />
+                    {t('common.leadTime')}: {product.leadTimeDays} d.
+                </div>
+                <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
+                    <Clock size={14} className="mr-1.5 text-gray-300" />
+                    {t('common.shelf_life')}: {product.shelfLifeDays} d.
+                </div>
+                </div>
+                
+                {hasCapacity ? (
+                    <div className="flex items-center gap-3">
+                        {/* Quantity Selector */}
+                        <div className="flex items-center border border-gray-200 rounded-lg bg-gray-50 h-10">
+                            <button 
+                                onClick={() => setQuantity(prev => Math.max(minQty, prev - 1))}
+                                disabled={quantity <= minQty}
+                                className="w-8 h-full flex items-center justify-center text-gray-500 hover:bg-gray-200 hover:text-gray-700 disabled:opacity-30 disabled:cursor-not-allowed rounded-l-lg transition"
+                            >
+                                <Minus size={14} />
+                            </button>
+                            <div className="w-8 text-center font-bold text-sm text-gray-800 select-none">
+                                {quantity}
+                            </div>
+                            <button 
+                                onClick={() => setQuantity(prev => prev + 1)}
+                                className="w-8 h-full flex items-center justify-center text-gray-500 hover:bg-gray-200 hover:text-gray-700 rounded-r-lg transition"
+                            >
+                                <Plus size={14} />
+                            </button>
+                        </div>
+
+                        <button 
+                            onClick={() => addToCart(product, quantity)}
+                            className="flex-1 bg-primary text-white h-10 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-sm active:scale-95 flex items-center justify-center"
+                        >
+                            {t('product.add')}
+                        </button>
+                    </div>
+                ) : (
+                    <div className="bg-red-50 text-red-600 rounded-lg p-3 text-xs font-bold text-center border border-red-100 flex items-center justify-center gap-2">
+                        <Ban size={16} /> Kapacita akce je již vyčerpána
+                    </div>
+                )}
+            </div>
+            </div>
+        </div>
+    );
+};
+
 export const Menu: React.FC = () => {
-  const { t, tData, addToCart, products, settings } = useStore();
+  const { t, tData, products, settings, getAvailableEventDates } = useStore();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [excludeAllergens, setExcludeAllergens] = useState<number[]>([]);
   const [showAllergenFilter, setShowAllergenFilter] = useState(false);
   const [selectedAllergenProduct, setSelectedAllergenProduct] = useState<Product | null>(null);
 
-  // Determine active categories (categories with at least one active product)
+  // Check if any event product is orderable (has valid future slots respecting lead time)
+  const hasOrderableEvents = useMemo(() => {
+      return products.some(p => p.isEventProduct && p.visibility.online && getAvailableEventDates(p).length > 0);
+  }, [products, getAvailableEventDates]);
+
+  // Determine active categories
   const activeCategories = useMemo(() => {
     const productsInCats = new Set<string>();
     products.forEach(p => {
       if (p.visibility?.online) {
-        productsInCats.add(p.category);
+        // If event product, check if it's orderable
+        if (p.isEventProduct) {
+            if (getAvailableEventDates(p).length > 0) productsInCats.add(p.category);
+        } else {
+            productsInCats.add(p.category);
+        }
       }
     });
     
     return settings.categories
       .filter(cat => cat.enabled && productsInCats.has(cat.id))
       .sort((a, b) => a.order - b.order);
-  }, [products, settings.categories]);
+  }, [products, settings.categories, getAvailableEventDates]);
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       if (!p.visibility?.online) return false;
-      if (selectedCategory !== 'all' && p.category !== selectedCategory) return false;
+      
+      // Event Product Visibility Check: Must have available slots
+      if (p.isEventProduct && getAvailableEventDates(p).length === 0) return false;
+
+      // Category Filter Logic
+      if (selectedCategory === 'events') {
+          if (!p.isEventProduct) return false;
+      } else if (selectedCategory !== 'all' && p.category !== selectedCategory) {
+          return false;
+      }
+
       if (excludeAllergens.length > 0) {
         const hasExcludedAllergen = p.allergens.some(a => excludeAllergens.includes(a));
         if (hasExcludedAllergen) return false;
       }
       return true;
     });
-  }, [selectedCategory, excludeAllergens, products]);
+  }, [selectedCategory, excludeAllergens, products, getAvailableEventDates]);
 
   const toggleAllergen = (id: number) => {
     setExcludeAllergens(prev => 
@@ -196,6 +311,16 @@ export const Menu: React.FC = () => {
                   {tData(cat, 'name')}
                 </button>
               ))}
+              
+              {/* Event Tab */}
+              {hasOrderableEvents && (
+                  <button 
+                    onClick={() => setSelectedCategory('events')}
+                    className={`px-4 py-2 rounded-full text-sm font-bold transition flex items-center gap-2 ${selectedCategory === 'events' ? 'bg-purple-600 text-white shadow-md' : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}`}
+                  >
+                    {t('cat.events')}
+                  </button>
+              )}
             </div>
 
             {/* Allergen Toggle */}
@@ -232,49 +357,11 @@ export const Menu: React.FC = () => {
         {/* Product Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {filteredProducts.map(product => (
-            <div key={product.id} className="bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden group border border-gray-100 flex flex-col h-full relative">
-              
-              {/* Allergen Badge Trigger */}
-              {product.allergens && product.allergens.length > 0 && (
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setSelectedAllergenProduct(product); }}
-                  className="absolute top-2 left-2 z-20 bg-white/90 backdrop-blur-md shadow-sm px-2 py-1 rounded-lg text-[10px] font-bold text-gray-700 flex items-center hover:bg-white hover:text-orange-600 transition border border-transparent hover:border-orange-200"
-                  title="Zobrazit alergeny"
-                >
-                  <AlertCircle size={12} className="mr-1 text-orange-500" />
-                  <span>{product.allergens.length}</span>
-                </button>
-              )}
-
-              <ProductImageGallery product={product} />
-
-              <div className="p-6 flex flex-col flex-grow">
-                <div className="flex justify-between items-start mb-2">
-                  <h3 className="text-xl font-serif font-bold text-gray-900">{tData(product, 'name')}</h3>
-                  <span className="text-lg font-bold text-accent whitespace-nowrap ml-2">{product.price} Kč</span>
-                </div>
-                <p className="text-gray-500 text-sm mb-4 line-clamp-2 flex-grow">{tData(product, 'description')}</p>
-                
-                <div className="flex flex-col space-y-3 mt-auto">
-                  <div className="flex items-center justify-between text-[11px] text-gray-400 font-medium">
-                    <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
-                      <Info size={14} className="mr-1.5 text-gray-300" />
-                      {t('common.leadTime')}: {product.leadTimeDays} d.
-                    </div>
-                    <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
-                      <Clock size={14} className="mr-1.5 text-gray-300" />
-                      {t('common.shelf_life')}: {product.shelfLifeDays} d.
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => addToCart(product)}
-                    className="w-full bg-primary text-white py-2.5 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-sm active:scale-95"
-                  >
-                    {t('product.add')}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ProductCard 
+                key={product.id} 
+                product={product} 
+                onOpenAllergens={setSelectedAllergenProduct} 
+            />
           ))}
         </div>
 

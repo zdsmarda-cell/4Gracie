@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { OrderStatus } from '../../types';
-import { FileSpreadsheet, X, Eye, ListFilter } from 'lucide-react';
+import { FileSpreadsheet, X, Eye, ListFilter, Zap } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface LoadTabProps {
@@ -27,7 +27,7 @@ interface ServerLoadDetail {
 }
 
 export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
-    const { dayConfigs, settings, t, formatDate, dataSource, getFullApiUrl, orders, getDailyLoad } = useStore();
+    const { dayConfigs, settings, t, formatDate, dataSource, getFullApiUrl, orders, getDailyLoad, products } = useStore();
     const [showLoadHistory, setShowLoadHistory] = useState(false);
     
     // Detail Modal State
@@ -39,10 +39,12 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
 
-    // Filter dates to only show those with Activity (Orders) or Exceptions (Config)
+    // Filter dates to only show those with Activity (Orders) or Exceptions (Config) or Events
     const loadDates = useMemo(() => {
         const dates = new Set<string>();
         dayConfigs.forEach(c => dates.add(c.date));
+        if (settings.eventSlots) settings.eventSlots.forEach(s => dates.add(s.date)); // Add Event Slots
+        
         orders.forEach(o => {
             if (o.status !== OrderStatus.CANCELLED) {
                 dates.add(o.deliveryDate);
@@ -56,11 +58,16 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
              return sorted.filter(d => d >= now);
         }
         return sorted.reverse(); 
-    }, [dayConfigs, orders, showLoadHistory]);
+    }, [dayConfigs, orders, showLoadHistory, settings.eventSlots]);
 
     const getDayCapacityLimit = (date: string, catId: string) => {
         const config = dayConfigs.find(d => d.date === date);
         return config?.capacityOverrides?.[catId] ?? settings.defaultCapacities[catId] ?? 0;
+    };
+
+    const getEventCapacityLimit = (date: string, catId: string) => {
+        const slot = settings.eventSlots?.find(s => s.date === date);
+        return slot?.capacityOverrides?.[catId] ?? 0;
     };
 
     const getActiveOrdersCount = (date: string) => {
@@ -98,41 +105,61 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 })
                 .finally(() => setIsLoadingDetails(false));
         } else {
-            // LOCAL MODE (Preview) - Use existing logic but correct aggregation for overhead
+            // LOCAL MODE (Preview) - Logic matches StoreContext.getDailyLoad (Global Scope)
             const relevantOrders = orders.filter(o => o.deliveryDate === selectedDate && o.status !== OrderStatus.CANCELLED);
             
             const summaryMap = new Map<string, ServerLoadSummary>();
             const detailsMap = new Map<string, ServerLoadDetail>();
-            const processedProductOverhead = new Map<string, Set<string>>(); // categoryId -> set of productIds already counted for overhead
+            
+            // Global Trackers per day
+            const ccGroups = new Map<string, { maxOverhead: number, maxOverheadCategory: string, hasEvent: boolean }>();
+            const usedProductIds = new Set<string>();
 
+            // Initialize Summaries
             settings.categories.forEach(c => {
                 summaryMap.set(c.id, { category: c.id, total_workload: 0, total_overhead: 0, order_count: 0 });
-                processedProductOverhead.set(c.id, new Set());
             });
 
+            // 1. Pass: Aggregate Data
             relevantOrders.forEach(order => {
                 const categoriesInOrder = new Set<string>();
+                
                 order.items.forEach(item => {
+                    const productDef = products.find(p => p.id === item.id);
                     const cat = item.category;
-                    const workload = (item.workload || 0) * item.quantity;
-                    const overhead = (item.workloadOverhead || 0);
+                    const workload = (Number(productDef?.workload) || Number(item.workload) || 0) * item.quantity;
+                    const overhead = (Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0);
+                    const capCatId = productDef?.capacityCategoryId; 
+                    const isEvent = !!productDef?.isEventProduct;
 
                     if (!summaryMap.has(cat)) {
                         summaryMap.set(cat, { category: cat, total_workload: 0, total_overhead: 0, order_count: 0 });
-                        processedProductOverhead.set(cat, new Set());
                     }
                     const sum = summaryMap.get(cat)!;
-                    sum.total_workload = Number(sum.total_workload) + workload;
                     
-                    // Correct Overhead Summation: Only once per product per day
-                    const catSet = processedProductOverhead.get(cat)!;
-                    if (!catSet.has(item.id)) {
-                        sum.total_overhead = Number(sum.total_overhead) + overhead;
-                        catSet.add(item.id);
+                    // Add Variable Workload
+                    sum.total_workload = Number(sum.total_workload) + workload;
+
+                    // Collect Overheads (Global Scope)
+                    if (capCatId) {
+                        const group = ccGroups.get(capCatId) || { maxOverhead: 0, maxOverheadCategory: cat, hasEvent: false };
+                        if (overhead > group.maxOverhead) {
+                            group.maxOverhead = overhead;
+                            group.maxOverheadCategory = cat;
+                        }
+                        if (isEvent) group.hasEvent = true;
+                        ccGroups.set(capCatId, group);
+                    } else {
+                        // Independent Item
+                        if (!usedProductIds.has(item.id)) {
+                            sum.total_overhead = Number(sum.total_overhead) + overhead;
+                            usedProductIds.add(item.id);
+                        }
                     }
 
                     categoriesInOrder.add(cat);
 
+                    // Build Detail Row
                     const detailKey = `${item.id}_${cat}`; 
                     if (!detailsMap.has(detailKey)) {
                         detailsMap.set(detailKey, {
@@ -142,7 +169,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                             unit: item.unit,
                             total_quantity: 0,
                             product_workload: 0,
-                            unit_overhead: item.workloadOverhead || 0
+                            unit_overhead: overhead
                         });
                     }
                     const det = detailsMap.get(detailKey)!;
@@ -156,13 +183,25 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 });
             });
 
+            // 2. Pass: Distribute Capacity Group Overheads
+            ccGroups.forEach(group => {
+                // If hasEvent -> goes to Event Load (not supported in summary structure fully yet, 
+                // but for total count it works). 
+                // Note: serverDetails structure merges overheads into one `total_overhead` per category currently.
+                // Splitting Std/Event happens in the Main Table view, detail view is aggregate.
+                const sum = summaryMap.get(group.maxOverheadCategory);
+                if (sum) {
+                    sum.total_overhead = Number(sum.total_overhead) + group.maxOverhead;
+                }
+            });
+
             setServerDetails({
                 summary: Array.from(summaryMap.values()),
                 details: Array.from(detailsMap.values())
             });
             setIsLoadingDetails(false);
         }
-    }, [selectedDate, dataSource, orders, settings.categories, getFullApiUrl]);
+    }, [selectedDate, dataSource, orders, settings.categories, getFullApiUrl, products]);
 
     const handleOpenDetail = (date: string) => {
         setSelectedDate(date);
@@ -236,15 +275,20 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 </thead>
                 <tbody className="divide-y text-xs">
                     {loadDates.map(date => {
-                        const { load } = getDailyLoad(date);
+                        const { load, eventLoad } = getDailyLoad(date);
                         const dayConfig = dayConfigs.find(d => d.date === date);
+                        const eventSlot = settings.eventSlots?.find(s => s.date === date);
                         const isClosed = dayConfig && !dayConfig.isOpen;
                         const ordersCount = getActiveOrdersCount(date);
+                        const isEventDay = !!eventSlot;
                         
                         return (
                             <tr key={date} className={`hover:bg-gray-50 ${isClosed ? 'bg-red-50' : ''}`}>
                                 <td className="px-6 py-4 font-mono font-bold text-sm cursor-pointer hover:text-blue-600 hover:underline" onClick={() => onNavigateToDate(date)}>
-                                    {formatDate(date)}
+                                    <div className="flex flex-col">
+                                        <span>{formatDate(date)}</span>
+                                        {isEventDay && <span className="text-[9px] text-purple-600 font-bold uppercase mt-1 flex items-center"><Zap size={10} className="mr-1"/> Akce</span>}
+                                    </div>
                                 </td>
                                 <td className="px-6 py-4 text-center">
                                     <button onClick={() => handleOpenDetail(date)} className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold hover:bg-blue-200 transition flex items-center justify-center mx-auto"><Eye size={16}/></button>
@@ -266,23 +310,52 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                                     {isClosed ? <span className="text-red-600 font-bold uppercase text-[10px]">{t('admin.exception_closed')}</span> : <span className="text-green-600 font-bold uppercase text-[10px]">Otevřeno</span>}
                                 </td>
                                 {sortedCategories.map(cat => {
+                                    // STANDARD
                                     const limit = getDayCapacityLimit(date, cat.id);
                                     const current = load[cat.id] || 0;
                                     const percent = limit > 0 ? Math.min(100, (current / limit) * 100) : 0;
                                     let color = 'bg-green-500';
                                     if (percent > 80) color = 'bg-orange-500';
                                     if (percent >= 100) color = 'bg-red-500';
+
+                                    // EVENT
+                                    const eventLimit = getEventCapacityLimit(date, cat.id);
+                                    const currentEvent = eventLoad[cat.id] || 0;
+                                    const showEventRow = isEventDay || currentEvent > 0;
+                                    const eventPercent = eventLimit > 0 ? Math.min(100, (currentEvent / eventLimit) * 100) : 0;
                                     
                                     return (
                                     <td key={cat.id} className="px-6 py-4 align-middle">
-                                        <div className="w-full">
-                                        <div className="flex justify-between mb-1">
-                                            <span className="font-mono text-[10px]">{Math.round(current)} / {limit}</span>
-                                            <span className="font-bold text-[10px]">{Math.round(percent)}%</span>
-                                        </div>
-                                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden w-full border border-gray-100">
-                                            <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${percent}%` }}></div>
-                                        </div>
+                                        <div className="w-full space-y-2">
+                                            {/* Standard Row */}
+                                            <div>
+                                                <div className="flex justify-between mb-1">
+                                                    <span className="font-mono text-[9px] text-gray-500"></span>
+                                                    <div className="text-[10px]">
+                                                        <span className="font-mono">{Math.round(current)} / {limit}</span>
+                                                        <span className="font-bold ml-1">{Math.round(percent)}%</span>
+                                                    </div>
+                                                </div>
+                                                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-full border border-gray-100">
+                                                    <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${percent}%` }}></div>
+                                                </div>
+                                            </div>
+
+                                            {/* Event Row (Conditional) */}
+                                            {showEventRow && (
+                                                <div className="pt-1 border-t border-dashed border-gray-200">
+                                                    <div className="flex justify-between mb-1 text-purple-700">
+                                                        <span className="font-bold text-[9px] flex items-center"></span>
+                                                        <div className="text-[10px]">
+                                                            <span className="font-mono">{Math.round(currentEvent)} / {eventLimit}</span>
+                                                            <span className="font-bold ml-1">{Math.round(eventPercent)}%</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="h-1.5 bg-purple-50 rounded-full overflow-hidden w-full border border-purple-100">
+                                                        <div className="h-full bg-purple-500 transition-all duration-500" style={{ width: `${eventPercent}%` }}></div>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </td>
                                     );

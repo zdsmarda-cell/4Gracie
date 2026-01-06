@@ -1,11 +1,11 @@
 
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback, useRef } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation } from '../types';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, EventSlot, CookieSettings } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { calculatePackagingFeeLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
+import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, calculateDailyLoad, DailyLoadResult } from '../utils/orderLogic';
 import { calculateCzIban, removeDiacritics, formatDate } from '../utils/helpers';
 
 interface CheckResult {
@@ -23,7 +23,7 @@ interface ValidateDiscountResult {
   error?: string;
 }
 
-export interface ImportResult {
+interface ImportResult {
   success: boolean;
   collisions?: string[];
   message?: string;
@@ -45,11 +45,6 @@ interface RegionDateInfo {
   timeEnd?: string;
   isException: boolean;
   reason?: string;
-}
-
-interface DailyLoadResult {
-    load: Record<string, number>;
-    usedProductIds: Set<string>;
 }
 
 export type DataSourceMode = 'local' | 'api';
@@ -124,9 +119,15 @@ interface StoreContextType {
   updateDayConfig: (config: DayConfig) => Promise<boolean>;
   removeDayConfig: (date: string) => Promise<boolean>;
   
+  // Events
+  updateEventSlot: (slot: EventSlot) => Promise<boolean>;
+  removeEventSlot: (date: string) => Promise<boolean>;
+  getAvailableEventDates: (product: Product) => string[];
+  isEventCapacityAvailable: (product: Product) => boolean; 
+  
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
-  getDailyLoad: (date: string, excludeOrderId?: string) => DailyLoadResult;
+  getDailyLoad: (date: string, excludeOrderId?: string, additionalItems?: CartItem[]) => DailyLoadResult;
   getDailyLoadWithDetails: (date: string, excludeOrderId?: string) => DailyLoadResult;
   getDeliveryRegion: (zip: string) => DeliveryRegion | undefined;
   getRegionInfoForDate: (region: DeliveryRegion, date: string) => RegionDateInfo;
@@ -152,6 +153,9 @@ interface StoreContextType {
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
+
+  cookieSettings: CookieSettings | null;
+  saveCookieSettings: (settings: CookieSettings) => void;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -189,6 +193,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
   const [cartBump, setCartBump] = useState(false);
+  
+  const [cookieSettings, setCookieSettings] = useState<CookieSettings | null>(() => loadFromStorage('cookie_consent', null));
 
   const t = useCallback((key: string, params?: Record<string, string>) => {
     let text = TRANSLATIONS[language]?.[key] || key;
@@ -231,6 +237,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
     setGlobalNotification({ message, type, autoClose });
   };
+
+  // COOKIE CONSENT LOGIC
+  const saveCookieSettings = (newSettings: CookieSettings) => {
+      setCookieSettings(newSettings);
+      localStorage.setItem('cookie_consent', JSON.stringify(newSettings));
+  };
+
+  // ... (rest of the file remains same, just adding export for cookie context) ...
 
   const getFullApiUrl = useCallback((endpoint: string) => {
     // @ts-ignore
@@ -312,6 +326,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                  const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
                  if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
                  if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
+                 if (!mergedSettings.capacityCategories) mergedSettings.capacityCategories = [];
+                 if (!mergedSettings.eventSlots) mergedSettings.eventSlots = []; // Ensure events exist
                  setSettings(mergedSettings); 
               }
               setDiscountCodes(data.discountCodes || []);
@@ -328,6 +344,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
           if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
           if (!loadedSettings.pickupLocations) loadedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
+          if (!loadedSettings.capacityCategories) loadedSettings.capacityCategories = [];
+          if (!loadedSettings.eventSlots) loadedSettings.eventSlots = [];
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
@@ -751,6 +769,48 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  // --- EVENTS LOGIC ---
+  const updateEventSlot = async (slot: EventSlot): Promise<boolean> => {
+      // DEEP CLONE IS CRITICAL HERE FOR UI REACTIVITY
+      const newSettings = JSON.parse(JSON.stringify(settings)) as GlobalSettings;
+      
+      // Ensure eventSlots exists
+      if (!newSettings.eventSlots) newSettings.eventSlots = [];
+      
+      const existsIndex = newSettings.eventSlots.findIndex(s => s.date === slot.date);
+      if (existsIndex > -1) {
+          newSettings.eventSlots[existsIndex] = slot;
+      } else {
+          newSettings.eventSlots.push(slot);
+      }
+      return updateSettings(newSettings);
+  };
+
+  const removeEventSlot = async (date: string): Promise<boolean> => {
+      const newSettings = JSON.parse(JSON.stringify(settings)) as GlobalSettings;
+      if (newSettings.eventSlots) {
+          newSettings.eventSlots = newSettings.eventSlots.filter(s => s.date !== date);
+      }
+      return updateSettings(newSettings);
+  };
+
+  const getAvailableEventDates = useCallback((product: Product): string[] => {
+      if (!product.isEventProduct) return [];
+      
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      
+      // Calculate minimal date based on lead time
+      const minDate = new Date(today);
+      minDate.setDate(minDate.getDate() + product.leadTimeDays);
+      
+      // Return slots that are >= minDate
+      return settings.eventSlots
+        .filter(slot => new Date(slot.date) >= minDate)
+        .map(slot => slot.date)
+        .sort();
+  }, [settings.eventSlots]);
+
   const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
@@ -781,67 +841,94 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const getDailyLoad = (date: string, excludeOrderId?: string): DailyLoadResult => {
+  // --- COMPLEX CAPACITY LOGIC ---
+  const getDailyLoad = (date: string, excludeOrderId?: string, additionalItems?: CartItem[]): DailyLoadResult => {
     const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
-    const load: Record<string, number> = {};
-    (settings.categories || []).forEach(cat => load[cat.id] = 0);
-    Object.values(ProductCategory).forEach(c => { if (load[c] === undefined) load[c] = 0; });
-    const usedProductIds = new Set<string>();
     
-    relevantOrders.forEach(order => {
-      if (!order.items) return;
-      order.items.forEach(item => {
-        const productDef = products.find(p => String(p.id) === String(item.id));
-        const itemWorkload = Number(productDef?.workload) || Number(item.workload) || 0;
-        const itemOverhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
-        const cat = item.category || productDef?.category;
-        
-        if (cat) {
-             if (load[cat] === undefined) load[cat] = 0;
-             load[cat] += itemWorkload * item.quantity;
-             if (!usedProductIds.has(String(item.id))) { 
-                 load[cat] += itemOverhead; 
-                 usedProductIds.add(String(item.id)); 
-             }
-        }
-      });
-    });
-    return { load, usedProductIds };
+    // Create a virtual order from additional items (e.g. cart) to allow the loop to process them
+    // as if they are part of the daily stack
+    if (additionalItems && additionalItems.length > 0) {
+        // Mock order structure for logic processing
+        const virtualOrder: any = {
+            id: 'virtual-cart-order',
+            items: additionalItems,
+            deliveryDate: date
+        };
+        relevantOrders.push(virtualOrder);
+    }
+
+    return calculateDailyLoad(relevantOrders, products, settings);
   };
 
-  const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
+  const checkAvailability = useCallback((date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
     if (targetDate < today) return { allowed: false, reason: t('error.past'), status: 'past' };
-    const categoriesInCart = new Set(items.map(i => i.category));
+    
+    // Lead time Check
     const maxLeadTime = items.length > 0 ? Math.max(...items.map(i => i.leadTimeDays || 0)) : 0;
     const minPossibleDate = new Date(today); minPossibleDate.setDate(minPossibleDate.getDate() + maxLeadTime);
     if (targetDate < minPossibleDate) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
+
+    // Basic Config Check (Exceptions)
     const config = dayConfigs.find(d => d.date === date);
     if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
     
-    const { load } = getDailyLoad(date, excludeOrderId);
+    // Event Slot Check
+    const eventSlot = settings.eventSlots.find(s => s.date === date);
+    const hasEventItems = items.some(i => i.isEventProduct);
     
-    items.forEach(item => {
-       const productDef = products.find(p => String(p.id) === String(item.id));
-       const workload = Number(productDef?.workload) || Number(item.workload) || 0;
-       
-       if (load[item.category] !== undefined) {
-          load[item.category] += workload * item.quantity;
-       }
-    });
-    
-    let anyExceeds = false;
-    const catsToCheck = new Set([...Array.from(categoriesInCart), ...settings.categories.map(c => c.id)]);
-    for (const cat of catsToCheck) {
-      if (items.length > 0 && !categoriesInCart.has(cat)) continue; 
-      const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
-      const currentLoad = load[cat] || 0;
-      if (currentLoad > limit) anyExceeds = true;
+    // Rule: If cart has event items, date MUST be an event slot
+    if (hasEventItems && !eventSlot) {
+        return { allowed: false, reason: t('cart.event_only'), status: 'closed' };
     }
+
+    // --- LOAD CALCULATION ---
+    // Use the Unified Global Logic by passing items as `additionalItems`
+    const { load: totalStandard, eventLoad: totalEvent } = getDailyLoad(date, excludeOrderId, items);
+    
+    // --- CHECK LIMITS ---
+    let anyExceeds = false;
+    const catsToCheck = new Set([...settings.categories.map(c => c.id)]);
+    
+    for (const cat of catsToCheck) {
+        // 1. Check Standard Capacity
+        const standardLimit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
+        const currentStandard = totalStandard[cat] || 0;
+        
+        if (currentStandard > standardLimit) {
+            // console.log(`Standard Exceeded for ${cat}: ${currentStandard} > ${standardLimit}`);
+            anyExceeds = true;
+        }
+
+        // 2. Check Event Capacity (only if slot exists)
+        if (eventSlot) {
+            const eventLimit = eventSlot.capacityOverrides[cat] ?? 0;
+            const currentEvent = totalEvent[cat] || 0;
+            
+            if (currentEvent > eventLimit) {
+                // console.log(`Event Exceeded for ${cat}: ${currentEvent} > ${eventLimit}`);
+                anyExceeds = true;
+            }
+        }
+    }
+
     if (anyExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
     return { allowed: true, status: 'available' };
-  };
+  }, [dayConfigs, settings, getDailyLoad, t]);
+
+  const isEventCapacityAvailable = useCallback((product: Product): boolean => {
+      if (!product.isEventProduct) return true;
+      const dates = getAvailableEventDates(product);
+      if (dates.length === 0) return false;
+
+      // Check if AT LEAST ONE date allows adding 1 unit
+      return dates.some(date => {
+          const dummyItem: CartItem = { ...product, quantity: 1 };
+          const result = checkAvailability(date, [dummyItem]);
+          return result.allowed;
+      });
+  }, [getAvailableEventDates, checkAvailability]);
 
   const getDateStatus = (date: string, items: CartItem[]): DayStatus => {
      const check = checkAvailability(date, items);
@@ -957,10 +1044,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           
           const tableBody: any[] = [];
           
-          // VAT Calculation logic improvement: Proportional discount distribution
           const grossTotalsByRate: Record<number, number> = {};
           
-          // Gather gross amounts (before discount) per rate
           order.items.forEach(i => {
               const r = Number(i.vatRateTakeaway || 0);
               grossTotalsByRate[r] = (grossTotalsByRate[r] || 0) + (i.price * i.quantity);
@@ -976,16 +1061,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           const grandGrossTotal = Object.values(grossTotalsByRate).reduce((a, b) => a + b, 0);
           const totalDiscount = order.appliedDiscounts?.reduce((a, b) => a + b.amount, 0) || 0;
           
-          // Calculate discount ratio (e.g. 0.1 for 10% discount on entire order)
           const discountRatio = grandGrossTotal > 0 ? (totalDiscount / grandGrossTotal) : 0;
 
-          // Prepare Summary Data
           const taxSummary: Record<number, { base: number, vat: number, total: number }> = {};
           
           Object.keys(grossTotalsByRate).forEach(k => {
               const r = Number(k);
               const gross = grossTotalsByRate[r];
-              const netAtRate = gross * (1 - discountRatio); // Proportionally lowered gross
+              const netAtRate = gross * (1 - discountRatio); 
               
               taxSummary[r] = {
                   total: netAtRate,
@@ -994,7 +1077,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               };
           });
 
-          // Populate Table Rows
           order.items.forEach(item => {
               const totalLine = item.price * item.quantity;
               const rate = Number(item.vatRateTakeaway || 0);
@@ -1108,11 +1190,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, searchOrders,
       products, addProduct, updateProduct, deleteProduct, uploadImage,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
-      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDailyLoadWithDetails: getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
+      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, 
+      updateEventSlot, removeEventSlot, getAvailableEventDates, isEventCapacityAvailable,
+      checkAvailability, getDateStatus, getDailyLoad, getDailyLoadWithDetails: getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
       getPickupPointInfo,
       calculatePackagingFee,
       t, tData, generateInvoice, printInvoice, generateCzIban: calculateCzIban, importDatabase, globalNotification, dismissNotification,
-      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate, getFullApiUrl, getImageUrl, refreshData: fetchData
+      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate, getFullApiUrl, getImageUrl, refreshData: fetchData,
+      cookieSettings, saveCookieSettings // Exported
     }}>
       {children}
     </StoreContext.Provider>

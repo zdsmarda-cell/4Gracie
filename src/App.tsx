@@ -4,6 +4,7 @@ import { HashRouter as Router, Routes, Route, Navigate, Link } from 'react-route
 import { StoreProvider, useStore } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { AuthModal } from './components/AuthModal';
+import { CookieBanner } from './components/CookieBanner';
 import { Menu } from './pages/Menu';
 import { Cart } from './pages/Cart';
 import { Admin } from './pages/Admin';
@@ -234,6 +235,7 @@ const MainContent = () => {
         <div className="min-h-screen flex flex-col font-sans">
             <Navbar />
             <NotificationToast />
+            <CookieBanner />
             <GlobalLoadingSpinner />
             <AuthModal />
             <DeliveryRegionsModal isOpen={isRegionsModalOpen} onClose={() => setIsRegionsModalOpen(false)} />
