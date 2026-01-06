@@ -100,10 +100,11 @@ router.put('/status', withDb(async (req, res, db) => {
     
     // If status is DELIVERED, verify if finalInvoiceDate needs setting and update JSON snapshot
     if (status === 'delivered') {
-        const now = new Date().toISOString();
+        const nowIso = new Date().toISOString();
+        const nowDb = nowIso.slice(0, 19).replace('T', ' '); // Format for MySQL: YYYY-MM-DD HH:MM:SS
         
         // 1. Set final_invoice_date only if NULL
-        await db.query('UPDATE orders SET final_invoice_date = ? WHERE id IN (?) AND final_invoice_date IS NULL', [now, ids]);
+        await db.query('UPDATE orders SET final_invoice_date = ? WHERE id IN (?) AND final_invoice_date IS NULL', [nowDb, ids]);
         
         // 2. Fetch current full_json for affected orders to patch the snapshot
         const [orders] = await db.query('SELECT id, full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
@@ -119,7 +120,7 @@ router.put('/status', withDb(async (req, res, db) => {
             if (!json.finalInvoiceDate && o.final_invoice_date) {
                 json.finalInvoiceDate = o.final_invoice_date;
             } else if (!json.finalInvoiceDate) {
-                json.finalInvoiceDate = now;
+                json.finalInvoiceDate = nowIso;
             }
 
             await db.query('UPDATE orders SET full_json = ? WHERE id = ?', [JSON.stringify(json), o.id]);
