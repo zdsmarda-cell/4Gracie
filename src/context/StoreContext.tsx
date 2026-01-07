@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, EventSlot, OrdersSearchResult, CookieSettings, DataSourceMode } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
@@ -218,7 +217,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const getFullApiUrl = (endpoint: string) => {
     // @ts-ignore
-    const env = (import.meta && import.meta.env) ? import.meta.env : {};
+    const env = (import.meta && import.meta.env) ? import.meta.env : {} as any;
     
     if (env.DEV) return endpoint;
     

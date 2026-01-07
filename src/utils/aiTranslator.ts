@@ -1,11 +1,10 @@
-
 import { Translations } from "../types";
 
 export const generateTranslations = async (sourceData: Record<string, string>): Promise<Translations> => {
   try {
     // Safely access env to prevent crash if import.meta is not fully supported in current context
     // @ts-ignore
-    const env = (import.meta && import.meta.env) ? import.meta.env : {};
+    const env = (import.meta && import.meta.env) ? import.meta.env : {} as any;
     let baseUrl = env?.VITE_API_URL;
 
     if (!baseUrl) {
