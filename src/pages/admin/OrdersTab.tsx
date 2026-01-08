@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus } from '../../types';
 import { Pagination } from '../../components/Pagination';
+import { MultiSelect } from '../../components/MultiSelect';
 import { FileText, Check, X, Filter } from 'lucide-react';
 
 interface OrdersTabProps {
@@ -28,7 +29,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         id: '',
         dateFrom: initialDate || '',
         dateTo: initialDate || '',
-        status: '',
+        status: '', // Comma separated string
         customer: '',
         isEvent: initialEventOnly ? 'yes' : 'all', // 'all', 'yes', 'no'
         isPaid: 'all' // 'all', 'yes', 'no'
@@ -91,6 +92,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         alert("Export feature placeholder");
     };
 
+    // Prepare status options for MultiSelect
+    const statusOptions = Object.values(OrderStatus).map(s => ({
+        value: s,
+        label: t(`status.${s}`)
+    }));
+
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between mb-4">
@@ -134,11 +141,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                     <input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={filters.customer} onChange={e => handleFilterChange('customer', e.target.value)} />
                 </div>
                 <div>
-                    <label className="text-xs font-bold text-gray-400 block mb-1">Stav</label>
-                    <select className="w-full border rounded p-2 text-xs bg-white" value={filters.status} onChange={e => handleFilterChange('status', e.target.value)}>
-                        <option value="">Všechny stavy</option>
-                        {Object.values(OrderStatus).map(s => <option key={s} value={s}>{t(`status.${s}`)}</option>)}
-                    </select>
+                    <MultiSelect 
+                        label="Stav"
+                        options={statusOptions}
+                        selectedValues={filters.status ? filters.status.split(',') : []}
+                        onChange={(values) => handleFilterChange('status', values.join(','))}
+                    />
                 </div>
                 <div className="flex items-end gap-2">
                     <button onClick={() => {

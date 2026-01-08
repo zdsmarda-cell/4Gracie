@@ -6,6 +6,7 @@ import { ALLERGENS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
 import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe, Upload, Layers, Search, AlertCircle, Filter } from 'lucide-react';
 import { Pagination } from '../../components/Pagination';
+import { MultiSelect } from '../../components/MultiSelect';
 
 const TranslationViewModal: React.FC<{
     isOpen: boolean;
@@ -205,7 +206,15 @@ export const ProductsTab: React.FC = () => {
     const filteredProducts = useMemo(() => {
         return products.filter(p => {
             if (filters.name && !p.name.toLowerCase().includes(filters.name.toLowerCase())) return false;
-            if (filters.category && p.category !== filters.category) return false;
+            
+            // Multi-category check
+            if (filters.category) {
+                const selectedCats = filters.category.split(',');
+                if (selectedCats.length > 0 && !selectedCats.includes(p.category)) {
+                    return false;
+                }
+            }
+
             if (filters.event !== 'all') {
                 if (filters.event === 'yes' && !p.isEventProduct) return false;
                 if (filters.event === 'no' && p.isEventProduct) return false;
@@ -222,6 +231,12 @@ export const ProductsTab: React.FC = () => {
         const start = (currentPage - 1) * itemsPerPage;
         return filteredProducts.slice(start, start + itemsPerPage);
     }, [filteredProducts, currentPage, itemsPerPage]);
+
+    // Prepare category options for MultiSelect
+    const categoryOptions = sortedCategories.map(c => ({
+        value: c.id,
+        label: c.name
+    }));
 
     return (
         <div className="animate-fade-in space-y-4">
@@ -245,15 +260,12 @@ export const ProductsTab: React.FC = () => {
                     />
                 </div>
                 <div>
-                    <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie</label>
-                    <select 
-                        className="w-full border rounded p-2 text-xs bg-white" 
-                        value={filters.category} 
-                        onChange={e => setFilters({...filters, category: e.target.value})}
-                    >
-                        <option value="">{t('filter.all')}</option>
-                        {sortedCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                    <MultiSelect 
+                        label="Kategorie"
+                        options={categoryOptions}
+                        selectedValues={filters.category ? filters.category.split(',') : []}
+                        onChange={(values) => setFilters({...filters, category: values.join(',')})}
+                    />
                 </div>
                 <div>
                     <label className="text-xs font-bold text-gray-400 block mb-1">V akci</label>

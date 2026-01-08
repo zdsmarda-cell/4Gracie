@@ -49,7 +49,17 @@ export const EmailsTab: React.FC<EmailsTabProps> = ({ initialRecipient }) => {
             });
 
             const url = getFullApiUrl(`/api/admin/emails?${queryParams.toString()}`);
-            const res = await fetch(url);
+            const token = localStorage.getItem('auth_token');
+            
+            const res = await fetch(url, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+            
             const data = await res.json();
             
             if (data.success) {
@@ -82,9 +92,13 @@ export const EmailsTab: React.FC<EmailsTabProps> = ({ initialRecipient }) => {
     const handleRetry = async () => {
         if (selectedIds.length === 0) return;
         try {
+            const token = localStorage.getItem('auth_token');
             const res = await fetch(getFullApiUrl('/api/admin/emails/retry'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({ ids: selectedIds })
             });
             const data = await res.json();
