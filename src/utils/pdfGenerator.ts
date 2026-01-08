@@ -106,39 +106,55 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
     const getBase = (priceWithVat: number, rate: number) => priceWithVat / (1 + rate / 100);
     const getVat = (priceWithVat: number, rate: number) => priceWithVat - getBase(priceWithVat, rate);
 
-    const grossTotalsByRate: Record<number, number> = {};
+    const itemsGrossTotalsByRate: Record<number, number> = {};
+    const feesGrossTotalsByRate: Record<number, number> = {};
     
-    // Group totals by rate
+    // Group ITEMS totals by rate
     order.items.forEach(item => {
         const rate = Number(item.vatRateTakeaway || 0);
-        grossTotalsByRate[rate] = (grossTotalsByRate[rate] || 0) + (item.price * item.quantity);
+        itemsGrossTotalsByRate[rate] = (itemsGrossTotalsByRate[rate] || 0) + (item.price * item.quantity);
     });
 
     let maxVatRate = 0;
-    Object.keys(grossTotalsByRate).forEach(k => { if(Number(k) > maxVatRate) maxVatRate = Number(k); });
+    Object.keys(itemsGrossTotalsByRate).forEach(k => { if(Number(k) > maxVatRate) maxVatRate = Number(k); });
     const feeVatRate = maxVatRate > 0 ? maxVatRate : 21; // Fallback VAT for fees if no items
 
-    if (order.packagingFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + order.packagingFee;
-    if (order.deliveryFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + order.deliveryFee;
+    // Group FEES totals by rate
+    if (order.packagingFee > 0) feesGrossTotalsByRate[feeVatRate] = (feesGrossTotalsByRate[feeVatRate] || 0) + order.packagingFee;
+    if (order.deliveryFee > 0) feesGrossTotalsByRate[feeVatRate] = (feesGrossTotalsByRate[feeVatRate] || 0) + order.deliveryFee;
 
-    const grandGrossTotal = Object.values(grossTotalsByRate).reduce((a, b) => a + b, 0);
+    const grandItemsTotal = Object.values(itemsGrossTotalsByRate).reduce((a, b) => a + b, 0);
     const totalDiscount = order.appliedDiscounts?.reduce((a, b) => a + b.amount, 0) || 0;
-    const discountRatio = grandGrossTotal > 0 ? (totalDiscount / grandGrossTotal) : 0;
+    
+    // Discount ratio applies ONLY to items
+    const discountRatio = grandItemsTotal > 0 ? (totalDiscount / grandItemsTotal) : 0;
 
     const tableBody: any[] = [];
     const taxSummary: Record<number, { total: number, base: number, vat: number }> = {};
 
-    // Calculate Summary with proportional discount
-    Object.keys(grossTotalsByRate).forEach(k => {
+    // Helper to merge into tax summary
+    const addToTaxSummary = (rate: number, total: number) => {
+        if (!taxSummary[rate]) taxSummary[rate] = { total: 0, base: 0, vat: 0 };
+        const base = getBase(total, rate);
+        const vat = total - base;
+        taxSummary[rate].total += total;
+        taxSummary[rate].base += base;
+        taxSummary[rate].vat += vat;
+    };
+
+    // 1. Process ITEMS (affected by discount)
+    Object.keys(itemsGrossTotalsByRate).forEach(k => {
         const r = Number(k);
-        const gross = grossTotalsByRate[r];
-        const netAtRate = gross * (1 - discountRatio);
-        
-        taxSummary[r] = {
-            total: netAtRate,
-            base: getBase(netAtRate, r),
-            vat: netAtRate - getBase(netAtRate, r)
-        };
+        const gross = itemsGrossTotalsByRate[r];
+        const netAtRate = gross * (1 - discountRatio); // Reduce item base by discount ratio
+        addToTaxSummary(r, netAtRate);
+    });
+
+    // 2. Process FEES (FULL price, NOT affected by discount)
+    Object.keys(feesGrossTotalsByRate).forEach(k => {
+        const r = Number(k);
+        const gross = feesGrossTotalsByRate[r];
+        addToTaxSummary(r, gross);
     });
 
     // Items table rows
@@ -226,7 +242,9 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
     }
 
     // --- 8. TOTALS & FOOTER ---
-    const grandTotal = Math.max(0, grandGrossTotal - totalDiscount);
+    // Total = (Items - Discount) + Fees. Ensure result is not negative.
+    const grandTotal = Math.max(0, grandItemsTotal - totalDiscount) + (order.packagingFee || 0) + (order.deliveryFee || 0);
+    
     doc.setFont("Roboto", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...brandColor);

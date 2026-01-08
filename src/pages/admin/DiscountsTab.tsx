@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DiscountCode, DiscountType, OrderStatus } from '../../types';
@@ -66,6 +67,27 @@ export const DiscountsTab: React.FC = () => {
             return;
         }
 
+        // --- VALIDATION START ---
+        const val = Number(editingDiscount.value);
+        if (isNaN(val)) {
+             setModalError('Zadejte platnou číselnou hodnotu.');
+             return;
+        }
+
+        if (editingDiscount.type === DiscountType.PERCENTAGE) {
+            if (val < 1 || val > 100) {
+                setModalError('Hodnota procentuální slevy musí být mezi 1 a 100.');
+                return;
+            }
+        } else {
+            // Fixed amount check (must be at least 1)
+            if (val < 1) {
+                setModalError('Hodnota slevy musí být alespoň 1 Kč.');
+                return;
+            }
+        }
+        // --- VALIDATION END ---
+
         const duplicate = discountCodes.find(d => 
             d.code.toUpperCase() === codeToSave && 
             d.id !== editingDiscount.id
@@ -102,7 +124,7 @@ export const DiscountsTab: React.FC = () => {
 
     const openModal = (discount?: Partial<DiscountCode>) => {
         setModalError(null);
-        setEditingDiscount(discount || { id: Date.now().toString(), enabled: true, type: DiscountType.PERCENTAGE });
+        setEditingDiscount(discount || { id: Date.now().toString(), enabled: true, type: DiscountType.PERCENTAGE, value: 0 });
         setIsDiscountModalOpen(true);
     };
 
@@ -165,14 +187,19 @@ export const DiscountsTab: React.FC = () => {
                         <h3 className="font-bold text-lg">{editingDiscount?.id ? t('admin.edit_discount') : t('admin.add_discount')}</h3>
                         
                         {modalError && (
-                            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold flex items-center">
+                            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold flex items-center animate-in zoom-in-95 duration-200">
                                 <AlertTriangle size={16} className="mr-2 flex-shrink-0"/> {modalError}
                             </div>
                         )}
 
                         <div>
                             <label className="text-xs font-bold text-gray-400 block mb-1">{t('discount.code')}</label>
-                            <input required className="w-full border rounded p-2 uppercase" value={editingDiscount?.code || ''} onChange={e => setEditingDiscount({...editingDiscount, code: e.target.value.toUpperCase()})} />
+                            <input 
+                                className="w-full border rounded p-2 uppercase focus:ring-accent outline-none" 
+                                value={editingDiscount?.code || ''} 
+                                onChange={e => setEditingDiscount({...editingDiscount, code: e.target.value.toUpperCase()})}
+                                placeholder="např. SLEVA20" 
+                            />
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
@@ -184,7 +211,15 @@ export const DiscountsTab: React.FC = () => {
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.value')}</label>
-                                <input type="number" required className="w-full border rounded p-2" value={editingDiscount?.value || ''} onChange={e => setEditingDiscount({...editingDiscount, value: Number(e.target.value)})} />
+                                <input 
+                                    type="number" 
+                                    className="w-full border rounded p-2" 
+                                    value={editingDiscount?.value || ''} 
+                                    onChange={e => setEditingDiscount({...editingDiscount, value: Number(e.target.value)})}
+                                    max={editingDiscount?.type === DiscountType.PERCENTAGE ? 100 : undefined} 
+                                    min="1"
+                                    placeholder={editingDiscount?.type === DiscountType.PERCENTAGE ? '1-100' : 'min. 1'}
+                                />
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
@@ -240,8 +275,8 @@ export const DiscountsTab: React.FC = () => {
                             </label>
                         </div>
                         <div className="flex gap-2 pt-4">
-                            <button type="button" onClick={() => setIsDiscountModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('common.cancel')}</button>
-                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('common.save')}</button>
+                            <button type="button" onClick={() => setIsDiscountModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded hover:bg-gray-200 transition">{t('common.cancel')}</button>
+                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded hover:bg-gray-800 transition">{t('common.save')}</button>
                         </div>
                     </form>
                 </div>

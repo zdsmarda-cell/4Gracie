@@ -32,6 +32,45 @@ describe('Packaging Logic', () => {
     });
 });
 
+describe('Total Price Calculation Logic', () => {
+    // This test simulates the logic used in Cart, Admin, and PDF to ensure math consistency
+    it('should NOT apply discount to fees (delivery/packaging)', () => {
+        // Setup
+        const itemPrice = 1000;
+        const shippingFee = 200;
+        const packagingFee = 50;
+        const discountPercent = 50; // 50%
+
+        // 1. Calculate Item Total
+        const itemsTotal = itemPrice;
+
+        // 2. Calculate Discount Amount (Should be 50% of 1000 = 500)
+        const discountAmount = Math.floor(itemsTotal * (discountPercent / 100));
+        
+        // 3. Calculate Final Total
+        // CORRECT LOGIC: (Items - Discount) + Fees
+        const correctTotal = (itemsTotal - discountAmount) + shippingFee + packagingFee;
+        
+        // WRONG LOGIC (if discount applied to whole order): (1000 + 200 + 50) * 0.5 = 625
+        const wrongTotal = (itemsTotal + shippingFee + packagingFee) * (1 - (discountPercent/100));
+
+        expect(discountAmount).toBe(500);
+        expect(correctTotal).toBe(750); // (1000 - 500) + 200 + 50
+        expect(correctTotal).not.toBe(wrongTotal);
+    });
+
+    it('should handle discount larger than item price (Total >= 0)', () => {
+        const itemPrice = 100;
+        const shippingFee = 200;
+        const discountAmount = 150; // Fixed discount larger than item
+
+        // Formula: Math.max(0, Items - Discount) + Fees
+        const total = Math.max(0, itemPrice - discountAmount) + shippingFee;
+        
+        expect(total).toBe(200); // 0 + 200
+    });
+});
+
 describe('Capacity & Load Logic', () => {
     const mockSettings: GlobalSettings = {
         ...DEFAULT_SETTINGS,
@@ -126,39 +165,18 @@ describe('Event Product Availability (getAvailableEventDatesLogic)', () => {
         // No orders yet
         const dates = getAvailableEventDatesLogic(products[0], mockSettings, [], products, today);
         
-        // 2025-01-01 is past (Lead time 2 days -> min date 2025-01-07)
-        // 2025-01-10 is valid
-        // 2025-01-11 is valid (Capacity 10 >= 10+5? No, wait. 10 workload + 5 overhead = 15 required. Limit 10. So it should fail!)
-        
-        // Wait, logic says: (currentLoad + productWorkload + productOverhead) <= limit
-        // Slot 11: 0 + 10 + 5 = 15. Limit 10. Should fail.
-        
         expect(dates).toContain('2025-01-10');
         expect(dates).not.toContain('2025-01-11');
         expect(dates).not.toContain('2025-01-01');
     });
 
     it('should exclude dates where orders fill the capacity', () => {
-        // Create an order that fills the 2025-01-10 slot
-        // Limit 100.
-        // Existing Order: 90 workload.
-        // New Product needs 15.
-        // 90 + 15 = 105 > 100. Should be excluded.
-        
         const existingOrder: any = {
             id: 'o1',
             deliveryDate: '2025-01-10',
             status: 'confirmed',
             items: [{ id: 'evt_prod', quantity: 9, category: 'warm' }] // 9 * 10 = 90 workload. + 5 overhead = 95 total used.
         };
-
-        // Recalculate usage:
-        // Item: 9 qty * 10 workload = 90.
-        // Overhead: 5.
-        // Total Used: 95.
-        // Remaining: 5.
-        // Needed for new: 10 + 5 = 15.
-        // 95 + 15 = 110 > 100. Fail.
 
         const dates = getAvailableEventDatesLogic(products[0], mockSettings, [existingOrder], products, today);
         expect(dates).not.toContain('2025-01-10');

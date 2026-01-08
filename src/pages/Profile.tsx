@@ -848,7 +848,10 @@ export const Profile: React.FC = () => {
                         )}
                         <div className="flex justify-between items-center pt-2 border-t border-gray-200 mt-2">
                             <span className="font-bold text-sm">CELKEM:</span>
-                            <span className="font-bold text-lg text-accent">{Math.max(0, editingOrder.totalPrice - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0))} Kč</span>
+                            <span className="font-bold text-lg text-accent">
+                                {/* Correct calculation: (Goods - Discounts) + Fees. Discount does not reduce fees. */}
+                                {Math.max(0, editingOrder.totalPrice - (editingOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0)) + editingOrder.packagingFee + (editingOrder.deliveryFee || 0)} Kč
+                            </span>
                         </div>
                     </div>
                  </div>

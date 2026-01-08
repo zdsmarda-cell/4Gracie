@@ -164,25 +164,17 @@ export const calculateDailyLoad = (
     return { load, eventLoad, usedProductIds };
 };
 
-/**
- * Calculates available dates for a specific Event Product.
- * Returns valid dates ONLY if:
- * 1. Date is in the future (respecting lead time)
- * 2. Date is a valid Event Slot
- * 3. Adding the Minimum Order Quantity of this product does NOT exceed the Event Capacity for that slot.
- */
 export const getAvailableEventDatesLogic = (
     product: Product,
     settings: GlobalSettings,
     orders: Order[],
     allProducts: Product[],
-    todayDate: Date = new Date() // Allow injecting today for testing
+    todayDate: Date = new Date() 
 ): string[] => {
     if (!product.isEventProduct) return [];
     
     const slots = settings.eventSlots || [];
     
-    // Normalize today to start of day
     const today = new Date(todayDate);
     today.setHours(0,0,0,0);
     
@@ -192,40 +184,24 @@ export const getAvailableEventDatesLogic = (
 
     return slots
       .filter(s => {
-          // 1. Date Check (Future & Lead Time)
           const slotDate = new Date(s.date);
           slotDate.setHours(0,0,0,0);
           if (slotDate < minDate) return false;
 
-          // 2. Capacity Check
           const catId = product.category;
           const limit = s.capacityOverrides?.[catId] ?? 0;
           
-          // If limit is 0, category is closed for this event
           if (limit <= 0) return false;
 
-          // Get current load for this specific date
           const relevantOrders = orders.filter(o => o.deliveryDate === s.date && o.status !== OrderStatus.CANCELLED);
           const { eventLoad } = calculateDailyLoad(relevantOrders, allProducts, settings);
           
           const currentLoad = eventLoad[catId] || 0;
           
-          // Calculate potential impact of this product (Min Order Qty)
-          // We must also account for Overhead if it's not already "paid" for by other items in the same group?
-          // For simplicity in "Can I order?", we assume worst case: full workload + full overhead 
-          // (unless sophisticated logic checks if overhead is shared with existing load, which is hard without cart context).
-          // Here we check: Workload * MinQty. Overhead is harder to predict without cart context, so we check Variable Load primarily.
-          
           const minQty = product.minOrderQuantity || 1;
           const productWorkload = (product.workload || 0) * minQty;
-          
-          // Note: Ideally we should also check overhead, but overhead depends on what's already in the cart or order.
-          // For "Menu Display" logic, checking variable workload fit is usually sufficient proxy.
-          // If strict: Add overhead.
           const productOverhead = product.workloadOverhead || 0;
 
-          // Simplified check: Does (Current + New Variable + New Overhead) <= Limit?
-          // This is conservative. It might return false if overhead is actually shared, but safe.
           return (currentLoad + productWorkload + productOverhead) <= limit;
       })
       .map(s => s.date)
