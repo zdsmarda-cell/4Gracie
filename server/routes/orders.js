@@ -1,21 +1,29 @@
 
 import express from 'express';
 import { withDb, parseJsonCol } from '../db.js';
-import { queueOrderEmail } from '../services/email.js'; // CHANGED
+import { queueOrderEmail } from '../services/email.js';
+import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.get('/', withDb(async (req, res, db) => {
+// Get Orders - Protected (Any logged in user can try, ideally filter by ID for non-admins, but simplistic auth for now)
+router.get('/', authenticateToken, withDb(async (req, res, db) => {
     const { id, dateFrom, dateTo, userId, status, customer, isEvent, isPaid, page = 1, limit = 50 } = req.query;
+    
+    // Security: If user is not admin, FORCE userId filter to their own ID
+    let safeUserId = userId;
+    if (req.user.role !== 'admin') {
+        safeUserId = req.user.id;
+    }
+
     const offset = (Number(page) - 1) * Number(limit);
     let query = 'SELECT full_json, final_invoice_date FROM orders WHERE 1=1';
     const params = [];
     if (id) { query += ' AND id LIKE ?'; params.push(`%${id}%`); }
-    if (userId) { query += ' AND user_id = ?'; params.push(userId); }
+    if (safeUserId) { query += ' AND user_id = ?'; params.push(safeUserId); }
     if (dateFrom) { query += ' AND delivery_date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND delivery_date <= ?'; params.push(dateTo); }
     
-    // Updated Status Logic for Multi-select
     if (status) { 
         const statuses = status.split(',').filter(s => s.trim() !== '');
         if (statuses.length > 0) {
@@ -24,13 +32,11 @@ router.get('/', withDb(async (req, res, db) => {
         }
     }
     
-    // Payment Status Filter
     if (isPaid === 'yes') { query += ' AND is_paid = 1'; }
     if (isPaid === 'no') { query += ' AND is_paid = 0'; }
     
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
     
-    // Heuristic JSON search for Event Product flag
     if (isEvent === 'yes') { 
         query += ` AND full_json LIKE '%"isEventProduct":true%'`; 
     } else if (isEvent === 'no') {
@@ -45,8 +51,15 @@ router.get('/', withDb(async (req, res, db) => {
     res.json({ success: true, orders: rows.map(r => { const j = parseJsonCol(r, 'full_json'); if(r.final_invoice_date) j.finalInvoiceDate = r.final_invoice_date; return j; }), total: cnt[0].t, page: Number(page), pages: Math.ceil(cnt[0].t / Number(limit)) });
 }));
 
-router.post('/', withDb(async (req, res, db) => {
+// Create/Update Order - Protected
+router.post('/', authenticateToken, withDb(async (req, res, db) => {
     const order = req.body;
+    
+    // Security check: User can only edit own orders unless admin
+    if (req.user.role !== 'admin' && order.userId !== req.user.id) {
+        return res.status(403).json({ error: 'Nemáte oprávnění upravovat cizí objednávky.' });
+    }
+
     const isUpdate = await db.query('SELECT id FROM orders WHERE id = ?', [order.id]).then(([rows]) => rows.length > 0);
     const jsonStr = JSON.stringify(order);
     
@@ -67,12 +80,11 @@ router.post('/', withDb(async (req, res, db) => {
             ]
         );
         
-        // Handle User Edit Notification or general update
         if (req.body.sendNotify) {
              try {
                  const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
                  const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
-                 await queueOrderEmail(order, 'updated', settings); // QUEUED
+                 await queueOrderEmail(order, 'updated', settings);
              } catch(e) {
                  console.error("Failed to queue update email:", e);
              }
@@ -94,7 +106,6 @@ router.post('/', withDb(async (req, res, db) => {
             ]
         );
         
-        // Insert items
         if (order.items && order.items.length > 0) {
             const itemValues = order.items.map(i => [
                 null, order.id, i.id, i.name, i.quantity, i.price, i.category || 'unknown', i.unit, i.workload || 0, i.workloadOverhead || 0
@@ -102,12 +113,10 @@ router.post('/', withDb(async (req, res, db) => {
             await db.query('INSERT INTO order_items (id, order_id, product_id, name, quantity, price, category, unit, workload, workload_overhead) VALUES ?', [itemValues]);
         }
 
-        // Email Trigger
         try {
             const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
             const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
-            console.log(`📧 Queueing CREATED email for order #${order.id}`);
-            await queueOrderEmail(order, 'created', settings); // QUEUED
+            await queueOrderEmail(order, 'created', settings);
         } catch (e) {
             console.error("❌ Critical: Failed to queue order created email:", e);
         }
@@ -115,40 +124,38 @@ router.post('/', withDb(async (req, res, db) => {
     res.json({ success: true });
 }));
 
-router.put('/status', withDb(async (req, res, db) => {
+// Status Updates - Admin/Driver Only
+router.put('/status', authenticateToken, withDb(async (req, res, db) => {
+    // Drivers can typically mark delivered, Admins everything. For simplicity, allow authenticated users with roles.
+    if (req.user.role === 'customer') {
+        return res.status(403).json({ error: 'Zákazníci nemohou měnit stav objednávky.' });
+    }
+
     const { ids, status, notifyCustomer, deliveryCompanyDetailsSnapshot } = req.body;
     
-    // 1. Batch update status column in DB
     await db.query('UPDATE orders SET status = ? WHERE id IN (?)', [status, ids]);
     
     const nowIso = new Date().toISOString();
 
-    // 2. If status is DELIVERED, set final_invoice_date column if not set
     if (status === 'delivered') {
-        const nowDb = nowIso.slice(0, 19).replace('T', ' '); // Format for MySQL: YYYY-MM-DD HH:MM:SS
+        const nowDb = nowIso.slice(0, 19).replace('T', ' '); 
         await db.query('UPDATE orders SET final_invoice_date = ? WHERE id IN (?) AND final_invoice_date IS NULL', [nowDb, ids]);
     }
 
-    // 3. Update full_json blob for ALL affected orders to reflect the new status
     const [orders] = await db.query('SELECT id, full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
     
     for(const o of orders) {
         let json = parseJsonCol(o, 'full_json');
         
-        // Always update status in JSON
         json.status = status;
         if (!json.statusHistory) json.statusHistory = [];
         json.statusHistory.push({ status, date: nowIso });
 
-        // Additional logic for DELIVERED status
         if (status === 'delivered') {
-            // Only update snapshot if not already present
             if (!json.deliveryCompanyDetailsSnapshot && deliveryCompanyDetailsSnapshot) {
                 json.deliveryCompanyDetailsSnapshot = deliveryCompanyDetailsSnapshot;
             }
-            // Ensure finalInvoiceDate is in JSON too
             if (!json.finalInvoiceDate) {
-                // Use existing from DB (if present) or now
                 json.finalInvoiceDate = o.final_invoice_date 
                     ? new Date(o.final_invoice_date).toISOString() 
                     : nowIso;
@@ -158,15 +165,12 @@ router.put('/status', withDb(async (req, res, db) => {
         await db.query('UPDATE orders SET full_json = ? WHERE id = ?', [JSON.stringify(json), o.id]);
     }
 
-    // 4. Notifications
     if (notifyCustomer) {
         const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
         const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
         
-        // Re-iterate (or use cached data) to send emails
         for (const r of orders) {
             const o = parseJsonCol(r, 'full_json');
-            // Patch current status for email template if we used cached object
             o.status = status;
             if (r.final_invoice_date) o.finalInvoiceDate = r.final_invoice_date;
             
@@ -174,7 +178,7 @@ router.put('/status', withDb(async (req, res, db) => {
                 o.deliveryCompanyDetailsSnapshot = deliveryCompanyDetailsSnapshot;
             }
             try {
-                await queueOrderEmail(o, 'status', settings, status); // QUEUED
+                await queueOrderEmail(o, 'status', settings, status);
             } catch (e) {
                 console.error(`Failed to queue status update email for order ${o.id}:`, e);
             }

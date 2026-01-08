@@ -29,6 +29,10 @@ export const useAuth = (
             if (res && res.success) {
                 setUser(res.user);
                 localStorage.setItem('session_user', JSON.stringify(res.user));
+                // STORE TOKEN
+                if (res.token) {
+                    localStorage.setItem('auth_token', res.token);
+                }
                 return { success: true };
             }
             return { success: false, message: res?.message || 'Login failed' };
@@ -58,9 +62,10 @@ export const useAuth = (
         if (dataSource === 'api') {
             apiCall('/api/users', 'POST', newUser).then(res => {
                 if (res && res.success) { 
-                    setAllUsers(prev => [...prev, newUser]); 
-                    setUser(newUser); 
-                    localStorage.setItem('session_user', JSON.stringify(newUser));
+                    // Automatically log in (Note: in real world, server should return token on register too, skipping for now)
+                    // The user will need to re-login to get the token or we can fix the backend to return token on register.
+                    // For simplicity, we just prompt login or allow limited access until explicit login.
+                    showNotify('Registrace úspěšná. Nyní se prosím přihlaste.', 'success');
                 }
             });
         } else {
@@ -72,7 +77,8 @@ export const useAuth = (
 
     const logout = () => { 
         setUser(null); 
-        localStorage.removeItem('session_user'); 
+        localStorage.removeItem('session_user');
+        localStorage.removeItem('auth_token'); // Clear Token
     };
 
     const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
@@ -83,13 +89,11 @@ export const useAuth = (
             const res = await apiCall('/api/users', 'POST', newUser);
             if (res && res.success) {
                 setAllUsers(prev => [...prev, newUser]);
-                // Success notification removed
                 return true;
             }
             return false;
         } else {
             setAllUsers(prev => [...prev, newUser]);
-            // Success notification removed
             return true;
         }
     };
@@ -101,7 +105,6 @@ export const useAuth = (
                 setUser(u);
                 localStorage.setItem('session_user', JSON.stringify(u));
                 setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-                // Success notification removed
                 return true;
             }
             return false;
@@ -122,7 +125,6 @@ export const useAuth = (
                     setUser(u);
                     localStorage.setItem('session_user', JSON.stringify(u));
                 }
-                // Success notification removed
                 return true;
             }
             return false;

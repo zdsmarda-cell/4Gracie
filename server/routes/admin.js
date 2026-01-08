@@ -4,7 +4,8 @@ import { withDb, parseJsonCol } from '../db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { sendEventNotification } from '../services/email.js'; // This now queues internally
+import { sendEventNotification } from '../services/email.js';
+import { requireAdmin } from '../middleware/auth.js'; // Import middleware
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -12,12 +13,11 @@ const __dirname = path.dirname(__filename);
 const UPLOAD_ROOT = path.resolve(__dirname, '..', '..', 'uploads');
 const UPLOAD_IMAGES_DIR = path.join(UPLOAD_ROOT, 'images');
 
-// Ensure dirs
 if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
 if (!fs.existsSync(UPLOAD_IMAGES_DIR)) fs.mkdirSync(UPLOAD_IMAGES_DIR, { recursive: true });
 
-// UPLOAD
-router.post('/upload', async (req, res) => {
+// UPLOAD - Protected
+router.post('/upload', requireAdmin, async (req, res) => {
     const { image, name } = req.body;
     if (!image) return res.status(400).json({ error: 'No image' });
     const matches = image.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
@@ -37,8 +37,8 @@ router.post('/upload', async (req, res) => {
     }
 });
 
-// IMPORT
-router.post('/import', withDb(async (req, res, db) => {
+// IMPORT - Protected
+router.post('/import', requireAdmin, withDb(async (req, res, db) => {
     const { data } = req.body;
     const conn = await db.getConnection();
     try {
@@ -47,7 +47,6 @@ router.post('/import', withDb(async (req, res, db) => {
             await conn.query('DELETE FROM products');
             for(const p of data.products) await conn.query('INSERT INTO products (id, name, full_json) VALUES (?,?,?)', [p.id, p.name, JSON.stringify(p)]);
         }
-        // Add more tables as needed for full import logic
         await conn.commit();
         res.json({ success: true });
     } catch(e) {
@@ -58,13 +57,12 @@ router.post('/import', withDb(async (req, res, db) => {
     }
 }));
 
-// NOTIFY EVENT (Queues emails now)
-router.post('/notify-event', withDb(async (req, res, db) => {
+// NOTIFY EVENT - Protected
+router.post('/notify-event', requireAdmin, withDb(async (req, res, db) => {
     const { date } = req.body;
     if (!date) return res.status(400).json({ error: 'Date required' });
 
     try {
-        // 1. Fetch Users with Consent
         const [users] = await db.query('SELECT email FROM users WHERE marketing_consent = 1 AND is_blocked = 0');
         const recipients = users.map(u => u.email).filter(e => e && e.includes('@'));
 
@@ -72,7 +70,6 @@ router.post('/notify-event', withDb(async (req, res, db) => {
             return res.json({ success: true, message: 'No recipients found' });
         }
 
-        // 2. Fetch Active Event Products
         const [pRows] = await db.query('SELECT full_json FROM products WHERE is_deleted = 0');
         const eventProducts = pRows
             .map(r => parseJsonCol(r, 'full_json'))
@@ -82,7 +79,6 @@ router.post('/notify-event', withDb(async (req, res, db) => {
             return res.json({ success: true, message: 'No active event products found' });
         }
 
-        // 3. Send Emails (Queues them)
         await sendEventNotification(date, eventProducts, recipients);
 
         res.json({ success: true, count: recipients.length });
@@ -92,8 +88,8 @@ router.post('/notify-event', withDb(async (req, res, db) => {
     }
 }));
 
-// EMAIL MANAGEMENT ROUTES
-router.get('/emails', withDb(async (req, res, db) => {
+// EMAIL MANAGEMENT ROUTES - Protected
+router.get('/emails', requireAdmin, withDb(async (req, res, db) => {
     const { status, recipient, subject, dateFrom, dateTo, page = 1, limit = 50 } = req.query;
     
     const offset = (Number(page) - 1) * Number(limit);
@@ -137,11 +133,9 @@ router.get('/emails', withDb(async (req, res, db) => {
         params.push(`${dateTo} 23:59:59`);
     }
 
-    // Get Total Count
     const [cnt] = await db.query(countQuery, params);
     const total = cnt[0].t;
 
-    // Get Data
     query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
     params.push(Number(limit), Number(offset));
     
@@ -156,8 +150,8 @@ router.get('/emails', withDb(async (req, res, db) => {
     });
 }));
 
-router.post('/emails/retry', withDb(async (req, res, db) => {
-    const { ids } = req.body; // array of IDs
+router.post('/emails/retry', requireAdmin, withDb(async (req, res, db) => {
+    const { ids } = req.body; 
     if (!ids || ids.length === 0) return res.status(400).json({ error: "No IDs provided" });
     
     await db.query("UPDATE email_queue SET status = 'pending', error_message = NULL WHERE id IN (?)", [ids]);

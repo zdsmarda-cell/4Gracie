@@ -1,10 +1,11 @@
 
 import express from 'express';
 import { withDb } from '../db.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.post('/', withDb(async (req, res, db) => {
+router.post('/', requireAdmin, withDb(async (req, res, db) => {
     const p = req.body;
     const jsonStr = JSON.stringify(p);
     
@@ -23,7 +24,7 @@ router.post('/', withDb(async (req, res, db) => {
     res.json({ success: true });
 }));
 
-router.delete('/:id', withDb(async (req, res, db) => {
+router.delete('/:id', requireAdmin, withDb(async (req, res, db) => {
     await db.query('UPDATE products SET is_deleted = TRUE WHERE id = ?', [req.params.id]);
     res.json({ success: true });
 }));

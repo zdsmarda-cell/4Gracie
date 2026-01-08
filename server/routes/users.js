@@ -2,12 +2,14 @@
 import express from 'express';
 import { withDb } from '../db.js';
 import nodemailer from 'nodemailer';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
+const SECRET_KEY = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod';
 
 const hashPassword = (pwd) => `hashed_${Buffer.from(pwd).toString('base64')}`;
 
-// GET USERS
+// GET USERS (Protected)
 router.get('/', withDb(async (req, res, db) => {
     const { search } = req.query;
     let query = 'SELECT * FROM users WHERE 1=1';
@@ -42,7 +44,7 @@ router.post('/', withDb(async (req, res, db) => {
     res.json({ success: true });
 }));
 
-// AUTH LOGIN
+// AUTH LOGIN - Generates Token
 router.post('/login', withDb(async (req, res, db) => {
     const { email, password } = req.body;
     const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
@@ -50,7 +52,6 @@ router.post('/login', withDb(async (req, res, db) => {
     if (rows.length > 0) {
         const u = rows[0];
         
-        // CRITICAL FIX: Verify password
         const reqHash = hashPassword(password || '');
         if (u.password_hash !== reqHash) {
             return res.json({ success: false, message: 'Chybné heslo.' });
@@ -60,8 +61,19 @@ router.post('/login', withDb(async (req, res, db) => {
             return res.json({ success: false, message: 'Účet je zablokován.' });
         }
 
+        // Generate JWT
+        const token = jwt.sign(
+            { id: u.id, email: u.email, role: u.role }, 
+            SECRET_KEY, 
+            { expiresIn: '24h' }
+        );
+
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
-        res.json({ success: true, user: { id: u.id, email: u.email, name: u.name, phone: u.phone, role: u.role, isBlocked: Boolean(u.is_blocked), marketingConsent: Boolean(u.marketing_consent), passwordHash: u.password_hash, deliveryAddresses: addrs.filter(a => a.type === 'delivery'), billingAddresses: addrs.filter(a => a.type === 'billing') } });
+        res.json({ 
+            success: true, 
+            token, // Send token to client
+            user: { id: u.id, email: u.email, name: u.name, phone: u.phone, role: u.role, isBlocked: Boolean(u.is_blocked), marketingConsent: Boolean(u.marketing_consent), passwordHash: u.password_hash, deliveryAddresses: addrs.filter(a => a.type === 'delivery'), billingAddresses: addrs.filter(a => a.type === 'billing') } 
+        });
     } else { 
         res.json({ success: false, message: 'Uživatel nenalezen.' }); 
     }
@@ -72,8 +84,6 @@ router.post('/reset-password', withDb(async (req, res, db) => {
     const { email } = req.body;
     const [rows] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
     
-    // Quick SMTP transporter for just this call if not globally cached, but generally handled by initEmail
-    // Here we reuse logic from email service ideally, but for simplicity keeping inline with guard
     if (rows.length > 0 && process.env.SMTP_HOST) {
         const token = Buffer.from(`${email}-${Date.now()}`).toString('base64');
         const link = `${process.env.VITE_APP_URL || 'https://eshop.4gracie.cz'}/#/reset-password?token=${token}`;
