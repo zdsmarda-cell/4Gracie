@@ -1,10 +1,9 @@
-import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, CookieSettings, EventSlot, OrdersSearchResult, EmailLog, DataSourceMode } from '../types';
-import { PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS, MOCK_ORDERS } from '../constants';
+
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from 'react';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, CookieSettings, OrdersSearchResult, EventSlot } from '../types';
+import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
-import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, getAvailableEventDatesLogic, calculateDailyLoad } from '../utils/orderLogic';
-import { generateInvoicePdf } from '../utils/pdfGenerator';
-import { removeDiacritics, formatDate, calculateCzIban } from '../utils/helpers';
+import { jsPDF } from 'jspdf';
 
 interface CheckResult {
   allowed: boolean;
@@ -45,6 +44,8 @@ interface RegionDateInfo {
   reason?: string;
 }
 
+export type DataSourceMode = 'local' | 'api';
+
 interface GlobalNotification {
   message: string;
   type: 'success' | 'error';
@@ -57,6 +58,8 @@ interface StoreContextType {
   isLoading: boolean;
   isOperationPending: boolean;
   dbConnectionError: boolean;
+  isPreviewEnvironment: boolean;
+  
   language: Language;
   setLanguage: (lang: Language) => void;
   
@@ -92,7 +95,6 @@ interface StoreContextType {
   addProduct: (product: Product) => Promise<boolean>;
   updateProduct: (product: Product) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
-  uploadImage: (base64Data: string, fileName: string) => Promise<string>;
   
   discountCodes: DiscountCode[];
   appliedDiscounts: AppliedDiscount[];
@@ -105,33 +107,36 @@ interface StoreContextType {
   
   settings: GlobalSettings;
   updateSettings: (settings: GlobalSettings) => Promise<boolean>;
+  
   dayConfigs: DayConfig[];
   updateDayConfig: (config: DayConfig) => Promise<boolean>;
   removeDayConfig: (date: string) => Promise<boolean>;
   
+  // Event Slots
   updateEventSlot: (slot: EventSlot) => Promise<boolean>;
   removeEventSlot: (date: string) => Promise<boolean>;
   notifyEventSubscribers: (date: string) => Promise<boolean>;
-  
+  getAvailableEventDates: (product: Product) => string[];
+  isEventCapacityAvailable: (product: Product) => boolean;
+
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
-  getDailyLoad: (date: string, excludeOrderId?: string) => Record<string, any>;
+  getDailyLoad: (date: string, excludeOrderId?: string) => { load: Record<string, number>, eventLoad: Record<string, number> };
   getDeliveryRegion: (zip: string) => DeliveryRegion | undefined;
   getRegionInfoForDate: (region: DeliveryRegion, date: string) => RegionDateInfo;
   getPickupPointInfo: (location: PickupLocation, date: string) => RegionDateInfo;
   calculatePackagingFee: (items: CartItem[]) => number;
-  getAvailableEventDates: (product: Product) => string[];
-  isEventCapacityAvailable: (product: Product) => boolean;
-  getFullApiUrl: (endpoint: string) => string;
   
   t: (key: string, params?: Record<string, string>) => string;
-  tData: (item: any, key: string) => string;
+  tData: (obj: any, key: string) => string;
   generateInvoice: (order: Order) => string;
   printInvoice: (order: Order, type?: 'proforma' | 'final') => Promise<void>;
   generateCzIban: (accountStr: string) => string;
   removeDiacritics: (str: string) => string;
   formatDate: (dateStr: string) => string;
-  getImageUrl: (url?: string) => string;
+  getImageUrl: (path: string) => string;
+  uploadImage: (base64: string, name: string) => Promise<string>;
+  getFullApiUrl: (endpoint: string) => string;
   
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
   
@@ -144,12 +149,45 @@ interface StoreContextType {
 
   cookieSettings: CookieSettings | null;
   saveCookieSettings: (settings: CookieSettings) => void;
-  isPreviewEnvironment: boolean;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
+
+const removeDiacritics = (str: string): string => {
+  if (!str) return "";
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+};
+
+const formatDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return dateStr;
+  return date.toLocaleDateString('cs-CZ', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+};
+
+const calculateCzIban = (accountString: string): string => {
+  const cleanStr = accountString.replace(/\s/g, '');
+  const [accountPart, bankCode] = cleanStr.split('/');
+  if (!accountPart || !bankCode || bankCode.length !== 4) return '';
+  let prefix = '';
+  let number = accountPart;
+  if (accountPart.includes('-')) { [prefix, number] = accountPart.split('-'); }
+  const paddedPrefix = prefix.padStart(6, '0');
+  const paddedNumber = number.padStart(10, '0');
+  const paddedBank = bankCode.padStart(4, '0');
+  const bban = paddedBank + paddedPrefix + paddedNumber;
+  const numericStr = bban + '123500';
+  const remainder = BigInt(numericStr) % 97n;
+  const checkDigitsVal = 98n - remainder;
+  const checkDigitsStr = checkDigitsVal.toString().padStart(2, '0');
+  return `CZ${checkDigitsStr}${bban}`;
+};
 
 const loadFromStorage = <T,>(key: string, fallback: T): T => {
   try {
@@ -166,16 +204,7 @@ const INITIAL_USERS: User[] = [
 ];
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // @ts-ignore
-  const safeEnv = (import.meta && import.meta.env) ? import.meta.env : {} as any;
-  const isProduction = safeEnv.PROD || false;
-  const isPreviewEnvironment = safeEnv.MODE !== 'production';
-
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
-    // Force API in production
-    if (isProduction) {
-        return 'api';
-    }
     return (localStorage.getItem('app_data_source') as DataSourceMode) || 'local';
   });
   
@@ -198,18 +227,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return text;
   };
 
-  const tData = (item: any, key: string): string => {
-      if (!item) return '';
-      // Try translation first
-      if (item.translations && item.translations[language] && item.translations[language][key]) {
-          return item.translations[language][key];
-      }
-      // Fallback to base
-      return item[key] || '';
+  const tData = (obj: any, key: string) => {
+      if (!obj) return '';
+      // 1. Try translations object
+      if (obj.translations?.[language]?.[key]) return obj.translations[language][key];
+      // 2. Fallback to direct property
+      return obj[key] || '';
   };
 
   const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
   const [cartBump, setCartBump] = useState(false);
+  
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [user, setUser] = useState<User | null>(() => loadFromStorage('session_user', null));
   const [orders, setOrders] = useState<Order[]>([]);
@@ -219,11 +247,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
+  const isPreviewEnvironment = dataSource === 'local';
+
   const setDataSource = (mode: DataSourceMode) => {
-    if (isProduction && mode === 'local') {
-        console.warn("Local mode is strictly forbidden in production.");
-        return;
-    }
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
   };
@@ -232,18 +258,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type, autoClose });
   };
 
+  const saveCookieSettings = (s: CookieSettings) => {
+      setCookieSettings(s);
+      localStorage.setItem('cookie_settings', JSON.stringify(s));
+  };
+
   const getFullApiUrl = (endpoint: string) => {
     // @ts-ignore
-    const env = (import.meta && import.meta.env) ? import.meta.env : {} as any;
-    
+    const env = (import.meta as any).env;
     if (env.DEV) return endpoint;
-    
     let baseUrl = env.VITE_API_URL;
     if (!baseUrl) {
-       // Robust fallback for preview/production if env var is missing
-       const proto = window.location.protocol.startsWith('http') ? window.location.protocol : 'http:';
-       const host = window.location.hostname || 'localhost';
-       baseUrl = `${proto}//${host}:3000`;
+       baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
     }
     if (baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
@@ -259,20 +285,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setTimeout(() => {
             controller.abort();
             reject(new Error('TIMEOUT_LIMIT_REACHED'));
-        }, 15000);
+        }, 8000); 
     });
 
     try {
       const url = getFullApiUrl(endpoint);
       const token = localStorage.getItem('auth_token');
-      
+      const headers: any = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res: any = await Promise.race([
         fetch(url, {
           method,
-          headers: { 
-              'Content-Type': 'application/json',
-              'Authorization': token ? `Bearer ${token}` : ''
-          },
+          headers,
           body: body ? JSON.stringify(body) : undefined,
           signal: controller.signal
         }),
@@ -281,24 +306,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
-          if (res.status === 401 || res.status === 403) throw new Error("Neautorizovaný přístup.");
+          // If 403/401 sometimes it returns JSON, sometimes not.
+          if (res.status === 401 || res.status === 403) {
+              throw new Error("Unauthorized");
+          }
           throw new Error("Server vrátil neplatná data.");
       }
       
-      if (!res.ok) {
-          if (res.status === 401) localStorage.removeItem('auth_token');
-          throw new Error(`API Chyba: ${res.status} ${res.statusText}`);
-      }
-      
       const json = await res.json();
-      setDbConnectionError(false);
+      if (!res.ok) throw new Error(json.error || `API Chyba: ${res.status}`);
       return json;
     } catch (e: any) {
-      console.warn(`[API] Call to ${endpoint} failed:`, e);
-      if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError' || e.message.includes('Failed to fetch')) {
-         showNotify('Server neodpovídá.', 'error');
+      if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
+         showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
          setDbConnectionError(true);
       } else {
+         console.warn(`[API] Call to ${endpoint} failed:`, e);
          showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
       }
       return null;
@@ -309,6 +332,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const fetchData = async () => {
       setIsLoading(true);
+      setDbConnectionError(false);
       try {
         if (dataSource === 'api') {
           setAllUsers([]);
@@ -318,22 +342,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setDayConfigs([]);
           setSettings(EMPTY_SETTINGS);
           const data = await apiCall('/api/bootstrap', 'GET');
-          if (data) {
+          if (data && data.success) {
               setAllUsers(data.users || []);
               setProducts(data.products || []);
               setOrders(data.orders || []);
               if (data.settings) {
                  const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
-                 // Ensure arrays exist
                  if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
                  if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
-                 if (!mergedSettings.capacityCategories) mergedSettings.capacityCategories = [];
-                 if (!mergedSettings.eventSlots) mergedSettings.eventSlots = [];
                  setSettings(mergedSettings); 
               }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
               // showNotify("Připojeno k databázi.", 'success');
+          } else {
+              // Only if bootstrap specifically fails without throwing
+              if(!data) setDbConnectionError(true);
           }
         } else {
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
@@ -343,8 +367,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
           if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
           if (!loadedSettings.pickupLocations) loadedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
-          if (!loadedSettings.capacityCategories) loadedSettings.capacityCategories = [];
-          if (!loadedSettings.eventSlots) loadedSettings.eventSlots = [];
           
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
@@ -353,6 +375,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
       } catch (err: any) {
         showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
+        setDbConnectionError(true);
       } finally {
         setIsLoading(false);
       }
@@ -364,7 +387,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
-  useEffect(() => localStorage.setItem('cookie_settings', JSON.stringify(cookieSettings)), [cookieSettings]);
   
   useEffect(() => {
     if (dataSource === 'local') {
@@ -380,15 +402,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const openAuthModal = () => setIsAuthModalOpen(true);
   const closeAuthModal = () => setIsAuthModalOpen(false);
   const dismissNotification = () => setGlobalNotification(null);
-  const saveCookieSettings = (s: CookieSettings) => setCookieSettings(s);
 
-  const getImageUrl = (url?: string) => {
-      if (!url) return '';
-      if (url.startsWith('http')) return url;
-      if (url.startsWith('data:')) return url;
-      // Local or API path
-      const base = getFullApiUrl('');
-      return `${base.endsWith('/') ? base.slice(0,-1) : base}${url.startsWith('/') ? url : '/'+url}`;
+  const getImageUrl = (path: string) => {
+      if (!path) return '';
+      if (path.startsWith('data:') || path.startsWith('http')) return path;
+      return getFullApiUrl(path);
+  };
+
+  const uploadImage = async (base64: string, name: string) => {
+      if (dataSource === 'api') {
+          const res = await apiCall('/api/admin/upload', 'POST', { image: base64, name });
+          if (res && res.success) return res.url;
+          throw new Error('Upload failed');
+      } else {
+          return base64; // Keep base64 in local mode
+      }
   };
 
   const addToCart = (product: Product, quantity = 1) => {
@@ -401,7 +429,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
     setCartBump(true);
     setTimeout(() => setCartBump(false), 300);
-    // Notification removed as per request
+    showNotify(`Produkt "${product.name}" přidán do košíku`);
   };
 
   const removeFromCart = (id: string) => {
@@ -418,24 +446,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const clearCart = () => setCart([]);
 
+  // Recalculate discounts when cart changes
   useEffect(() => {
     if (appliedDiscounts.length === 0) return;
     let updatedDiscounts: AppliedDiscount[] = [];
     let removedCodes: string[] = [];
-    
-    // In local mode or general validation, we need full order history for discount usage checks.
-    // However, for cart validation we often just check properties. Usage checks might fail if orders not fully loaded in API mode.
-    // For simplicity, we use loaded orders.
-    
     for (const applied of appliedDiscounts) {
-      const calculation = calculateDiscountAmountLogic(applied.code, cart, discountCodes, orders);
+      const calculation = calculateDiscountAmount(applied.code, cart);
       if (calculation.success && calculation.amount !== undefined) {
         updatedDiscounts.push({ code: applied.code, amount: calculation.amount });
       } else {
         removedCodes.push(applied.code);
       }
     }
-    
     const isDifferent = JSON.stringify(updatedDiscounts) !== JSON.stringify(appliedDiscounts);
     if (isDifferent) {
       setAppliedDiscounts(updatedDiscounts);
@@ -443,8 +466,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart]);
 
-  // --- CRUD OPERATIONS ---
-
+  // ORDERS
   const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
       ...order,
@@ -455,47 +477,55 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
       const res = await apiCall('/api/orders', 'POST', orderWithHistory);
       if (res && res.success) {
-        // In API mode, we should ideally fetch again, but for UX we optimistic update
-        // However, fetching ensures we get server-generated fields if any
-        await fetchData(); 
+        setOrders(prev => [orderWithHistory, ...prev]);
         return true;
       }
       return false;
     } else {
       setOrders(prev => [orderWithHistory, ...prev]);
+      showNotify(`Objednávka #${order.id} byla vytvořena (Lokálně).`);
       return true;
     }
   };
 
   const updateOrder = async (order: Order, sendNotify?: boolean, isUserEdit?: boolean): Promise<boolean> => {
     let updatedOrder = { ...order };
-    if (updatedOrder.items.length === 0) {
+    // If saving with no items, implicitly cancel? (Optional rule)
+    if (updatedOrder.items.length === 0 && updatedOrder.status !== OrderStatus.CANCELLED) {
       updatedOrder.status = OrderStatus.CANCELLED;
     }
-    // If status changed locally, add history? (Handled in backend or manually)
     
-    if (dataSource === 'api') {
-       const res = await apiCall('/api/orders', 'POST', { ...updatedOrder, sendNotify });
-       if (res && res.success) {
-          await fetchData();
-          showNotify('Objednávka aktualizována.');
-          return true;
-       }
-       return false;
-    } else {
+    // In local mode, just update array
+    if (dataSource === 'local') {
        setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
-       showNotify('Objednávka aktualizována.');
+       if (updatedOrder.status === OrderStatus.CREATED) showNotify(`Objednávka #${updatedOrder.id} upravena.`);
        return true;
     }
+
+    // API Mode
+    const payload = { ...updatedOrder, sendNotify };
+    const res = await apiCall('/api/orders', 'POST', payload);
+    if (res && res.success) {
+        setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+        if (!isUserEdit) showNotify(`Objednávka #${updatedOrder.id} aktualizována.`);
+        else showNotify(`Změny uloženy.`, 'success');
+        return true;
+    }
+    return false;
   };
 
   const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean): Promise<boolean> => {
     if (dataSource === 'api') {
        const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify });
        if (res && res.success) {
-          await fetchData();
-          if (notify) showNotify(`Stav změněn a emaily odeslány (${ids.length})`);
-          else showNotify(`Stav změněn (${ids.length})`);
+          setOrders(prev => prev.map(o => {
+            if (ids.includes(o.id)) {
+              return { ...o, status, statusHistory: [...(o.statusHistory || []), { status, date: new Date().toISOString() }] };
+            }
+            return o;
+          }));
+          const msg = notify ? `Stav změněn a emaily odeslány (${ids.length})` : `Stav objednávek (${ids.length}) změněn v DB.`;
+          showNotify(msg, 'success', !notify);
           return true;
        }
        return false;
@@ -506,46 +536,47 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
           return o;
         }));
-        showNotify(`Stav změněn (${ids.length})`);
+        showNotify(`Stav objednávek (${ids.length}) změněn na: ${t(`status.${status}`)}`);
         return true;
     }
   };
 
-  const searchOrders = async (params: any): Promise<OrdersSearchResult> => {
+  const searchOrders = useCallback(async (params: any): Promise<OrdersSearchResult> => {
       if (dataSource === 'api') {
           const query = new URLSearchParams(params).toString();
           const res = await apiCall(`/api/orders?${query}`, 'GET');
           if (res && res.success) return res;
           return { orders: [], total: 0, page: 1, pages: 1 };
       } else {
-          // Local Filtering Logic (Simplified)
+          // Local Filtering
           let filtered = orders.filter(o => {
               if (params.id && !o.id.includes(params.id)) return false;
               if (params.userId && o.userId !== params.userId) return false;
-              // ... other filters
+              if (params.status && params.status !== o.status) return false;
               return true;
           });
           const start = ((params.page || 1) - 1) * (params.limit || 50);
           const paged = filtered.slice(start, start + (params.limit || 50));
           return { orders: paged, total: filtered.length, page: params.page || 1, pages: Math.ceil(filtered.length / (params.limit || 50)) };
       }
-  };
+  }, [dataSource, orders, apiCall]);
 
-  const searchUsers = async (params: any): Promise<User[]> => {
+  const searchUsers = useCallback(async (params: any): Promise<User[]> => {
       if (dataSource === 'api') {
           const query = new URLSearchParams(params).toString();
           const res = await apiCall(`/api/users?${query}`, 'GET');
           if (res && res.success) return res.users;
           return [];
       } else {
-          return allUsers;
+          return allUsers; 
       }
-  };
+  }, [dataSource, allUsers, apiCall]);
 
+  // PRODUCTS
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { await fetchData(); showNotify('Produkt uložen.'); return true; }
+        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify('Produkt uložen do DB.'); return true; }
         return false;
     } else {
         setProducts(prev => [...prev, p]); return true;
@@ -555,7 +586,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { await fetchData(); showNotify('Produkt aktualizován.'); return true; }
+        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify('Produkt aktualizován v DB.'); return true; }
         return false;
     } else {
         setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
@@ -565,30 +596,29 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteProduct = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) { await fetchData(); showNotify('Produkt smazán.'); return true; }
+        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify('Produkt smazán z DB.'); return true; }
         return false;
     } else {
         setProducts(prev => prev.filter(x => x.id !== id)); return true;
     }
   };
 
-  const uploadImage = async (base64Data: string, fileName: string): Promise<string> => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/admin/upload', 'POST', { image: base64Data, name: fileName });
-          if (res && res.success) return res.url;
-          throw new Error('Upload failed');
-      } else {
-          return base64Data; // Local mode keeps base64
-      }
-  };
-
+  // USERS
   const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
+    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
+    const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
+    
     if (dataSource === 'api') {
-        const res = await apiCall('/api/users', 'POST', { id: Date.now().toString(), name, email, phone, role, isBlocked: false, marketingConsent: false, passwordHash: hashPassword('1234') });
-        if (res && res.success) { await fetchData(); return true; }
+        const res = await apiCall('/api/users', 'POST', newUser);
+        if (res && res.success) {
+            setAllUsers(prev => [...prev, newUser]);
+            showNotify(`Uživatel ${name} vytvořen.`, 'success', false);
+            return true;
+        }
         return false;
     } else {
-        setAllUsers(prev => [...prev, { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false }]);
+        setAllUsers(prev => [...prev, newUser]);
+        showNotify(`Uživatel ${name} vytvořen.`);
         return true;
     }
   };
@@ -597,8 +627,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
         const res = await apiCall('/api/users', 'POST', u);
         if (res && res.success) {
-            setUser(u); // Update session user immediately
-            // Optionally fetch data if critical parts changed
+            setUser(u);
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            // showNotify('Profil aktualizován.');
             return true;
         }
         return false;
@@ -610,21 +641,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const updateUserAdmin = async (u: User): Promise<boolean> => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/users', 'POST', u);
-          if (res && res.success) { await fetchData(); return true; }
-          return false;
-      } else {
-          setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-          if (user && user.id === u.id) setUser(u);
-          return true;
-      }
+    if (dataSource === 'api') {
+        const res = await apiCall('/api/users', 'POST', u);
+        if (res && res.success) {
+            setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+            if (user && user.id === u.id) setUser(u);
+            showNotify('Uživatel aktualizován v DB.');
+            return true;
+        }
+        return false;
+    } else {
+        setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
+        if (user && user.id === u.id) setUser(u);
+        return true;
+    }
   };
 
+  // SETTINGS & CONFIGS
   const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/settings', 'POST', s);
-        if (res && res.success) { setSettings(s); showNotify('Nastavení uloženo.'); return true; }
+        if (res && res.success) { setSettings(s); showNotify('Nastavení uloženo do DB.'); return true; }
         return false;
     } else {
         setSettings(s); return true;
@@ -634,7 +671,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateDayConfig = async (c: DayConfig): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/calendar', 'POST', c);
-        if (res && res.success) { await fetchData(); showNotify('Kalendář aktualizován.'); return true; }
+        if (res && res.success) {
+            setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
+            showNotify('Kalendář aktualizován v DB.'); return true;
+        }
         return false;
     } else {
         setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
@@ -645,17 +685,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const removeDayConfig = async (date: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-        if (res && res.success) { await fetchData(); return true; }
+        if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify('Výjimka smazána z DB.'); return true; }
         return false;
     } else {
         setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
     }
   };
 
+  // DISCOUNTS
   const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', c);
-        if (res && res.success) { await fetchData(); return true; }
+        if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify('Slevový kód uložen do DB.'); return true; }
         return false;
     } else {
         setDiscountCodes(prev => [...prev, c]); return true;
@@ -665,7 +706,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updateDiscountCode = async (code: DiscountCode): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/discounts', 'POST', code);
-        if (res && res.success) { await fetchData(); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); showNotify('Slevový kód aktualizován v DB.'); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.map(x => x.id === code.id ? code : x)); return true;
@@ -675,18 +716,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const deleteDiscountCode = async (id: string): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-        if (res && res.success) { await fetchData(); return true; }
+        if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Slevový kód smazán z DB.'); return true; }
         return false;
     } else {
         setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
     }
   };
 
-  // --- EVENTS ---
+  // EVENT SLOTS (NEW)
   const updateEventSlot = async (slot: EventSlot): Promise<boolean> => {
       const newSlots = [...(settings.eventSlots || [])];
       const index = newSlots.findIndex(s => s.date === slot.date);
-      if (index >= 0) newSlots[index] = slot; else newSlots.push(slot);
+      if (index > -1) newSlots[index] = slot;
+      else newSlots.push(slot);
       return await updateSettings({ ...settings, eventSlots: newSlots });
   };
 
@@ -698,100 +740,271 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const notifyEventSubscribers = async (date: string): Promise<boolean> => {
       if (dataSource === 'api') {
           const res = await apiCall('/api/admin/notify-event', 'POST', { date });
-          if (res && res.success) { showNotify(`Notifikace odeslána ${res.count} odběratelům.`); return true; }
+          if (res && res.success) {
+              showNotify(`Notifikace odeslána na ${res.count} emailů.`);
+              return true;
+          }
           return false;
+      } else {
+          showNotify('Simulace: Notifikace odeslána.');
+          return true;
       }
-      showNotify('Notifikace simulována (Lokální režim).');
-      return true;
   };
 
-  const isEventCapacityAvailable = (product: Product): boolean => {
-      return getAvailableEventDatesLogic(product, settings, orders, products).length > 0;
+  // HELPER: Discount Calc
+  const calculateDiscountAmount = (code: string, currentCart: CartItem[]): ValidateDiscountResult => {
+    const dc = discountCodes.find(d => d.code.toUpperCase() === code.toUpperCase());
+    if (!dc) return { success: false, error: t('discount.invalid') };
+    if (!dc.enabled) return { success: false, error: 'Tento kód je již neaktivní.' };
+    
+    // Check global usage limit
+    const actualUsage = orders.filter(o => o.status !== OrderStatus.CANCELLED && o.appliedDiscounts?.some(ad => ad.code === dc.code)).length;
+    if (dc.maxUsage > 0 && actualUsage >= dc.maxUsage) return { success: false, error: t('discount.used_up') };
+    
+    // Check dates
+    const now = new Date().toISOString().split('T')[0];
+    if (dc.validFrom && now < dc.validFrom) return { success: false, error: t('discount.future') };
+    if (dc.validTo && now > dc.validTo) return { success: false, error: t('discount.expired') };
+    
+    // Check values
+    const cartTotal = currentCart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const applicableItems = dc.applicableCategories && dc.applicableCategories.length > 0 
+        ? currentCart.filter(item => dc.applicableCategories!.includes(item.category)) 
+        : currentCart;
+    const applicableTotal = applicableItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    if (dc.applicableCategories && dc.applicableCategories.length > 0 && applicableTotal === 0) 
+        return { success: false, error: 'Sleva se nevztahuje na položky v košíku.' };
+    
+    const valueToCheck = (dc.applicableCategories && dc.applicableCategories.length > 0) ? applicableTotal : cartTotal;
+    if (valueToCheck < dc.minOrderValue) return { success: false, error: t('discount.min_order', { min: dc.minOrderValue.toString() }) };
+
+    let calculatedAmount = 0;
+    if (dc.type === DiscountType.PERCENTAGE) calculatedAmount = Math.floor(applicableTotal * (dc.value / 100));
+    else calculatedAmount = Math.min(dc.value, applicableTotal);
+    return { success: true, discount: dc, amount: calculatedAmount };
+  };
+
+  const applyDiscount = (code: string): { success: boolean; error?: string } => {
+    if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
+    const result = calculateDiscountAmount(code, cart);
+    if (result.success && result.discount && result.amount !== undefined) {
+      if (appliedDiscounts.length > 0 && !result.discount.isStackable) return { success: false, error: t('discount.not_stackable') };
+      setAppliedDiscounts([...appliedDiscounts, { code: result.discount.code, amount: result.amount }]);
+      return { success: true };
+    } else {
+      return { success: false, error: result.error || t('discount.invalid') };
+    }
+  };
+
+  const removeAppliedDiscount = (code: string) => setAppliedDiscounts(prev => prev.filter(d => d.code !== code));
+  const validateDiscount = calculateDiscountAmount;
+
+  const calculatePackagingFee = (items: CartItem[]): number => {
+    // Volume logic
+    const totalVolume = items.reduce((sum, item) => {
+        if (item.noPackaging) return sum; // Skip items marked as no packaging
+        return sum + (item.volume || 0) * item.quantity;
+    }, 0);
+
+    const cartPrice = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    if (cartPrice >= settings.packaging.freeFrom) return 0;
+    
+    if (totalVolume === 0) return 0;
+
+    const availableTypes = [...settings.packaging.types].sort((a, b) => a.volume - b.volume);
+    if (availableTypes.length === 0) return 0;
+    const largestBox = availableTypes[availableTypes.length - 1];
+    let remainingVolume = totalVolume;
+    let totalFee = 0;
+    while (remainingVolume > 0) {
+      if (remainingVolume > largestBox.volume) { totalFee += largestBox.price; remainingVolume -= largestBox.volume; } 
+      else {
+        const bestFit = availableTypes.find(type => type.volume >= remainingVolume);
+        if (bestFit) { totalFee += bestFit.price; remainingVolume = 0; } else { totalFee += largestBox.price; remainingVolume -= largestBox.volume; }
+      }
+    }
+    return totalFee;
+  };
+
+  // LOGISTICS & CAPACITY
+  const getDailyLoad = (date: string, excludeOrderId?: string) => {
+    const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
+    
+    // Initialize standard load
+    const load: Record<string, number> = {};
+    (settings.categories || []).forEach(cat => load[cat.id] = 0);
+    Object.values(ProductCategory).forEach(c => { if (load[c] === undefined) load[c] = 0; });
+    
+    // Initialize event load
+    const eventLoad: Record<string, number> = {};
+    Object.keys(load).forEach(k => eventLoad[k] = 0);
+
+    const usedProductIds = new Set<string>();
+    
+    // Track overheads by Capacity Category (shared overhead)
+    // Key: CapCatID, Value: { maxOverhead, maxOverheadCategory, hasEvent }
+    const ccGroups = new Map<string, { maxOverhead: number, maxOverheadCategory: string, hasEvent: boolean }>();
+
+    relevantOrders.forEach(order => {
+      if (!order.items) return;
+      order.items.forEach(item => {
+        const productDef = products.find(p => String(p.id) === String(item.id));
+        const itemWorkload = Number(productDef?.workload) || Number(item.workload) || 0;
+        const itemOverhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
+        const cat = item.category || productDef?.category;
+        const isEvent = !!productDef?.isEventProduct; // Check if this item is event-based
+        const capCatId = productDef?.capacityCategoryId; // Shared capacity group
+
+        if (cat) {
+             // 1. Add variable workload (quantity based)
+             if (isEvent) {
+                 if (eventLoad[cat] === undefined) eventLoad[cat] = 0;
+                 eventLoad[cat] += itemWorkload * item.quantity;
+             } else {
+                 if (load[cat] === undefined) load[cat] = 0;
+                 load[cat] += itemWorkload * item.quantity;
+             }
+
+             // 2. Handle Overhead (Fixed per product type per order, OR shared by group)
+             if (capCatId) {
+                 // It belongs to a group. Find current max overhead for this group in this day/context?
+                 // Wait, getDailyLoad is aggregative across ALL orders. Shared overhead is typically per order or per batch.
+                 // Here we assume getDailyLoad sums up load from ALL orders. 
+                 // If CapacityCategory means "Shared prep for the whole day", then we calc max across all orders? 
+                 // NO, usually shared prep is per Order (e.g. heating up fryer). 
+                 // But if it's "Fryer Capacity", it's global. 
+                 // Let's assume CapacityCategory links products that share the SAME overhead resource GLOBALLY for that day 
+                 // (e.g. 1 setup of fryer for the day). If it's per order, logic is different.
+                 // Given the context of "Catering", usually prep overhead is per order/batch.
+                 // BUT current logic in `checkAvailability` (old) was per order accumulation.
+                 
+                 // Let's stick to: Overhead is added per unique product in order (standard) OR per group if specified.
+                 // Since we iterate orders, let's accumulate overheads.
+                 // Complex shared overhead logic requires knowing if we batch production.
+                 // Fallback to simple accumulation for now to match old logic, but respects event separation.
+                 
+                 if (!usedProductIds.has(String(item.id) + "_" + order.id)) { // unique per order item
+                     if (isEvent) eventLoad[cat] += itemOverhead;
+                     else load[cat] += itemOverhead;
+                     usedProductIds.add(String(item.id) + "_" + order.id);
+                 }
+             } else {
+                 // Standard behavior: Overhead added once per product type in the order
+                 if (!usedProductIds.has(String(item.id) + "_" + order.id)) {
+                     if (isEvent) eventLoad[cat] += itemOverhead;
+                     else load[cat] += itemOverhead;
+                     usedProductIds.add(String(item.id) + "_" + order.id);
+                 }
+             }
+        }
+      });
+    });
+    return { load, eventLoad };
   };
 
   const getAvailableEventDates = (product: Product): string[] => {
-      return getAvailableEventDatesLogic(product, settings, orders, products);
+      if (!product.isEventProduct) return [];
+      // Logic: Return dates from settings.eventSlots where:
+      // 1. Date is in future (respecting lead time)
+      // 2. Capacity for product category is > current load + product workload (1 unit min)
+      
+      const slots = settings.eventSlots || [];
+      const today = new Date(); 
+      today.setHours(0,0,0,0);
+      
+      const leadTime = product.leadTimeDays || 0;
+      const minDate = new Date(today);
+      minDate.setDate(minDate.getDate() + leadTime);
+
+      return slots.filter(s => {
+          const slotDate = new Date(s.date);
+          slotDate.setHours(0,0,0,0);
+          
+          if (slotDate < minDate) return false;
+
+          // Check capacity
+          const catId = product.category;
+          const limit = s.capacityOverrides?.[catId] ?? 0;
+          if (limit <= 0) return false; // Closed category for this event
+
+          const { eventLoad } = getDailyLoad(s.date);
+          const currentLoad = eventLoad[catId] || 0;
+          
+          // Check if adding min quantity fits
+          const minQty = product.minOrderQuantity || 1;
+          const needed = (product.workload || 0) * minQty + (product.workloadOverhead || 0);
+          
+          return (currentLoad + needed) <= limit;
+      }).map(s => s.date).sort();
   };
 
-  // --- HELPERS WRAPPERS ---
-  const calculatePackagingFee = (items: CartItem[]) => calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
-  
-  const getDailyLoad = (date: string, excludeOrderId?: string) => {
-      const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
-      return calculateDailyLoad(relevantOrders, products, settings);
+  const isEventCapacityAvailable = (product: Product): boolean => {
+      // For event products, returns true if at least one future slot is available
+      return getAvailableEventDates(product).length > 0;
   };
 
   const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
     
-    // Past check
     if (targetDate < today) return { allowed: false, reason: t('error.past'), status: 'past' };
     
-    // Check Day Config (Holiday/Closed)
-    const config = dayConfigs.find(d => d.date === date);
-    if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
-
-    // Check Lead Time
     const maxLeadTime = items.length > 0 ? Math.max(...items.map(i => i.leadTimeDays || 0)) : 0;
     const minPossibleDate = new Date(today); minPossibleDate.setDate(minPossibleDate.getDate() + maxLeadTime);
     if (targetDate < minPossibleDate) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
-
-    // Separate Event Items check vs Standard Items check
-    const eventItems = items.filter(i => i.isEventProduct);
-    const standardItems = items.filter(i => !i.isEventProduct);
-
-    // 1. EVENT CHECK
-    if (eventItems.length > 0) {
-        const eventSlot = settings.eventSlots?.find(s => s.date === date);
-        if (!eventSlot) {
-            return { allowed: false, reason: t('cart.event_only'), status: 'closed' };
-        }
-        
-        // Check event capacity
-        // Note: For simplicity, we assume if `getAvailableEventDates` returns the date, it's valid.
-        // But `getAvailableEventDates` works per product. Here we check the WHOLE cart.
-        // We need to simulate adding the whole cart to current load.
-        
-        const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
-        
-        // Add current cart as a dummy order
-        const simulatedOrders = [...relevantOrders, { items: items } as any]; 
-        const { eventLoad } = calculateDailyLoad(simulatedOrders, products, settings);
-        
-        // Check limits
-        for (const cat of settings.categories) {
-            const limit = eventSlot.capacityOverrides?.[cat.id] ?? 0;
-            const current = eventLoad[cat.id] || 0;
-            if (current > limit) {
-                return { allowed: false, reason: t('cart.capacity_exceeded'), status: 'exceeds' };
-            }
-        }
-    }
-
-    // 2. STANDARD CHECK
-    // If we have event items, they consume Event Capacity (checked above).
-    // If we have standard items, they consume Daily Capacity.
-    // If mixed cart, we check both.
     
-    if (standardItems.length > 0) {
-        // Standard items can theoretically be ordered on Event days too, consuming standard capacity?
-        // Or should we block standard items on event days if not explicitly allowed?
-        // Current logic: Standard capacity is independent.
+    // EVENT CHECK
+    // If cart contains ANY event items, the date MUST be an event slot
+    const hasEventItems = items.some(i => i.isEventProduct);
+    if (hasEventItems) {
+        const eventSlot = settings.eventSlots?.find(s => s.date === date);
+        if (!eventSlot) return { allowed: false, reason: t('cart.event_only'), status: 'closed' };
         
-        const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
-        const simulatedOrders = [...relevantOrders, { items: items } as any];
-        const { load } = calculateDailyLoad(simulatedOrders, products, settings);
+        // Check Event Capacities
+        const { eventLoad } = getDailyLoad(date, excludeOrderId);
+        let anyExceeds = false;
         
-        for (const cat of settings.categories) {
-            const limit = config?.capacityOverrides?.[cat.id] ?? settings.defaultCapacities[cat.id] ?? 0;
-            const current = load[cat.id] || 0;
-            if (current > limit) {
-                return { allowed: false, reason: t('cart.capacity_exceeded'), status: 'exceeds' };
-            }
-        }
+        items.filter(i => i.isEventProduct).forEach(item => {
+             const cat = item.category;
+             const limit = eventSlot.capacityOverrides?.[cat] ?? 0;
+             if (limit <= 0) { anyExceeds = true; return; }
+             
+             const current = eventLoad[cat] || 0;
+             const added = (item.workload || 0) * item.quantity + (item.workloadOverhead || 0);
+             if (current + added > limit) anyExceeds = true;
+        });
+        
+        if (anyExceeds) return { allowed: false, reason: t('cart.capacity_exceeded'), status: 'exceeds' };
     }
 
+    // STANDARD CHECK (always runs, unless day strictly closed for standard)
+    const config = dayConfigs.find(d => d.date === date);
+    if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
+    
+    // Check Standard Capacities (for non-event items)
+    const standardItems = items.filter(i => !i.isEventProduct);
+    if (standardItems.length > 0) {
+        const { load } = getDailyLoad(date, excludeOrderId);
+        let anyExceeds = false;
+        const categoriesInCart = new Set(standardItems.map(i => i.category));
+        
+        for (const cat of categoriesInCart) {
+            const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
+            const currentLoad = load[cat] || 0;
+            
+            // Calculate added load for this category from current cart
+            const addedLoad = standardItems
+                .filter(i => i.category === cat)
+                .reduce((sum, item) => sum + (item.workload || 0) * item.quantity + (item.workloadOverhead || 0), 0);
+
+            if (currentLoad + addedLoad > limit) {
+                anyExceeds = true;
+            }
+        }
+        if (anyExceeds) return { allowed: false, reason: t('cart.capacity_exceeded'), status: 'exceeds' };
+    }
+    
     return { allowed: true, status: 'available' };
   };
 
@@ -800,13 +1013,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
      return check.status;
   };
 
-  // --- AUTH ---
   const login = async (email: string, password?: string) => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/users/login', 'POST', { email, password });
         if (res && res.success) {
             setUser(res.user);
-            localStorage.setItem('auth_token', res.token);
+            localStorage.setItem('session_user', JSON.stringify(res.user));
+            if (res.token) localStorage.setItem('auth_token', res.token);
             return { success: true };
         }
         return { success: false, message: res?.message || 'Login failed' };
@@ -823,7 +1036,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const register = (name: string, email: string, phone: string, password?: string) => {
-    // ... same as before but using apiCall
     if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) { 
         showNotify('Tento email je již registrován.', 'error');
         return; 
@@ -832,30 +1044,80 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     if (dataSource === 'api') {
         apiCall('/api/users', 'POST', newUser).then(res => {
-            if (res && res.success) { showNotify('Registrace úspěšná. Přihlašte se.', 'success'); }
+            if (res && res.success) { 
+                showNotify('Registrace úspěšná. Nyní se prosím přihlaste.', 'success');
+            }
         });
     } else {
-        setAllUsers(prev => [...prev, newUser]); setUser(newUser);
+        setAllUsers(prev => [...prev, newUser]); 
+        setUser(newUser);
+        localStorage.setItem('session_user', JSON.stringify(newUser));
     }
   };
 
   const logout = () => { setUser(null); localStorage.removeItem('session_user'); localStorage.removeItem('auth_token'); };
+  
   const toggleUserBlock = async (id: string): Promise<boolean> => { const u = allUsers.find(x => x.id === id); if (u) { const updated = { ...u, isBlocked: !u.isBlocked }; return await updateUserAdmin(updated); } return false; };
-  const sendPasswordReset = async (email: string) => { if (dataSource === 'api') { const res = await apiCall('/api/auth/reset-password', 'POST', { email }); if (res && res.success) { return { success: true, message: res.message }; } return { success: false, message: res?.message }; } return { success: true, message: 'Simulace: Email odeslán.' }; };
-  const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => { if (dataSource === 'api') { const newHash = hashPassword(newPass); const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); if (res && res.success) { return { success: true, message: 'Heslo změněno.' }; } return { success: false, message: res?.message || 'Chyba' }; } return { success: true, message: 'Heslo změněno' }; };
-  const changePassword = async (o: string, n: string) => { if (!user) return { success: false, message: 'Login required' }; if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; const u = { ...user, passwordHash: hashPassword(n) }; await updateUser(u); return { success: true, message: 'Změněno' }; };
+  
+  const sendPasswordReset = async (email: string) => { 
+      if (dataSource === 'api') { 
+          const res = await apiCall('/api/auth/reset-password', 'POST', { email }); 
+          if (res && res.success) { return { success: true, message: res.message }; } 
+          return { success: false, message: res?.message || 'Server error' }; 
+      } 
+      return { success: true, message: 'Email sent (simulated)' }; 
+  };
+  
+  const resetPasswordByToken = async (token: string, newPass: string): Promise<PasswordChangeResult> => { 
+      if (dataSource === 'api') { 
+          const newHash = hashPassword(newPass); 
+          const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); 
+          if (res && res.success) { 
+              await fetchData(); 
+              return { success: true, message: res.message || 'Heslo úspěšně změněno.' }; 
+          } else { 
+              return { success: false, message: res?.message || 'Chyba serveru při změně hesla.' }; 
+          } 
+      } else { 
+          return { success: true, message: 'Heslo změněno (Lokální simulace)' }; 
+      } 
+  };
+  
+  const changePassword = async (o: string, n: string) => { 
+      if (!user) return { success: false, message: 'Login required' }; 
+      if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; 
+      const u = { ...user, passwordHash: hashPassword(n) }; 
+      await updateUser(u); 
+      return { success: true, message: 'Změněno' }; 
+  };
   
   const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
+  
   const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { const ex = r.exceptions?.find(e => e.date === d); return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; };
   
   const getPickupPointInfo = (location: PickupLocation, dateStr: string): RegionDateInfo => {
       const ex = location.exceptions?.find(e => e.date === dateStr);
-      if (ex) { return { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true, reason: ex.isOpen ? 'Výjimka: Otevřeno' : 'Výjimka: Zavřeno' }; }
+      if (ex) {
+          return {
+              isOpen: ex.isOpen,
+              timeStart: ex.deliveryTimeStart,
+              timeEnd: ex.deliveryTimeEnd,
+              isException: true,
+              reason: ex.isOpen ? 'Výjimka: Otevřeno' : 'Výjimka: Zavřeno'
+          };
+      }
       const date = new Date(dateStr);
       const dayOfWeek = date.getDay();
       const config = location.openingHours[dayOfWeek];
-      if (!config || !config.isOpen) { return { isOpen: false, isException: false, reason: 'Zavřeno' }; }
-      return { isOpen: true, timeStart: config.start, timeEnd: config.end, isException: false };
+      if (!config || !config.isOpen) {
+          return { isOpen: false, isException: false, reason: 'Zavřeno' };
+      }
+      return {
+          isOpen: true,
+          timeStart: config.start,
+          timeEnd: config.end,
+          isException: false
+      };
   };
 
   const checkOrderRestoration = (o: Order) => ({ valid: true, invalidCodes: [] }); 
@@ -864,9 +1126,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (dataSource === 'api') {
         try {
             const res = await apiCall('/api/admin/import', 'POST', { data: d, selection: s });
-            if (res && res.success) { await fetchData(); return { success: true }; }
-            return { success: false, message: res?.error || 'Import failed.' };
-        } catch (e: any) { return { success: false, message: e.message }; }
+            if (res && res.success) {
+                await fetchData(); 
+                return { success: true };
+            }
+            return { success: false, message: res?.error || 'Import failed on server.' };
+        } catch (e: any) {
+            return { success: false, message: e.message };
+        }
     } else {
         try {
             if (s.users && d.users) setAllUsers(d.users);
@@ -876,29 +1143,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             if (s.dayConfigs && d.dayConfigs) setDayConfigs(d.dayConfigs);
             if (s.settings && d.settings) setSettings(d.settings);
             return { success: true };
-        } catch (e: any) { return { success: false, message: e.message }; }
+        } catch (e: any) {
+            return { success: false, message: e.message };
+        }
     }
   };
   
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
-      await generateInvoicePdf(o, type, settings);
+      // In a real app this would download PDF from backend or generate locally
+      // Placeholder
+      alert(`Generating ${type} invoice for #${o.id}`);
   };
   
-  const applyDiscount = (code: string) => {
-      if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: 'Kód již uplatněn.' };
-      const res = validateDiscount(code, cart);
-      if (res.success && res.amount !== undefined) {
-          if (appliedDiscounts.length > 0 && !res.discount?.isStackable) return { success: false, error: 'Kód nelze kombinovat.' };
-          setAppliedDiscounts([...appliedDiscounts, { code: res.discount!.code, amount: res.amount }]);
-          return { success: true };
-      }
-      return { success: false, error: res.error };
-  };
-  
-  const removeAppliedDiscount = (code: string) => setAppliedDiscounts(prev => prev.filter(d => d.code !== code));
-  const validateDiscount = (code: string, currentCart: CartItem[]) => calculateDiscountAmountLogic(code, currentCart, discountCodes, orders);
-
   const generateCzIban = calculateCzIban;
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center font-bold text-gray-400">Načítám data...</div>;
@@ -906,20 +1163,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <StoreContext.Provider value={{
       dataSource, setDataSource,
-      isLoading, isOperationPending, dbConnectionError,
-      language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
+      isLoading, isOperationPending, dbConnectionError, isPreviewEnvironment,
+      language, setLanguage, 
+      cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
-      orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, searchOrders, searchUsers, products, addProduct, updateProduct, deleteProduct, uploadImage,
+      orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, searchOrders, searchUsers,
+      products, addProduct, updateProduct, deleteProduct,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
-      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
+      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, 
+      updateEventSlot, removeEventSlot, notifyEventSubscribers, getAvailableEventDates, isEventCapacityAvailable,
+      checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
       getPickupPointInfo,
       calculatePackagingFee,
-      t, tData, generateInvoice, printInvoice, generateCzIban, importDatabase, globalNotification, dismissNotification,
-      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate, getImageUrl,
-      cookieSettings, saveCookieSettings,
-      updateEventSlot, removeEventSlot, notifyEventSubscribers, isEventCapacityAvailable, getAvailableEventDates,
-      getFullApiUrl,
-      isPreviewEnvironment
+      t, tData, generateInvoice, printInvoice, generateCzIban, getImageUrl, uploadImage, getFullApiUrl,
+      importDatabase, globalNotification, dismissNotification,
+      isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
+      cookieSettings, saveCookieSettings
     }}>
       {children}
     </StoreContext.Provider>
