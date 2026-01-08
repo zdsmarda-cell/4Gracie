@@ -1,5 +1,5 @@
 
-import jwt from 'jsonwebtoken';
+import jwt from '../services/jwt.js';
 
 const SECRET_KEY = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod';
 

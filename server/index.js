@@ -38,6 +38,13 @@ const __dirname = path.dirname(__filename);
 console.log("--- 4Gracie Server Startup ---");
 dotenv.config();
 
+// Check JWT Secret
+if (!process.env.JWT_SECRET) {
+    console.warn("⚠️  VAROVÁNÍ: JWT_SECRET není nastaven v .env souboru. Používá se výchozí (nebezpečný) klíč.");
+} else {
+    console.log("🔒 JWT_SECRET načten z .env.");
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
