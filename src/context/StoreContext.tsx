@@ -205,6 +205,13 @@ const INITIAL_USERS: User[] = [
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
+    // @ts-ignore
+    const env = import.meta.env;
+    // PRODUCTION SAFEGUARD: If running in production build, ALWAYS force API mode
+    if (env && env.PROD) {
+      return 'api';
+    }
+    // DEVELOPMENT: Allow toggling via localStorage or default to local
     return (localStorage.getItem('app_data_source') as DataSourceMode) || 'local';
   });
   
@@ -247,7 +254,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
-  const isPreviewEnvironment = dataSource === 'local';
+  // isPreviewEnvironment determines if we show dev-only tools (like DB toggle).
+  // In production (PROD=true), DEV is false, so tools are hidden.
+  // @ts-ignore
+  const isPreviewEnvironment = import.meta.env ? import.meta.env.DEV : true;
 
   const setDataSource = (mode: DataSourceMode) => {
     localStorage.setItem('app_data_source', mode);
@@ -266,8 +276,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const getFullApiUrl = (endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env;
-    if (env.DEV) return endpoint;
-    let baseUrl = env.VITE_API_URL;
+    if (env && env.DEV) return endpoint;
+    let baseUrl = env?.VITE_API_URL;
     if (!baseUrl) {
        baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
     }
