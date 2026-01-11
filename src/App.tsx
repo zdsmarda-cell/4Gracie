@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { StoreProvider, useStore } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { AuthModal } from './components/AuthModal';
@@ -13,6 +13,7 @@ import { ResetPassword } from './pages/ResetPassword';
 import { Terms } from './pages/Terms';
 import { Contacts } from './pages/Contacts';
 import { X, Truck, AlertCircle, CheckCircle, Loader2, Store, Settings, RefreshCw } from 'lucide-react';
+import { initGA, logPageView } from './utils/analytics';
 
 const MaintenancePage = () => {
     return (
@@ -217,9 +218,26 @@ const PickupLocationsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
 };
 
 const MainContent = () => {
-    const { dbConnectionError, settings, t } = useStore();
+    const { dbConnectionError, settings, t, cookieSettings } = useStore();
     const [isRegionsModalOpen, setIsRegionsModalOpen] = useState(false);
     const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
+    
+    // Analytics Hook
+    const location = useLocation();
+
+    // Initialize GA only if cookie consent is given
+    useEffect(() => {
+        if (cookieSettings?.analytics) {
+            initGA();
+        }
+    }, [cookieSettings]);
+
+    // Track Page Views
+    useEffect(() => {
+        if (cookieSettings?.analytics) {
+            logPageView(location.pathname + location.search);
+        }
+    }, [location, cookieSettings]);
 
     if (dbConnectionError) {
         return <MaintenancePage />;
