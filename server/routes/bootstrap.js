@@ -15,7 +15,7 @@ const fetchUsersWithAddresses = async (db, condition = '1=1', params = []) => {
         users.push({
             id: row.id, email: row.email, name: row.name, phone: row.phone, role: row.role,
             isBlocked: Boolean(row.is_blocked), marketingConsent: Boolean(row.marketing_consent),
-            passwordHash: row.password_hash,
+            // passwordHash removed for security
             deliveryAddresses: addrs.filter(a => a.type === 'delivery'),
             billingAddresses: addrs.filter(a => a.type === 'billing')
         });

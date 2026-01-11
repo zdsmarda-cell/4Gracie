@@ -24,7 +24,7 @@ router.get('/', withDb(async (req, res, db) => {
         users.push({
             id: row.id, email: row.email, name: row.name, phone: row.phone, role: row.role,
             isBlocked: Boolean(row.is_blocked), marketingConsent: Boolean(row.marketing_consent),
-            passwordHash: row.password_hash,
+            // passwordHash removed for security
             deliveryAddresses: addrs.filter(a => a.type === 'delivery'),
             billingAddresses: addrs.filter(a => a.type === 'billing')
         });
@@ -77,11 +77,23 @@ router.post('/login', withDb(async (req, res, db) => {
         );
 
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
+        
+        // Return user WITHOUT passwordHash
         res.json({ 
             success: true, 
             token, 
             refreshToken,
-            user: { id: u.id, email: u.email, name: u.name, phone: u.phone, role: u.role, isBlocked: Boolean(u.is_blocked), marketingConsent: Boolean(u.marketing_consent), passwordHash: u.password_hash, deliveryAddresses: addrs.filter(a => a.type === 'delivery'), billingAddresses: addrs.filter(a => a.type === 'billing') } 
+            user: { 
+                id: u.id, 
+                email: u.email, 
+                name: u.name, 
+                phone: u.phone, 
+                role: u.role, 
+                isBlocked: Boolean(u.is_blocked), 
+                marketingConsent: Boolean(u.marketing_consent), 
+                deliveryAddresses: addrs.filter(a => a.type === 'delivery'), 
+                billingAddresses: addrs.filter(a => a.type === 'billing') 
+            } 
         });
     } else { 
         res.json({ success: false, message: 'Uživatel nenalezen.' }); 
