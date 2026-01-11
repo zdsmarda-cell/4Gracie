@@ -170,6 +170,19 @@ const loadFromStorage = <T,>(key: string, fallback: T): T => {
   }
 };
 
+// Variable to track if a refresh is in progress
+let isRefreshing = false;
+let refreshSubscribers: ((token: string) => void)[] = [];
+
+const subscribeTokenRefresh = (cb: (token: string) => void) => {
+  refreshSubscribers.push(cb);
+};
+
+const onTokenRefreshed = (token: string) => {
+  refreshSubscribers.map(cb => cb(token));
+  refreshSubscribers = [];
+};
+
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // --- CORE STATE ---
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
@@ -206,7 +219,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>(() => loadFromStorage('db_dayconfigs', []));
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
-  // --- API / FETCH LOGIC ---
   const getFullApiUrl = (endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env;
@@ -226,7 +238,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type, autoClose });
   }, []);
 
-  const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
+  // --- API / FETCH LOGIC WITH REFRESH TOKEN ---
+  const apiCall = useCallback(async (endpoint: string, method: string, body?: any): Promise<any> => {
     const controller = new AbortController();
     setIsOperationPending(true);
     const timeoutPromise = new Promise((_, reject) => {
@@ -236,27 +249,87 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }, 8000); 
     });
 
-    try {
-      const url = getFullApiUrl(endpoint);
-      const token = localStorage.getItem('auth_token');
-      const headers: any = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+    const url = getFullApiUrl(endpoint);
+    let token = localStorage.getItem('auth_token');
 
-      const res: any = await Promise.race([
-        fetch(url, {
-          method,
-          headers,
-          body: body ? JSON.stringify(body) : undefined,
-          signal: controller.signal
-        }),
-        timeoutPromise
-      ]);
+    const makeRequest = async (tokenToUse: string | null) => {
+        const headers: any = { 'Content-Type': 'application/json' };
+        if (tokenToUse) headers['Authorization'] = `Bearer ${tokenToUse}`;
+        
+        return await fetch(url, {
+            method,
+            headers,
+            body: body ? JSON.stringify(body) : undefined,
+            signal: controller.signal
+        });
+    };
+
+    try {
+      let res: any = await Promise.race([makeRequest(token), timeoutPromise]);
+
+      // --- REFRESH TOKEN LOGIC START ---
+      if (res.status === 401 || res.status === 403) {
+          if (!isRefreshing) {
+              isRefreshing = true;
+              const refreshToken = localStorage.getItem('refresh_token');
+              
+              if (refreshToken) {
+                  try {
+                      // Attempt to refresh
+                      const refreshRes = await fetch(getFullApiUrl('/api/users/refresh-token'), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ refreshToken })
+                      });
+                      
+                      const refreshData = await refreshRes.json();
+                      
+                      if (refreshData.success && refreshData.token) {
+                          // Update token
+                          localStorage.setItem('auth_token', refreshData.token);
+                          onTokenRefreshed(refreshData.token);
+                          isRefreshing = false;
+                          
+                          // Retry original request
+                          res = await makeRequest(refreshData.token);
+                      } else {
+                          // Refresh failed -> Logout
+                          isRefreshing = false;
+                          localStorage.removeItem('session_user');
+                          localStorage.removeItem('auth_token');
+                          localStorage.removeItem('refresh_token');
+                          // Force page reload or state update to reflect logout
+                          window.location.reload(); 
+                          throw new Error("Session expired. Please login again.");
+                      }
+                  } catch (e) {
+                      isRefreshing = false;
+                      localStorage.removeItem('session_user');
+                      localStorage.removeItem('auth_token');
+                      localStorage.removeItem('refresh_token');
+                      window.location.reload(); 
+                      throw e;
+                  }
+              } else {
+                  // No refresh token -> Logout
+                  localStorage.removeItem('session_user');
+                  localStorage.removeItem('auth_token');
+                  window.location.reload(); 
+                  throw new Error("Unauthorized");
+              }
+          } else {
+              // If already refreshing, wait for new token
+              const newToken = await new Promise<string>((resolve) => {
+                  subscribeTokenRefresh((token) => resolve(token));
+              });
+              // Retry request with new token
+              res = await makeRequest(newToken);
+          }
+      }
+      // --- REFRESH TOKEN LOGIC END ---
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
-          if (res.status === 401 || res.status === 403) {
-              throw new Error("Unauthorized");
-          }
           throw new Error("Server vrátil neplatná data.");
       }
       
@@ -267,6 +340,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
          showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
          setDbConnectionError(true);
+      } else if (e.message.includes('Session expired') || e.message.includes('Unauthorized')) {
+         showNotify('Vaše přihlášení vypršelo. Přihlaste se prosím znovu.', 'error');
       } else {
          console.warn(`[API] Call to ${endpoint} failed:`, e);
          showNotify(`Chyba: ${e.message || 'Neznámá chyba'}`, 'error');
@@ -475,7 +550,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // Discounts Logic Wrapper
   const applyDiscount = (code: string): { success: boolean; error?: string } => {
-    if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
+    if (appliedDiscounts.some(d => d.code.toUpperCase() === code.toUpperCase())) return { success: false, error: t('discount.applied') };
     const result = validateDiscount(code, cart);
     if (result.success && result.discount && result.amount !== undefined) {
       if (appliedDiscounts.length > 0 && !result.discount.isStackable) return { success: false, error: t('discount.not_stackable') };

@@ -29,10 +29,11 @@ export const useAuth = (
             if (res && res.success) {
                 setUser(res.user);
                 localStorage.setItem('session_user', JSON.stringify(res.user));
-                // STORE TOKEN
-                if (res.token) {
-                    localStorage.setItem('auth_token', res.token);
-                }
+                
+                // STORE TOKENS
+                if (res.token) localStorage.setItem('auth_token', res.token);
+                if (res.refreshToken) localStorage.setItem('refresh_token', res.refreshToken);
+                
                 return { success: true };
             }
             return { success: false, message: res?.message || 'Login failed' };
@@ -62,9 +63,6 @@ export const useAuth = (
         if (dataSource === 'api') {
             apiCall('/api/users', 'POST', newUser).then(res => {
                 if (res && res.success) { 
-                    // Automatically log in (Note: in real world, server should return token on register too, skipping for now)
-                    // The user will need to re-login to get the token or we can fix the backend to return token on register.
-                    // For simplicity, we just prompt login or allow limited access until explicit login.
                     showNotify('Registrace úspěšná. Nyní se prosím přihlaste.', 'success');
                 }
             });
@@ -78,7 +76,8 @@ export const useAuth = (
     const logout = () => { 
         setUser(null); 
         localStorage.removeItem('session_user');
-        localStorage.removeItem('auth_token'); // Clear Token
+        localStorage.removeItem('auth_token'); // Clear Access Token
+        localStorage.removeItem('refresh_token'); // Clear Refresh Token
     };
 
     const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {

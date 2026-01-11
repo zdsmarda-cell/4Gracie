@@ -6,6 +6,7 @@ import jwt from '../services/jwt.js';
 
 const router = express.Router();
 const SECRET_KEY = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod';
+const REFRESH_SECRET_KEY = process.env.JWT_REFRESH_SECRET || (SECRET_KEY + '_refresh');
 
 const hashPassword = (pwd) => `hashed_${Buffer.from(pwd).toString('base64')}`;
 
@@ -44,7 +45,7 @@ router.post('/', withDb(async (req, res, db) => {
     res.json({ success: true });
 }));
 
-// AUTH LOGIN - Generates Token
+// AUTH LOGIN - Generates Tokens
 router.post('/login', withDb(async (req, res, db) => {
     const { email, password } = req.body;
     const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
@@ -61,23 +62,50 @@ router.post('/login', withDb(async (req, res, db) => {
             return res.json({ success: false, message: 'Účet je zablokován.' });
         }
 
-        // Generate JWT
+        // 1. Access Token (Short lived - 15 mins)
         const token = jwt.sign(
             { id: u.id, email: u.email, role: u.role }, 
             SECRET_KEY, 
+            { expiresIn: '15m' } 
+        );
+
+        // 2. Refresh Token (Long lived - 24 hours - acts as the session limit)
+        const refreshToken = jwt.sign(
+            { id: u.id, email: u.email, role: u.role, type: 'refresh' },
+            REFRESH_SECRET_KEY,
             { expiresIn: '24h' }
         );
 
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
         res.json({ 
             success: true, 
-            token, // Send token to client
+            token, 
+            refreshToken,
             user: { id: u.id, email: u.email, name: u.name, phone: u.phone, role: u.role, isBlocked: Boolean(u.is_blocked), marketingConsent: Boolean(u.marketing_consent), passwordHash: u.password_hash, deliveryAddresses: addrs.filter(a => a.type === 'delivery'), billingAddresses: addrs.filter(a => a.type === 'billing') } 
         });
     } else { 
         res.json({ success: false, message: 'Uživatel nenalezen.' }); 
     }
 }));
+
+// REFRESH TOKEN ENDPOINT
+router.post('/refresh-token', async (req, res) => {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(401).json({ success: false, message: 'No token' });
+
+    jwt.verify(refreshToken, REFRESH_SECRET_KEY, (err, user) => {
+        if (err) return res.status(403).json({ success: false, message: 'Invalid refresh token' });
+        
+        // Issue new Access Token
+        const newAccessToken = jwt.sign(
+            { id: user.id, email: user.email, role: user.role },
+            SECRET_KEY,
+            { expiresIn: '15m' }
+        );
+
+        res.json({ success: true, token: newAccessToken });
+    });
+});
 
 // PASSWORD RESET
 router.post('/reset-password', withDb(async (req, res, db) => {
