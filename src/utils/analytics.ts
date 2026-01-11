@@ -23,3 +23,9 @@ export const logEvent = (category: string, action: string, label?: string) => {
         ReactGA.event({ category, action, label });
     }
 };
+
+export const logEcommerceEvent = (eventName: string, params: any) => {
+    if (isInitialized) {
+        ReactGA.event(eventName, params);
+    }
+};

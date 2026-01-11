@@ -3,9 +3,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { useNavigate } from 'react-router-dom';
 import { Trash2, ShoppingBag, CreditCard, Lock, MapPin, Truck, CheckCircle, Plus, Minus, AlertCircle, Info, Activity, Building, QrCode, Edit, X, Tag, Ban, FileText, Clock, Store, Loader2 } from 'lucide-react';
-import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation } from '../types';
+import { DeliveryType, PaymentMethod, Order, OrderStatus, Address, DeliveryRegion, PickupLocation, CartItem } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
 import { TermsContent } from '../components/TermsContent';
+import { logEcommerceEvent } from '../utils/analytics';
 
 export const Cart: React.FC = () => {
   const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate, getImageUrl } = useStore();
@@ -46,6 +47,79 @@ export const Cart: React.FC = () => {
   const enabledRegions = useMemo(() => settings.deliveryRegions.filter(r => r.enabled), [settings.deliveryRegions]);
   const activePickupLocations = useMemo(() => settings.pickupLocations?.filter(l => l.enabled) || [], [settings.pickupLocations]);
 
+  // --- ANALYTICS HELPERS ---
+  const mapCartItemsToGaItems = (items: CartItem[]) => {
+      return items.map((item) => ({
+          item_id: item.id,
+          item_name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          item_category: item.category
+      }));
+  };
+
+  const itemsTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const discountTotal = appliedDiscounts.reduce((sum, d) => sum + d.amount, 0);
+  
+  const selectedAddr = user?.deliveryAddresses.find(a => a.id === selectedAddrId);
+  const selectedBilling = user?.billingAddresses.find(a => a.id === selectedBillingId);
+  
+  const region = (deliveryType === DeliveryType.DELIVERY && selectedAddr) ? getDeliveryRegion(selectedAddr.zip) : undefined;
+  
+  const pickupLocation = (deliveryType === DeliveryType.PICKUP && selectedPickupLocationId) 
+    ? activePickupLocations.find(l => l.id === selectedPickupLocationId) 
+    : undefined;
+
+  const deliveryFee = deliveryType === DeliveryType.DELIVERY ? (region ? (itemsTotal >= region.freeFrom ? 0 : region.price) : 0) : 0;
+  const packagingFee = calculatePackagingFee(cart);
+  
+  const total = Math.max(0, itemsTotal - discountTotal) + deliveryFee + packagingFee;
+
+  // --- ANALYTICS EFFECTS ---
+
+  // 1. View Cart
+  useEffect(() => {
+      if (cart.length > 0 && step === 1) {
+          logEcommerceEvent('view_cart', {
+              currency: 'CZK',
+              value: total,
+              items: mapCartItemsToGaItems(cart)
+          });
+      }
+  }, [step]); // Trigger when stepping back to 1 or loading
+
+  // 2. Add Shipping Info (Trigger when delivery type/location changes significantly)
+  const handleDeliveryChange = (type: DeliveryType) => {
+      setDeliveryType(type);
+      logEcommerceEvent('add_shipping_info', {
+          currency: 'CZK',
+          value: total,
+          shipping_tier: type,
+          items: mapCartItemsToGaItems(cart)
+      });
+  };
+
+  // 3. Add Payment Info
+  const handlePaymentChange = (method: PaymentMethod) => {
+      setPaymentMethod(method);
+      logEcommerceEvent('add_payment_info', {
+          currency: 'CZK',
+          value: total,
+          payment_type: method,
+          items: mapCartItemsToGaItems(cart)
+      });
+  };
+
+  // 4. Begin Checkout (Step 1 -> 2)
+  const handleContinueToCheckout = () => {
+      setStep(2);
+      logEcommerceEvent('begin_checkout', {
+          currency: 'CZK',
+          value: total,
+          items: mapCartItemsToGaItems(cart)
+      });
+  };
+
   useEffect(() => {
     if (deliveryType === DeliveryType.PICKUP && activePickupLocations.length === 1 && !selectedPickupLocationId) {
         setSelectedPickupLocationId(activePickupLocations[0].id);
@@ -53,7 +127,6 @@ export const Cart: React.FC = () => {
   }, [deliveryType, activePickupLocations]);
 
   useEffect(() => {
-      // Sync payment method if the currently selected one is no longer available
       if (activePaymentMethods.length > 0 && !activePaymentMethods.some(m => m.id === paymentMethod)) {
           setPaymentMethod(activePaymentMethods[0].id);
       }
@@ -115,27 +188,10 @@ export const Cart: React.FC = () => {
     }
   }, [user, orders]);
 
-  const itemsTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const discountTotal = appliedDiscounts.reduce((sum, d) => sum + d.amount, 0);
-  
-  const selectedAddr = user?.deliveryAddresses.find(a => a.id === selectedAddrId);
-  const selectedBilling = user?.billingAddresses.find(a => a.id === selectedBillingId);
-  
-  const region = (deliveryType === DeliveryType.DELIVERY && selectedAddr) ? getDeliveryRegion(selectedAddr.zip) : undefined;
-  
-  const pickupLocation = (deliveryType === DeliveryType.PICKUP && selectedPickupLocationId) 
-    ? activePickupLocations.find(l => l.id === selectedPickupLocationId) 
-    : undefined;
-
   const regionInfo = (region && date) ? getRegionInfoForDate(region, date) : { isOpen: true, isException: false, timeStart: undefined, timeEnd: undefined };
   const pickupInfo = (pickupLocation && date) ? getPickupPointInfo(pickupLocation, date) : { isOpen: true, isException: false, timeStart: undefined, timeEnd: undefined };
 
   const isDeliveryMethodInvalid = (deliveryType === DeliveryType.DELIVERY && region && !regionInfo.isOpen) || (deliveryType === DeliveryType.PICKUP && pickupLocation && !pickupInfo.isOpen);
-
-  const deliveryFee = deliveryType === DeliveryType.DELIVERY ? (region ? (itemsTotal >= region.freeFrom ? 0 : region.price) : 0) : 0;
-  const packagingFee = calculatePackagingFee(cart);
-  
-  const total = Math.max(0, itemsTotal - discountTotal) + deliveryFee + packagingFee;
 
   const availability = useMemo(() => {
     if (!date || cart.length === 0) return null;
@@ -205,18 +261,12 @@ export const Cart: React.FC = () => {
       deliveryType,
       deliveryDate: date,
       
-      // AUTO-FILL PICKUP LOCATION ADDRESS if Pickup
       deliveryName: deliveryType === DeliveryType.PICKUP ? pickupLocation?.name : selectedAddr?.name,
       deliveryStreet: deliveryType === DeliveryType.PICKUP ? pickupLocation?.street : selectedAddr?.street,
       deliveryCity: deliveryType === DeliveryType.PICKUP ? pickupLocation?.city : selectedAddr?.city,
       deliveryZip: deliveryType === DeliveryType.PICKUP ? pickupLocation?.zip : selectedAddr?.zip,
-      deliveryPhone: deliveryType === DeliveryType.PICKUP ? settings.companyDetails.phone : selectedAddr?.phone, // Use company phone for pickup? Or user phone? Usually user wants contact info. Actually, Order deliveryPhone is usually recipient. Let's keep it undefined for Pickup or use User's phone?
-      // Better: For Pickup, deliveryPhone isn't strictly needed for logistics, but good to have user contact. 
-      // Let's use user's phone if available, or just undefined.
-      // However, email template shows delivery address. If we put pickup location address, it will look like "Shop Name, Street...".
+      deliveryPhone: deliveryType === DeliveryType.PICKUP ? settings.companyDetails.phone : selectedAddr?.phone,
       
-      // Explicitly map split address fields
-      // billingName etc...
       billingName: selectedBilling?.name,
       billingStreet: selectedBilling?.street,
       billingCity: selectedBilling?.city,
@@ -233,7 +283,6 @@ export const Cart: React.FC = () => {
       pickupLocationId: deliveryType === DeliveryType.PICKUP ? selectedPickupLocationId : undefined
     };
     
-    // Fallback for legacy email templates that use single string
     if (deliveryType === DeliveryType.PICKUP && pickupLocation) {
         newOrder.deliveryAddress = `Osobní odběr: ${pickupLocation.name}, ${pickupLocation.street}, ${pickupLocation.city}`;
     } else if (selectedAddr) {
@@ -246,6 +295,17 @@ export const Cart: React.FC = () => {
     setIsSubmitting(false);
 
     if (success) {
+        // 5. Purchase Event
+        logEcommerceEvent('purchase', {
+            transaction_id: newOrder.id,
+            value: total,
+            tax: 0, // Simplified
+            shipping: deliveryFee,
+            currency: 'CZK',
+            coupon: appliedDiscounts.map(d => d.code).join(','),
+            items: mapCartItemsToGaItems(newOrder.items)
+        });
+
         setSubmittedOrder(newOrder);
         setStep(3);
         clearCart();
@@ -376,12 +436,12 @@ export const Cart: React.FC = () => {
                   <div className={`bg-white p-6 rounded-2xl border shadow-sm ${user.isBlocked ? 'opacity-50 pointer-events-none' : ''}`}>
                     <h3 className="font-bold mb-4 flex items-center"><Truck className="mr-2 text-accent" size={20}/> {t('cart.delivery_pickup')}</h3>
                     <div className={`grid ${enabledRegions.length > 0 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} gap-4`}>
-                       <button onClick={() => setDeliveryType(DeliveryType.PICKUP)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.PICKUP ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
+                       <button onClick={() => handleDeliveryChange(DeliveryType.PICKUP)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.PICKUP ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
                           <div className="font-bold text-sm mb-1">{t('cart.pickup')}</div>
                           <div className="text-xs text-gray-500">{t('cart.pickup_free')}</div>
                        </button>
                        {enabledRegions.length > 0 && (
-                         <button onClick={() => setDeliveryType(DeliveryType.DELIVERY)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.DELIVERY ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
+                         <button onClick={() => handleDeliveryChange(DeliveryType.DELIVERY)} className={`p-4 rounded-xl border-2 text-left transition ${deliveryType === DeliveryType.DELIVERY ? 'border-accent bg-yellow-50/50' : 'border-gray-100 hover:border-gray-200'}`}>
                             <div className="font-bold text-sm mb-1">{t('cart.delivery_courier')}</div>
                             <div className="text-xs text-gray-500">{t('cart.delivery_from', { price: Math.min(...enabledRegions.map(r => r.price)).toString() })}</div>
                          </button>
@@ -553,7 +613,7 @@ export const Cart: React.FC = () => {
                         <div className="space-y-2">
                         {activePaymentMethods.map(method => (
                             <label key={method.id} className="flex items-center p-3 border rounded-xl cursor-pointer hover:bg-gray-50 transition">
-                            <input type="radio" name="payment" className="text-accent focus:ring-accent" checked={paymentMethod === method.id} onChange={() => setPaymentMethod(method.id)} />
+                            <input type="radio" name="payment" className="text-accent focus:ring-accent" checked={paymentMethod === method.id} onChange={() => handlePaymentChange(method.id)} />
                             <div className="ml-3">
                                 <span className="block text-sm font-bold text-gray-900">{tData(method, 'label')}</span>
                                 <span className="block text-xs text-gray-500">{tData(method, 'description')}</span>
@@ -624,7 +684,7 @@ export const Cart: React.FC = () => {
               </div>
               
               {step === 1 && (
-                <button onClick={() => setStep(2)} disabled={hasValidationErrors} className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition uppercase text-xs tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">{t('cart.continue')}</button>
+                <button onClick={handleContinueToCheckout} disabled={hasValidationErrors} className="w-full bg-accent text-white py-4 rounded-xl font-bold shadow-lg hover:bg-yellow-600 transition uppercase text-xs tracking-widest disabled:opacity-50 disabled:cursor-not-allowed">{t('cart.continue')}</button>
               )}
               
               {step === 2 && (
