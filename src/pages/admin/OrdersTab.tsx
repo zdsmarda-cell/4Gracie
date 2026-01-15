@@ -106,6 +106,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
 
     const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
     const [notifyCustomer, setNotifyCustomer] = useState(false);
+    const [sendPush, setSendPush] = useState(false); // NEW STATE for Push Toggle
     const [qrModalOrder, setQrModalOrder] = useState<Order | null>(null);
     const [invoiceModalOrder, setInvoiceModalOrder] = useState<Order | null>(null);
 
@@ -119,7 +120,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
     const [productSearch, setProductSearch] = useState('');
     const [discountInput, setDiscountInput] = useState(''); 
-    const [discountError, setDiscountError] = useState<string | null>(null); // NEW: Local discount error state
+    const [discountError, setDiscountError] = useState<string | null>(null);
 
     // Derived state for Calendar validation in Modal
     const derivedRegion = useMemo(() => {
@@ -181,7 +182,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     // Perform Status Change
     const confirmBulkStatusChange = async () => {
         if (confirmStatus.status) {
-            await updateOrderStatus(selectedOrders, confirmStatus.status, notifyCustomer);
+            // Pass sendPush flag to updateOrderStatus
+            await updateOrderStatus(selectedOrders, confirmStatus.status, notifyCustomer, sendPush);
             setSelectedOrders([]);
         }
         setConfirmStatus({ isOpen: false, status: null });
@@ -382,6 +384,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                         <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none bg-white border px-3 py-1.5 rounded-lg hover:bg-gray-50">
                             <input type="checkbox" checked={notifyCustomer} onChange={e => setNotifyCustomer(e.target.checked)} className="rounded text-accent" />
                             <span>{t('admin.notify_customer')}</span>
+                        </label>
+                        {/* PUSH TOGGLE */}
+                        <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none bg-white border px-3 py-1.5 rounded-lg hover:bg-gray-50">
+                            <input type="checkbox" checked={sendPush} onChange={e => setSendPush(e.target.checked)} className="rounded text-accent" />
+                            <span>Push Notifikace</span>
                         </label>
                     </div>
                 )}

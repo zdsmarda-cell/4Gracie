@@ -93,7 +93,7 @@ interface StoreContextType {
   
   orders: Order[];
   addOrder: (order: Order) => Promise<boolean>;
-  updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean) => Promise<boolean>;
+  updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean, sendPush?: boolean) => Promise<boolean>; // UPDATED
   updateOrder: (order: Order, sendNotify?: boolean, isUserEdit?: boolean) => Promise<boolean>;
   checkOrderRestoration: (order: Order) => RestorationCheckResult;
   searchOrders: (params: any) => Promise<OrdersSearchResult>;
@@ -163,8 +163,9 @@ interface StoreContextType {
   updatePwa: () => void;
   pushSubscription: PushSubscription | null;
   subscribeToPush: () => Promise<boolean>;
-  unsubscribeFromPush: () => Promise<boolean>; // NEW
+  unsubscribeFromPush: () => Promise<boolean>; 
   isPwa: boolean;
+  isPushSupported: boolean; // NEW: Capability check
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -233,8 +234,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isPwaUpdateAvailable, setIsPwaUpdateAvailable] = useState(false);
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
   const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
+  
   // Simple detection of standalone mode
   const isPwa = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
+  // Capability detection (More robust for enabling notifications in browser)
+  const isPushSupported = 'serviceWorker' in navigator && 'PushManager' in window;
 
   // --- ENTITY STATES ---
   const [orders, setOrders] = useState<Order[]>(() => loadFromStorage('db_orders', MOCK_ORDERS));
@@ -420,7 +424,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const subscribeToPush = async (): Promise<boolean> => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      if (!isPushSupported) {
           showNotify('Push notifikace nejsou podporovány tímto prohlížečem.', 'error');
           return false;
       }
@@ -451,7 +455,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           return true;
       } catch (e) {
           console.error("Push Subscribe Error:", e);
-          showNotify('Nepodařilo se povolit notifikace.', 'error');
+          showNotify('Nepodařilo se povolit notifikace. Zkontrolujte oprávnění prohlížeče.', 'error');
           return false;
       }
   };
@@ -552,13 +556,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [user, pushSubscription, dataSource, apiCall]);
 
-  // Auto-prompt for Push on Login (Mobile/PWA only)
+  // Auto-prompt for Push on Login (Uses Capability check now, not strict PWA check)
   useEffect(() => {
-      if (user && isPwa && Notification.permission === 'default') {
-          // Ask for permission if not granted/denied yet
-          subscribeToPush();
+      // Check if user is logged in, push is supported, and permission is default (not asked yet)
+      if (user && isPushSupported && Notification.permission === 'default') {
+          // Wrap in a small timeout to avoid immediate rejection in some scenarios,
+          // though modern browsers might still block this without a gesture.
+          // The key fix is allowing the manual button in Profile to work.
+          setTimeout(() => {
+              subscribeToPush().catch(() => {
+                  // Silent catch, let them enable in profile
+                  console.log("Auto-subscribe prevented by browser policy.");
+              });
+          }, 1000);
       }
-  }, [user, isPwa]);
+  }, [user, isPushSupported]);
 
   // --- SYNC AUTH DATA WITH MAIN FETCH ---
   useEffect(() => {
@@ -765,9 +777,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return false;
   };
 
-  const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean): Promise<boolean> => {
+  const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean, sendPush?: boolean): Promise<boolean> => {
     if (dataSource === 'api') {
-       const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify });
+       const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify, sendPush });
        if (res && res.success) {
           setOrders(prev => prev.map(o => {
             if (ids.includes(o.id)) {
@@ -1051,7 +1063,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       importDatabase, globalNotification, dismissNotification,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       cookieSettings, saveCookieSettings,
-      isPwaUpdateAvailable, updatePwa, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa
+      isPwaUpdateAvailable, updatePwa, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa,
+      isPushSupported
     }}>
       {children}
     </StoreContext.Provider>

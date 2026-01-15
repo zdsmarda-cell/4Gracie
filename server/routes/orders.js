@@ -3,6 +3,7 @@ import express from 'express';
 import { withDb, parseJsonCol } from '../db.js';
 import { queueOrderEmail } from '../services/email.js';
 import { authenticateToken, requireAdmin } from '../middleware/auth.js';
+import webpush from 'web-push';
 
 const router = express.Router();
 
@@ -131,7 +132,7 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
         return res.status(403).json({ error: 'Zákazníci nemohou měnit stav objednávky.' });
     }
 
-    const { ids, status, notifyCustomer, deliveryCompanyDetailsSnapshot } = req.body;
+    const { ids, status, notifyCustomer, sendPush, deliveryCompanyDetailsSnapshot } = req.body;
     
     await db.query('UPDATE orders SET status = ? WHERE id IN (?)', [status, ids]);
     
@@ -142,8 +143,20 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
         await db.query('UPDATE orders SET final_invoice_date = ? WHERE id IN (?) AND final_invoice_date IS NULL', [nowDb, ids]);
     }
 
-    const [orders] = await db.query('SELECT id, full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
+    const [orders] = await db.query('SELECT id, user_id, full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
     
+    // Check if webpush is configured
+    const canPush = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY;
+    if (canPush) {
+        webpush.setVapidDetails(
+            `mailto:${process.env.EMAIL_FROM || 'info@4gracie.cz'}`,
+            process.env.VAPID_PUBLIC_KEY,
+            process.env.VAPID_PRIVATE_KEY
+        );
+    }
+
+    const pushPromises = [];
+
     for(const o of orders) {
         let json = parseJsonCol(o, 'full_json');
         
@@ -163,6 +176,37 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
         }
 
         await db.query('UPDATE orders SET full_json = ? WHERE id = ?', [JSON.stringify(json), o.id]);
+
+        // --- PUSH NOTIFICATION LOGIC ---
+        if (sendPush && canPush && o.user_id) {
+            const [subs] = await db.query('SELECT * FROM push_subscriptions WHERE user_id = ?', [o.user_id]);
+            if (subs.length > 0) {
+                const payload = JSON.stringify({
+                    title: `Změna stavu objednávky #${o.id}`,
+                    body: `Vaše objednávka je nyní ve stavu: ${status.toUpperCase()}`,
+                    url: '/profile'
+                });
+
+                subs.forEach(sub => {
+                    pushPromises.push(
+                        webpush.sendNotification({
+                            endpoint: sub.endpoint,
+                            keys: { p256dh: sub.p256dh, auth: sub.auth }
+                        }, payload).catch(err => {
+                            if (err.statusCode === 410 || err.statusCode === 404) {
+                                db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
+                            }
+                        })
+                    );
+                });
+            }
+        }
+    }
+
+    if (pushPromises.length > 0) {
+        Promise.allSettled(pushPromises).then(results => {
+            console.log(`Push notifications processed: ${results.length}`);
+        });
     }
 
     if (notifyCustomer) {

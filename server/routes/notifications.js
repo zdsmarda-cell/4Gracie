@@ -84,6 +84,8 @@ router.get('/history', requireAdmin, withDb(async (req, res, db) => {
 router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
     const { filters } = req.body; // { marketing: boolean, zips: string[] }
     
+    console.log("DEBUG Preview Filters:", JSON.stringify(filters));
+
     let query = `
         SELECT COUNT(DISTINCT s.endpoint) as cnt 
         FROM push_subscriptions s
@@ -97,14 +99,28 @@ router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
         query += ' AND u.marketing_consent = 1';
     }
 
-    // Only apply ZIP filter if array is NOT empty. Empty array = All ZIPs.
+    // ZIP Filter Logic Check
     if (filters.zips && filters.zips.length > 0) {
-        query += ' AND REPLACE(ua.zip, " ", "") IN (?)';
-        params.push(filters.zips);
+        // Only valid ZIPs
+        const validZips = filters.zips.filter(z => z && z.trim().length > 0);
+        if (validZips.length > 0) {
+            // Using OR logic to match if user has address with that zip OR no address info but matched by other criteria (actually, ZIP targeting implies we only want users WITH that zip)
+            query += ' AND REPLACE(ua.zip, " ", "") IN (?)';
+            params.push(validZips);
+        }
     }
 
-    const [rows] = await db.query(query, params);
-    res.json({ count: rows[0].cnt });
+    console.log("DEBUG Preview SQL:", query);
+    console.log("DEBUG Preview Params:", params);
+
+    try {
+        const [rows] = await db.query(query, params);
+        console.log("DEBUG Preview Result:", rows[0].cnt);
+        res.json({ count: rows[0].cnt });
+    } catch (e) {
+        console.error("DEBUG Preview Error:", e);
+        res.status(500).json({ error: e.message });
+    }
 }));
 
 // SEND NOTIFICATION (Admin)
@@ -133,8 +149,11 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
             query += ' AND u.marketing_consent = 1';
         }
         if (filters?.zips && filters.zips.length > 0) {
-            query += ' AND REPLACE(ua.zip, " ", "") IN (?)';
-            params.push(filters.zips);
+            const validZips = filters.zips.filter(z => z && z.trim().length > 0);
+            if (validZips.length > 0) {
+                query += ' AND REPLACE(ua.zip, " ", "") IN (?)';
+                params.push(validZips);
+            }
         }
     }
 

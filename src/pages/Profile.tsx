@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
-import { Navigate } from 'react-router-dom';
-import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck, Smartphone } from 'lucide-react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck, Smartphone, LogOut } from 'lucide-react';
 import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMethod, ProductCategory } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Profile: React.FC = () => {
-  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa } = useStore();
+  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa, isPushSupported, logout } = useStore();
+  const navigate = useNavigate();
   
   // General Modal State (For Profile Address Management)
   const [modalType, setModalType] = useState<'billing' | 'delivery' | null>(null);
@@ -87,6 +88,11 @@ export const Profile: React.FC = () => {
       } else {
           await subscribeToPush();
       }
+  };
+
+  const handleLogout = () => {
+      logout();
+      navigate('/');
   };
 
   // Generic Address Save (Profile Tab)
@@ -520,7 +526,7 @@ export const Profile: React.FC = () => {
                         <Smartphone size={16} className="text-accent" />
                         <span className="text-xs font-bold text-gray-700">Mobilní notifikace</span>
                     </div>
-                    {isPwa ? (
+                    {isPushSupported ? (
                         <button 
                             onClick={handlePushToggle}
                             className={`text-xs px-2 py-1 rounded font-bold transition ${pushSubscription ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}
@@ -528,9 +534,17 @@ export const Profile: React.FC = () => {
                             {pushSubscription ? 'Zapnuto' : 'Vypnuto'}
                         </button>
                     ) : (
-                        <span className="text-[10px] text-gray-400 italic">Dostupné v aplikaci</span>
+                        <span className="text-[10px] text-gray-400 italic">Nepodporováno</span>
                     )}
                 </div>
+
+                {/* LOGOUT BUTTON - Explicitly added here for mobile visibility */}
+                <button 
+                    onClick={handleLogout}
+                    className="w-full mt-4 flex items-center justify-center gap-2 p-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 font-bold text-sm transition"
+                >
+                    <LogOut size={16} /> Odhlásit se
+                </button>
             </div>
           </div>
 
