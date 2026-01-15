@@ -8,6 +8,7 @@ import { Plus, Edit, Trash2, ImageIcon, Check, X, Languages, Globe, Upload, Laye
 import { Pagination } from '../../components/Pagination';
 import { MultiSelect } from '../../components/MultiSelect';
 
+// ... (TranslationViewModal stays the same) ...
 const TranslationViewModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
@@ -81,7 +82,7 @@ export const ProductsTab: React.FC = () => {
     const [saveError, setSaveError] = useState<string | null>(null);
     
     // Filters & Pagination
-    const [filters, setFilters] = useState({ name: '', category: '', event: 'all', online: 'all' });
+    const [filters, setFilters] = useState({ name: '', category: '', subcategory: '', event: 'all', online: 'all' });
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(50);
 
@@ -89,6 +90,18 @@ export const ProductsTab: React.FC = () => {
     const capCategories = useMemo(() => settings.capacityCategories || [], [settings.capacityCategories]);
     
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
+
+    // Derived subcategories for current editing product's category
+    const activeSubcategories = useMemo(() => {
+        if (!editingProduct?.category) return [];
+        const cat = sortedCategories.find(c => c.id === editingProduct.category);
+        if (!cat || !cat.subcategories) return [];
+        
+        // Normalize: if string, convert to simple obj for consistent mapping
+        return cat.subcategories.map(s => 
+            typeof s === 'string' ? { id: s, name: s, enabled: true } : s
+        ).filter(s => s.enabled);
+    }, [editingProduct?.category, sortedCategories]);
 
     const handleAddClick = () => {
         setSaveError(null);
@@ -106,7 +119,8 @@ export const ProductsTab: React.FC = () => {
             volume: 0,
             noPackaging: false,
             capacityCategoryId: undefined,
-            isEventProduct: false
+            isEventProduct: false,
+            subcategory: ''
         });
         setIsProductModalOpen(true);
     };
@@ -132,6 +146,22 @@ export const ProductsTab: React.FC = () => {
                 setSaveError(`Kapacitní skupina "${capName}" je již používána v kategorii "${catName}". Všechny produkty sdílející stejnou kapacitu musí patřit do stejné hlavní kategorie.`);
                 return;
             }
+        }
+
+        // --- VALIDACE PODKATEGORIE ---
+        const catDef = sortedCategories.find(c => c.id === prod.category);
+        const subCats = catDef?.subcategories || [];
+        
+        if (subCats.length > 0) {
+            // Normalize IDs for check
+            const validIds = subCats.map(s => typeof s === 'string' ? s : s.id);
+            if (!prod.subcategory || !validIds.includes(prod.subcategory)) {
+                setSaveError(`Pro kategorii "${catDef?.name}" je nutné vybrat platnou podkategorii.`);
+                return;
+            }
+        } else {
+            // Clear subcategory if main category has none
+            prod.subcategory = undefined;
         }
         
         setIsUploading(true); 
@@ -207,6 +237,17 @@ export const ProductsTab: React.FC = () => {
         return products.filter(p => {
             if (filters.name && !p.name.toLowerCase().includes(filters.name.toLowerCase())) return false;
             
+            // Subcategory filter text match
+            if (filters.subcategory) {
+                const term = filters.subcategory.toLowerCase();
+                // We compare against ID or try to find name
+                const cat = sortedCategories.find(c => c.id === p.category);
+                const subObj = cat?.subcategories?.find(s => (typeof s === 'string' ? s : s.id) === p.subcategory);
+                const subName = typeof subObj === 'string' ? subObj : subObj?.name || p.subcategory || '';
+                
+                if (!subName.toLowerCase().includes(term)) return false;
+            }
+            
             // Multi-category check
             if (filters.category) {
                 const selectedCats = filters.category.split(',');
@@ -238,6 +279,15 @@ export const ProductsTab: React.FC = () => {
         label: c.name
     }));
 
+    // Helper to get subcategory Name from ID
+    const getSubcategoryName = (catId: string, subId?: string) => {
+        if (!subId) return '-';
+        const cat = sortedCategories.find(c => c.id === catId);
+        if (!cat) return subId;
+        const sub = cat.subcategories?.find(s => (typeof s === 'string' ? s : s.id) === subId);
+        return typeof sub === 'string' ? sub : (sub?.name || subId);
+    };
+
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
@@ -248,7 +298,7 @@ export const ProductsTab: React.FC = () => {
             </div>
 
             {/* FILTERS BAR */}
-            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
                 <div>
                     <label className="text-xs font-bold text-gray-400 block mb-1">Název produktu</label>
                     <input 
@@ -265,6 +315,16 @@ export const ProductsTab: React.FC = () => {
                         options={categoryOptions}
                         selectedValues={filters.category ? filters.category.split(',') : []}
                         onChange={(values) => setFilters({...filters, category: values.join(',')})}
+                    />
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-gray-400 block mb-1">Podkategorie</label>
+                    <input 
+                        type="text" 
+                        className="w-full border rounded p-2 text-xs" 
+                        placeholder="Text..." 
+                        value={filters.subcategory} 
+                        onChange={e => setFilters({...filters, subcategory: e.target.value})} 
                     />
                 </div>
                 <div>
@@ -300,6 +360,7 @@ export const ProductsTab: React.FC = () => {
                     <th className="px-6 py-4 text-left">Foto</th>
                     <th className="px-6 py-4 text-left">Název</th>
                     <th className="px-6 py-4 text-left">Kategorie</th>
+                    <th className="px-6 py-4 text-left">Podkategorie</th>
                     <th className="px-6 py-4 text-center">V akci</th>
                     <th className="px-6 py-4 text-left">Cena</th>
                     <th className="px-6 py-4 text-center">Online</th>
@@ -319,6 +380,7 @@ export const ProductsTab: React.FC = () => {
                             )}
                         </td>
                         <td className="px-6 py-4">{getCategoryName(p.category)}</td>
+                        <td className="px-6 py-4 text-gray-500">{getSubcategoryName(p.category, p.subcategory)}</td>
                         <td className="px-6 py-4 text-center">
                             {p.isEventProduct && <span className="inline-block px-2 py-0.5 bg-purple-100 text-purple-700 font-bold rounded-full text-[9px] uppercase">AKCE</span>}
                         </td>
@@ -377,10 +439,32 @@ export const ProductsTab: React.FC = () => {
                             </div>
                             <div className="col-span-2">
                                 <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie</label>
-                                <select className="w-full border rounded p-2 bg-white" value={editingProduct?.category} onChange={e => setEditingProduct({...editingProduct, category: e.target.value})}>
+                                <select 
+                                    className="w-full border rounded p-2 bg-white" 
+                                    value={editingProduct?.category} 
+                                    onChange={e => setEditingProduct({...editingProduct, category: e.target.value, subcategory: ''})} // Reset subcategory on change
+                                >
                                     {sortedCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                             </div>
+                            
+                            {/* Subcategory Selector (Conditional) */}
+                            {activeSubcategories.length > 0 && (
+                                <div className="col-span-2 bg-blue-50 p-2 rounded border border-blue-100">
+                                    <label className="text-xs font-bold text-blue-700 block mb-1">Podkategorie (Povinné)</label>
+                                    <select 
+                                        className="w-full border rounded p-2 bg-white" 
+                                        value={editingProduct?.subcategory || ''} 
+                                        onChange={e => setEditingProduct({...editingProduct, subcategory: e.target.value})}
+                                        required
+                                    >
+                                        <option value="">- Vyberte podkategorii -</option>
+                                        {activeSubcategories.map(sub => (
+                                            <option key={sub.id} value={sub.id}>{sub.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
                         </div>
 
                         <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
@@ -397,6 +481,7 @@ export const ProductsTab: React.FC = () => {
                             </div>
                         </div>
 
+                        {/* ... rest of the form ... */}
                         <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
                             <h4 className="font-bold text-sm text-gray-500 uppercase">Ekonomika a Kapacity</h4>
                             <div className="grid grid-cols-4 gap-4">

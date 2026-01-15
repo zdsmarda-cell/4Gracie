@@ -35,7 +35,7 @@ export const Navbar: React.FC = () => {
           <div className="flex items-center">
              <Link to="/" className="flex items-center gap-2" onClick={() => setIsMobileMenuOpen(false)}>
                 <img src="/logo.png" className="h-8 w-auto md:h-10" alt="4Gracie" />
-                <span className="font-serif font-bold text-lg md:text-xl text-primary hidden min-[360px]:block">4Gracie</span>
+                <span className="font-serif font-bold text-lg md:text-xl text-primary hidden min-[360px]:block">4grácie</span>
              </Link>
           </div>
 

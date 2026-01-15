@@ -67,6 +67,7 @@ interface StoreContextType {
   isOperationPending: boolean;
   dbConnectionError: boolean;
   isPreviewEnvironment: boolean;
+  appVersion: string; // NEW
   
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -222,6 +223,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   // @ts-ignore
   const isPreviewEnvironment = (import.meta as any).env ? (import.meta as any).env.DEV : false;
+  
+  // Retrieve injected version
+  const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'DEV';
 
   const [isLoading, setIsLoading] = useState(true);
   const [isOperationPending, setIsOperationPending] = useState(false);
@@ -237,9 +241,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
   const [vapidKey, setVapidKey] = useState<string | null>(null);
   
-  // Simple detection of standalone mode
   const isPwa = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
-  // Capability detection (More robust for enabling notifications in browser)
   const isPushSupported = 'serviceWorker' in navigator && 'PushManager' in window;
 
   // --- ENTITY STATES ---
@@ -272,6 +274,56 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const showNotify = useCallback((message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
     setGlobalNotification({ message, type, autoClose });
   }, []);
+
+  // --- VERSION CHECK LOGIC ---
+  const checkForUpdate = useCallback(async () => {
+      // Don't check in DEV
+      if (appVersion === 'DEV' || appVersion === 'BUILD_PENDING') return;
+
+      try {
+          const res = await fetch(`/version.json?t=${new Date().getTime()}`);
+          if (res.ok) {
+              const remote = await res.json();
+              // Compare remote version with running version
+              if (remote.version && remote.version !== appVersion) {
+                  console.log(`New version available: ${remote.version} (Current: ${appVersion})`);
+                  
+                  // Trigger update logic
+                  // Ideally, standard SW lifecycle handles this, but explicit check helps if SW is stuck
+                  if ('serviceWorker' in navigator) {
+                      const reg = await navigator.serviceWorker.getRegistration();
+                      if (reg) {
+                          reg.update();
+                      }
+                  }
+                  
+                  // If standard SW update doesn't trigger state change, force UI
+                  setIsPwaUpdateAvailable(true);
+              }
+          }
+      } catch (e) {
+          // Silent fail
+      }
+  }, [appVersion]);
+
+  // Check version on mount and interval
+  useEffect(() => {
+      checkForUpdate();
+      const interval = setInterval(checkForUpdate, 60 * 60 * 1000); // Every hour
+      return () => clearInterval(interval);
+  }, [checkForUpdate]);
+
+  // Check version on visibility change (when user returns to app)
+  useEffect(() => {
+      const handleVisibilityChange = () => {
+          if (document.visibilityState === 'visible') {
+              checkForUpdate();
+          }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [checkForUpdate]);
+
 
   // --- API / FETCH LOGIC WITH REFRESH TOKEN ---
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any): Promise<any> => {
@@ -422,6 +474,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const updatePwa = () => {
       if (waitingWorker) {
           waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+      } else {
+          // If update button clicked but no worker waiting (fallback for version.json check)
+          window.location.reload();
       }
   };
 
@@ -1082,6 +1137,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     <StoreContext.Provider value={{
       dataSource, setDataSource,
       isLoading, isOperationPending, dbConnectionError, isPreviewEnvironment,
+      appVersion, // EXPOSED
       language, setLanguage, 
       cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,

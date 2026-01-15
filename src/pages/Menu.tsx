@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../context/StoreContext';
 import { ALLERGENS } from '../constants';
 import { Product } from '../types';
@@ -219,9 +219,15 @@ const ProductCard: React.FC<{
 export const Menu: React.FC = () => {
   const { t, tData, products, settings, getAvailableEventDates } = useStore();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([]);
   const [excludeAllergens, setExcludeAllergens] = useState<number[]>([]);
   const [showAllergenFilter, setShowAllergenFilter] = useState(false);
   const [selectedAllergenProduct, setSelectedAllergenProduct] = useState<Product | null>(null);
+
+  // Reset subcategories when main category changes
+  useEffect(() => {
+      setSelectedSubcategories([]);
+  }, [selectedCategory]);
 
   // Check if any event product is orderable (has valid future slots respecting lead time)
   const hasOrderableEvents = useMemo(() => {
@@ -247,6 +253,31 @@ export const Menu: React.FC = () => {
       .sort((a, b) => a.order - b.order);
   }, [products, settings.categories, getAvailableEventDates]);
 
+  // Available Subcategories for current main category (must contain visible products)
+  const availableSubcategories = useMemo(() => {
+      if (selectedCategory === 'all' || selectedCategory === 'events') return [];
+      
+      const categoryDef = settings.categories.find(c => c.id === selectedCategory);
+      if (!categoryDef || !categoryDef.subcategories || categoryDef.subcategories.length === 0) return [];
+
+      // Normalize subcategories (handle legacy strings)
+      const normalizedSubs = categoryDef.subcategories.map(s => 
+          typeof s === 'string' ? { id: s, name: s, enabled: true, order: 0 } : s
+      ).filter(s => s.enabled);
+
+      const activeSubcatsIds = new Set<string>();
+      products.forEach(p => {
+          if (p.category === selectedCategory && p.visibility.online && p.subcategory) {
+              activeSubcatsIds.add(p.subcategory);
+          }
+      });
+
+      // Return subcategories that have products AND are active
+      return normalizedSubs
+        .filter(s => activeSubcatsIds.has(s.id))
+        .sort((a, b) => a.order - b.order);
+  }, [selectedCategory, products, settings.categories]);
+
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       if (!p.visibility?.online) return false;
@@ -261,18 +292,30 @@ export const Menu: React.FC = () => {
           return false;
       }
 
+      // Subcategory Filter Logic (Multi-Select)
+      if (selectedSubcategories.length > 0 && selectedCategory !== 'all' && selectedCategory !== 'events') {
+          // p.subcategory stores the ID
+          if (!p.subcategory || !selectedSubcategories.includes(p.subcategory)) return false;
+      }
+
       if (excludeAllergens.length > 0) {
         const hasExcludedAllergen = p.allergens.some(a => excludeAllergens.includes(a));
         if (hasExcludedAllergen) return false;
       }
       return true;
     });
-  }, [selectedCategory, excludeAllergens, products, getAvailableEventDates]);
+  }, [selectedCategory, selectedSubcategories, excludeAllergens, products, getAvailableEventDates]);
 
   const toggleAllergen = (id: number) => {
     setExcludeAllergens(prev => 
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
+  };
+
+  const toggleSubcategory = (subId: string) => {
+      setSelectedSubcategories(prev => 
+          prev.includes(subId) ? prev.filter(s => s !== subId) : [...prev, subId]
+      );
   };
 
   return (
@@ -332,6 +375,23 @@ export const Menu: React.FC = () => {
               <span>{t('filter.no_allergens')}</span>
             </button>
           </div>
+
+          {/* Subcategories */}
+          {availableSubcategories.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-100 animate-in slide-in-from-top-1 duration-200">
+                  <div className="flex flex-wrap gap-2">
+                      {availableSubcategories.map(sub => (
+                          <button
+                              key={sub.id}
+                              onClick={() => toggleSubcategory(sub.id)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition border ${selectedSubcategories.includes(sub.id) ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'}`}
+                          >
+                              {sub.name}
+                          </button>
+                      ))}
+                  </div>
+              </div>
+          )}
 
           {/* Allergen Checkboxes */}
           {showAllergenFilter && (

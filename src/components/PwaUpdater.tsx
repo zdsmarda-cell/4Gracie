@@ -4,7 +4,7 @@ import { useStore } from '../context/StoreContext';
 import { RefreshCw, Download } from 'lucide-react';
 
 export const PwaUpdater: React.FC = () => {
-    const { isPwaUpdateAvailable, updatePwa } = useStore();
+    const { isPwaUpdateAvailable, updatePwa, appVersion } = useStore();
 
     if (!isPwaUpdateAvailable) return null;
 
@@ -18,6 +18,7 @@ export const PwaUpdater: React.FC = () => {
                     <div>
                         <h4 className="font-bold text-sm">Nová verze aplikace</h4>
                         <p className="text-xs text-gray-300">Aktualizace je připravena k instalaci.</p>
+                        {appVersion && <p className="text-[10px] text-gray-500 mt-1 font-mono">v.{appVersion}</p>}
                     </div>
                 </div>
                 <button 

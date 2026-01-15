@@ -134,12 +134,20 @@ export interface PackagingType {
   translations?: Translations;
 }
 
+export interface Subcategory {
+  id: string; // Slug/ID
+  name: string;
+  order: number;
+  enabled: boolean;
+}
+
 export interface Category {
   id: string; // slug, e.g. 'warm', 'burgers'
   name: string; // Display name
   order: number;
   enabled: boolean;
   translations?: Translations;
+  subcategories?: Subcategory[]; // CHANGED: Now an array of objects
 }
 
 export interface CapacityCategory {
@@ -155,6 +163,7 @@ export interface Product {
   price: number;
   unit: 'ks' | 'kg';
   category: string; 
+  subcategory?: string; // Stores the Subcategory ID (slug)
   capacityCategoryId?: string; // LINK TO CAPACITY GROUP
   images: string[];
   allergens: number[];

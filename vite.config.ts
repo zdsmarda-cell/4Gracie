@@ -7,10 +7,16 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Generate a version for development mode (production uses update-build.js)
+const devVersion = `DEV-${new Date().getTime()}`;
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   base: './', 
+  define: {
+    '__APP_VERSION__': JSON.stringify(process.env.npm_lifecycle_event === 'build' ? 'BUILD_PENDING' : devVersion)
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

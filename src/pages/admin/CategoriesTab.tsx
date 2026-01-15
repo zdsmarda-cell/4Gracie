@@ -1,9 +1,9 @@
 
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Category, CapacityCategory } from '../../types';
+import { Category, CapacityCategory, Subcategory } from '../../types';
 import { generateTranslations } from '../../utils/aiTranslator';
-import { LayoutList, Plus, Edit, Trash2, Languages, Globe, X, AlertTriangle, Layers } from 'lucide-react';
+import { LayoutList, Plus, Edit, Trash2, Languages, Globe, X, AlertTriangle, Layers, CornerDownRight } from 'lucide-react';
 
 const TranslationViewModal: React.FC<{
     isOpen: boolean;
@@ -100,21 +100,27 @@ export const CategoriesTab: React.FC = () => {
     // Toggle between Standard and Capacity
     const [viewMode, setViewMode] = useState<'standard' | 'capacity'>('standard');
     
-    // Standard category state
+    // Main Category State
     const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
     const [editingCategory, setEditingCategory] = useState<Partial<Category> | null>(null);
     
-    // Capacity category state
+    // Subcategory State
+    const [isSubModalOpen, setIsSubModalOpen] = useState(false);
+    const [editingSub, setEditingSub] = useState<{ parentId: string, sub: Partial<Subcategory> } | null>(null);
+
+    // Capacity Category State
     const [isCapModalOpen, setIsCapModalOpen] = useState(false);
     const [editingCap, setEditingCap] = useState<Partial<CapacityCategory> | null>(null);
 
     const [isTranslating, setIsTranslating] = useState(false);
     const [viewingTranslations, setViewingTranslations] = useState<Category | CapacityCategory | null>(null);
-    const [deleteTarget, setDeleteTarget] = useState<Category | CapacityCategory | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<{ type: 'cat' | 'sub' | 'cap', parentId?: string, item: any } | null>(null);
     const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     const capacityCategories = useMemo(() => settings.capacityCategories || [], [settings.capacityCategories]);
+
+    // --- MAIN CATEGORY ACTIONS ---
 
     const saveCategory = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -146,6 +152,107 @@ export const CategoriesTab: React.FC = () => {
         setIsCategoryModalOpen(false);
     };
 
+    // --- SUBCATEGORY ACTIONS ---
+
+    const openSubModal = (parentId: string, sub?: Subcategory) => {
+        const parent = settings.categories.find(c => c.id === parentId);
+        const nextOrder = (parent?.subcategories?.length || 0) + 1;
+        setEditingSub({
+            parentId,
+            sub: sub ? { ...sub } : { name: '', order: nextOrder, enabled: true }
+        });
+        setIsSubModalOpen(true);
+    };
+
+    const saveSubcategory = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingSub) return;
+
+        const { parentId, sub } = editingSub;
+        const parent = settings.categories.find(c => c.id === parentId);
+        if (!parent) return;
+
+        // Ensure sub has ID
+        if (!sub.id) {
+            sub.id = removeDiacritics(sub.name || '').toLowerCase().replace(/\s+/g, '-');
+        }
+
+        // Migrate legacy strings to objects if necessary (Safety check)
+        const currentSubs = (parent.subcategories || []).map(s => 
+            typeof s === 'string' ? { id: s, name: s, order: 0, enabled: true } : s
+        );
+
+        let newSubs = [...currentSubs];
+        const existingIndex = newSubs.findIndex(s => s.id === sub.id);
+
+        if (existingIndex > -1) {
+            // Update
+            newSubs[existingIndex] = sub as Subcategory;
+        } else {
+            // Create - check duplicate ID
+            if (newSubs.some(s => s.id === sub.id)) {
+                setWarningMessage('Podkategorie se stejným ID již v této kategorii existuje.');
+                return;
+            }
+            newSubs.push(sub as Subcategory);
+        }
+
+        const updatedCategories = settings.categories.map(c => 
+            c.id === parentId ? { ...c, subcategories: newSubs } : c
+        );
+
+        await updateSettings({ ...settings, categories: updatedCategories });
+        setIsSubModalOpen(false);
+    };
+
+    // --- DELETE LOGIC ---
+
+    const requestDelete = (type: 'cat' | 'sub' | 'cap', item: any, parentId?: string) => {
+        // Check dependencies
+        if (type === 'cat') {
+            if (products.some(p => p.category === item.id)) {
+                setWarningMessage('Kategorie obsahuje produkty. Nelze smazat.');
+                return;
+            }
+        } else if (type === 'sub') {
+            if (products.some(p => p.category === parentId && p.subcategory === item.id)) {
+                setWarningMessage('Podkategorie je přiřazena k produktům. Nelze smazat.');
+                return;
+            }
+        } else if (type === 'cap') {
+            if (products.some(p => p.capacityCategoryId === item.id)) {
+                setWarningMessage('Kapacitní skupina je používána. Nelze smazat.');
+                return;
+            }
+        }
+        setDeleteTarget({ type, item, parentId });
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return;
+        const { type, item, parentId } = deleteTarget;
+
+        if (type === 'cat') {
+            const newCats = settings.categories.filter(c => c.id !== item.id);
+            await updateSettings({ ...settings, categories: newCats });
+        } else if (type === 'sub' && parentId) {
+            const newCats = settings.categories.map(c => {
+                if (c.id === parentId) {
+                    const subs = (c.subcategories || []).filter((s: any) => (typeof s === 'string' ? s !== item.id : s.id !== item.id));
+                    return { ...c, subcategories: subs };
+                }
+                return c;
+            });
+            await updateSettings({ ...settings, categories: newCats });
+        } else if (type === 'cap') {
+            const newCaps = (settings.capacityCategories || []).filter(c => c.id !== item.id);
+            await updateSettings({ ...settings, capacityCategories: newCaps });
+        }
+        setDeleteTarget(null);
+    };
+
+    // --- CAPACITY ACTIONS ---
+
     const saveCapacityCategory = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingCap) return;
@@ -166,35 +273,6 @@ export const CategoriesTab: React.FC = () => {
         await updateSettings({ ...settings, capacityCategories: newCaps });
         setIsTranslating(false);
         setIsCapModalOpen(false);
-    };
-
-    const handleDeleteRequest = (item: Category | CapacityCategory) => {
-        if ('order' in item) {
-            // Standard category
-            if (products.some(p => p.category === item.id)) { 
-                setWarningMessage('Standardní kategorie obsahuje aktivní produkty. Nelze smazat.');
-                return; 
-            }
-        } else {
-            // Capacity category
-            if (products.some(p => p.capacityCategoryId === item.id)) {
-                setWarningMessage('Tato kapacitní kategorie je stále přiřazena k některým produktům. Nelze ji smazat.');
-                return;
-            }
-        }
-        setDeleteTarget(item);
-    };
-
-    const performDelete = async () => {
-        if (!deleteTarget) return;
-        if ('order' in deleteTarget) {
-            const newCats = settings.categories.filter(c => c.id !== deleteTarget.id);
-            await updateSettings({ ...settings, categories: newCats });
-        } else {
-            const newCaps = (settings.capacityCategories || []).filter(c => c.id !== deleteTarget.id);
-            await updateSettings({ ...settings, capacityCategories: newCaps });
-        }
-        setDeleteTarget(null);
     };
 
     return (
@@ -221,39 +299,82 @@ export const CategoriesTab: React.FC = () => {
                 <>
                     <div className="flex justify-between items-center mb-4">
                         <h2 className="text-xl font-bold text-primary flex items-center"><LayoutList className="mr-2 text-accent" /> {t('admin.categories')}</h2>
-                        <button onClick={() => { setEditingCategory({ order: sortedCategories.length + 1, enabled: true }); setIsCategoryModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.cat_new')}</button>
+                        <button onClick={() => { setEditingCategory({ order: sortedCategories.length + 1, enabled: true, subcategories: [] }); setIsCategoryModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.cat_new')}</button>
                     </div>
                     <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
-                        <table className="min-w-full divide-y">
+                        <table className="min-w-full">
                             <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
                                 <tr>
-                                    <th className="px-6 py-4 text-left">{t('admin.tbl_order')}</th>
+                                    <th className="px-6 py-4 text-left w-16">{t('admin.tbl_order')}</th>
                                     <th className="px-6 py-4 text-left">{t('admin.tbl_name')}</th>
                                     <th className="px-6 py-4 text-left">{t('admin.tbl_id_slug')}</th>
                                     <th className="px-6 py-4 text-center">{t('admin.tbl_visibility')}</th>
                                     <th className="px-6 py-4 text-right">{t('admin.tbl_actions')}</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y text-xs">
-                                {sortedCategories.map(cat => (
-                                    <tr key={cat.id} className="hover:bg-gray-50">
-                                        <td className="px-6 py-4 font-mono font-bold text-gray-500">{cat.order}</td>
-                                        <td className="px-6 py-4 font-bold text-sm">
-                                            {tData(cat, 'name')}
-                                            {cat.translations && (
-                                                <button onClick={() => setViewingTranslations(cat)} className="ml-2 inline-flex items-center text-gray-400 hover:text-accent"><Languages size={14}/></button>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 font-mono text-gray-400">{cat.id}</td>
-                                        <td className="px-6 py-4 text-center">
-                                            {cat.enabled ? <span className="text-green-500 font-bold">{t('common.active')}</span> : <span className="text-gray-400">Skryto</span>}
-                                        </td>
-                                        <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                            <button onClick={() => { setEditingCategory(cat); setIsCategoryModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                            <button onClick={() => handleDeleteRequest(cat)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
-                                        </td>
-                                    </tr>
-                                ))}
+                            <tbody className="text-xs">
+                                {sortedCategories.map(cat => {
+                                    // Normalize legacy subcategories (string[]) to Subcategory[]
+                                    const normalizedSubs = (cat.subcategories || []).map((s: any) => 
+                                        typeof s === 'string' ? { id: s, name: s, order: 0, enabled: true } : s
+                                    ).sort((a: Subcategory, b: Subcategory) => a.order - b.order);
+
+                                    return (
+                                        <React.Fragment key={cat.id}>
+                                            {/* MAIN CATEGORY ROW */}
+                                            <tr className="hover:bg-gray-50 border-b border-gray-100 bg-gray-50/30">
+                                                <td className="px-6 py-4 font-mono font-bold text-gray-500">{cat.order}</td>
+                                                <td className="px-6 py-4 font-bold text-sm">
+                                                    {tData(cat, 'name')}
+                                                    {cat.translations && (
+                                                        <button onClick={() => setViewingTranslations(cat)} className="ml-2 inline-flex items-center text-gray-400 hover:text-accent"><Languages size={14}/></button>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-4 font-mono text-gray-400">{cat.id}</td>
+                                                <td className="px-6 py-4 text-center">
+                                                    {cat.enabled ? <span className="text-green-500 font-bold">{t('common.active')}</span> : <span className="text-gray-400">Skryto</span>}
+                                                </td>
+                                                <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                    <button onClick={() => { setEditingCategory(cat); setIsCategoryModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                                    <button onClick={() => requestDelete('cat', cat)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                                </td>
+                                            </tr>
+
+                                            {/* SUBCATEGORY ROWS */}
+                                            {normalizedSubs.map(sub => (
+                                                <tr key={`${cat.id}-${sub.id}`} className="hover:bg-gray-50 border-b border-gray-50 bg-white group">
+                                                    <td className="px-6 py-3 pl-12 font-mono text-gray-400 flex items-center">
+                                                        <CornerDownRight size={14} className="mr-2 text-gray-300"/>
+                                                        {sub.order}
+                                                    </td>
+                                                    <td className="px-6 py-3 text-sm text-gray-600 font-medium">
+                                                        {sub.name}
+                                                    </td>
+                                                    <td className="px-6 py-3 font-mono text-xs text-gray-300">{sub.id}</td>
+                                                    <td className="px-6 py-3 text-center">
+                                                        {sub.enabled ? <span className="text-green-600 text-[10px] font-bold">Aktivní</span> : <span className="text-gray-300 text-[10px]">Skryto</span>}
+                                                    </td>
+                                                    <td className="px-6 py-3 text-right flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button onClick={() => openSubModal(cat.id, sub)} className="p-1 hover:text-primary text-gray-400"><Edit size={14}/></button>
+                                                        <button onClick={() => requestDelete('sub', sub, cat.id)} className="p-1 hover:text-red-500 text-gray-300"><Trash2 size={14}/></button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+
+                                            {/* ADD SUBCATEGORY ROW */}
+                                            <tr className="border-b-2 border-gray-100">
+                                                <td colSpan={5} className="px-6 py-2 bg-white">
+                                                    <button 
+                                                        onClick={() => openSubModal(cat.id)}
+                                                        className="flex items-center text-xs font-bold text-gray-400 hover:text-accent transition ml-8 py-1"
+                                                    >
+                                                        <Plus size={14} className="mr-1"/> Přidat podkategorii
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        </React.Fragment>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -299,7 +420,7 @@ export const CategoriesTab: React.FC = () => {
                                             </td>
                                             <td className="px-6 py-4 text-right flex justify-end gap-2">
                                                 <button onClick={() => { setEditingCap(cap); setIsCapModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                                <button onClick={() => handleDeleteRequest(cap)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                                <button onClick={() => requestDelete('cap', cap)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
                                             </td>
                                         </tr>
                                     );
@@ -315,16 +436,24 @@ export const CategoriesTab: React.FC = () => {
 
             <TranslationViewModal isOpen={!!viewingTranslations} onClose={() => setViewingTranslations(null)} item={viewingTranslations} />
             <WarningModal isOpen={!!warningMessage} message={warningMessage || ''} onClose={() => setWarningMessage(null)} />
-            <DeleteConfirmModal isOpen={!!deleteTarget} title={`${t('common.delete')} ${deleteTarget?.name}?`} onConfirm={performDelete} onClose={() => setDeleteTarget(null)} />
+            <DeleteConfirmModal 
+                isOpen={!!deleteTarget} 
+                title={`Smazat ${deleteTarget?.type === 'sub' ? 'podkategorii' : 'položku'}?`} 
+                onConfirm={confirmDelete} 
+                onClose={() => setDeleteTarget(null)} 
+            />
 
-            {/* Standard Category Modal */}
+            {/* Main Category Modal */}
             {isCategoryModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-                    <form onSubmit={saveCategory} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+                    <form onSubmit={saveCategory} className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl animate-in zoom-in-95">
                         <h3 className="font-bold text-lg">{editingCategory?.id ? 'Upravit kategorii' : 'Nová kategorie'}</h3>
+                        
                         <div><label className="text-xs font-bold text-gray-400 block mb-1">Název</label><input required className="w-full border rounded p-2" value={editingCategory?.name || ''} onChange={e => setEditingCategory({ ...editingCategory, name: e.target.value })} /></div>
                         <div><label className="text-xs font-bold text-gray-400 block mb-1">Pořadí</label><input type="number" required className="w-full border rounded p-2" value={editingCategory?.order || ''} onChange={e => setEditingCategory({ ...editingCategory, order: Number(e.target.value) })} /></div>
-                        <label className="flex items-center gap-2"><input type="checkbox" checked={editingCategory?.enabled ?? true} onChange={e => setEditingCategory({ ...editingCategory, enabled: e.target.checked })} /><span className="text-sm">Aktivní</span></label>
+                        
+                        <label className="flex items-center gap-2 pt-2"><input type="checkbox" checked={editingCategory?.enabled ?? true} onChange={e => setEditingCategory({ ...editingCategory, enabled: e.target.checked })} /><span className="text-sm">Aktivní</span></label>
+                        
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsCategoryModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
                             <button type="submit" disabled={isTranslating} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center">
@@ -335,10 +464,44 @@ export const CategoriesTab: React.FC = () => {
                 </div>
             )}
 
+            {/* Subcategory Modal */}
+            {isSubModalOpen && editingSub && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
+                    <form onSubmit={saveSubcategory} className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-2xl animate-in zoom-in-95">
+                        <h3 className="font-bold text-lg flex items-center">
+                            {editingSub.sub.id ? 'Upravit podkategorii' : 'Nová podkategorie'}
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                            Pro: <strong>{settings.categories.find(c => c.id === editingSub.parentId)?.name}</strong>
+                        </p>
+                        
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Název</label>
+                            <input autoFocus required className="w-full border rounded p-2" value={editingSub.sub.name || ''} onChange={e => setEditingSub({ ...editingSub, sub: { ...editingSub.sub, name: e.target.value } })} />
+                        </div>
+                        
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Pořadí</label>
+                            <input type="number" required className="w-full border rounded p-2" value={editingSub.sub.order || ''} onChange={e => setEditingSub({ ...editingSub, sub: { ...editingSub.sub, order: Number(e.target.value) } })} />
+                        </div>
+
+                        <label className="flex items-center gap-2 pt-2">
+                            <input type="checkbox" checked={editingSub.sub.enabled ?? true} onChange={e => setEditingSub({ ...editingSub, sub: { ...editingSub.sub, enabled: e.target.checked } })} />
+                            <span className="text-sm">Aktivní</span>
+                        </label>
+                        
+                        <div className="flex gap-2 pt-4">
+                            <button type="button" onClick={() => setIsSubModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
+                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('common.save')}</button>
+                        </div>
+                    </form>
+                </div>
+            )}
+
             {/* Capacity Category Modal */}
             {isCapModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-                    <form onSubmit={saveCapacityCategory} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+                    <form onSubmit={saveCapacityCategory} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl animate-in zoom-in-95">
                         <h3 className="font-bold text-lg">{editingCap?.id ? 'Upravit kapacitní skupinu' : 'Nová kapacitní skupina'}</h3>
                         <div>
                             <label className="text-xs font-bold text-gray-400 block mb-1">Název skupiny (např. Fritéza)</label>
