@@ -35,7 +35,35 @@ router.get('/', withDb(async (req, res, db) => {
 // CREATE/UPDATE USER
 router.post('/', withDb(async (req, res, db) => {
     const u = req.body;
-    await db.query(`INSERT INTO users (id, email, password_hash, name, phone, role, is_blocked, marketing_consent) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE email=?, password_hash=?, name=?, phone=?, role=?, is_blocked=?, marketing_consent=?`, [u.id, u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent, u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent]);
+    
+    // CRITICAL FIX: Use COALESCE for password_hash in UPDATE clause.
+    // If u.passwordHash is provided (registration/password change), it updates.
+    // If it is missing (profile update), it keeps the existing value in DB.
+    
+    await db.query(
+        `INSERT INTO users (id, email, password_hash, name, phone, role, is_blocked, marketing_consent) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+         ON DUPLICATE KEY UPDATE 
+         email=?, 
+         password_hash=COALESCE(?, password_hash), 
+         name=?, 
+         phone=?, 
+         role=?, 
+         is_blocked=?, 
+         marketing_consent=?`, 
+        [
+            u.id, u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent, 
+            // Update params:
+            u.email, 
+            u.passwordHash || null, // Pass null explicitly if undefined to trigger COALESCE
+            u.name, 
+            u.phone, 
+            u.role, 
+            u.isBlocked, 
+            u.marketingConsent
+        ]
+    );
+
     await db.query('DELETE FROM user_addresses WHERE user_id = ?', [u.id]);
     const addresses = [...(u.deliveryAddresses||[]).map(a=>({...a,type:'delivery'})), ...(u.billingAddresses||[]).map(a=>({...a,type:'billing'}))];
     if (addresses.length > 0) {
@@ -53,6 +81,11 @@ router.post('/login', withDb(async (req, res, db) => {
     if (rows.length > 0) {
         const u = rows[0];
         
+        // Check if password_hash is NULL (safety check for previously corrupted accounts)
+        if (!u.password_hash) {
+            return res.json({ success: false, message: 'Účet nemá nastavené heslo. Kontaktujte podporu nebo proveďte reset hesla.' });
+        }
+
         const reqHash = hashPassword(password || '');
         if (u.password_hash !== reqHash) {
             return res.json({ success: false, message: 'Chybné heslo.' });
