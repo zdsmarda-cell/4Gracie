@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck, Smartphone, LogOut } from 'lucide-react';
+import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck, Smartphone, LogOut, Loader2 } from 'lucide-react';
 import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMethod, ProductCategory } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
 
@@ -36,6 +36,9 @@ export const Profile: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [infoMsg, setInfoMsg] = useState<{type: 'success'|'error', text: string} | null>(null);
+
+  // Push Loading State
+  const [isPushLoading, setIsPushLoading] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -83,10 +86,16 @@ export const Profile: React.FC = () => {
   };
 
   const handlePushToggle = async () => {
-      if (pushSubscription) {
-          await unsubscribeFromPush();
-      } else {
-          await subscribeToPush();
+      if (isPushLoading) return;
+      setIsPushLoading(true);
+      try {
+          if (pushSubscription) {
+              await unsubscribeFromPush();
+          } else {
+              await subscribeToPush();
+          }
+      } finally {
+          setIsPushLoading(false);
       }
   };
 
@@ -527,12 +536,22 @@ export const Profile: React.FC = () => {
                         <span className="text-xs font-bold text-gray-700">Mobilní notifikace</span>
                     </div>
                     {isPushSupported ? (
-                        <button 
-                            onClick={handlePushToggle}
-                            className={`text-xs px-2 py-1 rounded font-bold transition ${pushSubscription ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}
-                        >
-                            {pushSubscription ? 'Zapnuto' : 'Vypnuto'}
-                        </button>
+                        <>
+                            {Notification.permission === 'denied' ? (
+                                <span className="text-[10px] text-red-500 font-bold text-right leading-tight max-w-[100px]">
+                                    Povolit v nastavení
+                                </span>
+                            ) : (
+                                <button 
+                                    onClick={handlePushToggle}
+                                    disabled={isPushLoading}
+                                    className={`text-xs px-2 py-1 rounded font-bold transition flex items-center gap-1 ${pushSubscription ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'} ${isPushLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                >
+                                    {isPushLoading && <Loader2 size={10} className="animate-spin" />}
+                                    {isPushLoading ? 'Zpracovávám...' : (pushSubscription ? 'Zapnuto' : 'Vypnuto')}
+                                </button>
+                            )}
+                        </>
                     ) : (
                         <span className="text-[10px] text-gray-400 italic">Nepodporováno</span>
                     )}

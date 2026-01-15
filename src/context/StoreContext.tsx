@@ -93,7 +93,7 @@ interface StoreContextType {
   
   orders: Order[];
   addOrder: (order: Order) => Promise<boolean>;
-  updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean, sendPush?: boolean) => Promise<boolean>; // UPDATED
+  updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean, sendPush?: boolean) => Promise<boolean>;
   updateOrder: (order: Order, sendNotify?: boolean, isUserEdit?: boolean) => Promise<boolean>;
   checkOrderRestoration: (order: Order) => RestorationCheckResult;
   searchOrders: (params: any) => Promise<OrdersSearchResult>;
@@ -165,7 +165,7 @@ interface StoreContextType {
   subscribeToPush: () => Promise<boolean>;
   unsubscribeFromPush: () => Promise<boolean>; 
   isPwa: boolean;
-  isPushSupported: boolean; // NEW: Capability check
+  isPushSupported: boolean;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -429,13 +429,29 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           return false;
       }
 
+      // Check Notification Permission
+      if (Notification.permission === 'denied') {
+          showNotify('Notifikace jsou zakázány. Povolte je prosím v nastavení prohlížeče.', 'error');
+          return false;
+      }
+
       try {
+          // Explicitly request permission if not granted
+          if (Notification.permission !== 'granted') {
+              const permission = await Notification.requestPermission();
+              if (permission !== 'granted') {
+                  showNotify('Notifikace nebyly povoleny.', 'error');
+                  return false;
+              }
+          }
+
           const reg = await navigator.serviceWorker.ready;
           // @ts-ignore
           const vapidKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
           
           if (!vapidKey) {
               console.warn("VAPID Key missing in env");
+              showNotify('Chyba konfigurace: Chybí VAPID klíč.', 'error');
               return false;
           }
 
@@ -453,9 +469,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           
           showNotify('Notifikace zapnuty.', 'success');
           return true;
-      } catch (e) {
+      } catch (e: any) {
           console.error("Push Subscribe Error:", e);
-          showNotify('Nepodařilo se povolit notifikace. Zkontrolujte oprávnění prohlížeče.', 'error');
+          if (e.message && e.message.includes('No VAPID')) {
+              showNotify('Chyba konfigurace serveru (VAPID).', 'error');
+          } else {
+              showNotify('Nepodařilo se zapnout notifikace. Zkontrolujte nastavení aplikace.', 'error');
+          }
           return false;
       }
   };
