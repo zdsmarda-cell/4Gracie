@@ -45,10 +45,17 @@ export const MobileNotificationsTab: React.FC = () => {
         }
     };
 
+    // Helper to parse ZIPs: split by comma, remove spaces, remove empty
+    const parseZips = (input: string) => {
+        return input.split(',')
+            .map(z => z.replace(/\s/g, '')) // Remove spaces (110 00 -> 11000)
+            .filter(z => z.length > 0);
+    };
+
     const handlePreview = async () => {
         if (dataSource !== 'api') return;
         
-        const zipsArray = filterZips.split(',').map(z => z.trim()).filter(z => z.length === 5);
+        const zipsArray = parseZips(filterZips);
         
         const token = localStorage.getItem('auth_token');
         const res = await fetch(getFullApiUrl('/api/notifications/preview-count'), {
@@ -73,7 +80,7 @@ export const MobileNotificationsTab: React.FC = () => {
         if (dataSource !== 'api') return alert('Dostupné pouze v API režimu.');
 
         setIsSending(true);
-        const zipsArray = filterZips.split(',').map(z => z.trim()).filter(z => z.length === 5);
+        const zipsArray = parseZips(filterZips);
 
         try {
             const token = localStorage.getItem('auth_token');
@@ -163,10 +170,11 @@ export const MobileNotificationsTab: React.FC = () => {
                             <label className="text-xs font-bold text-gray-400 block mb-1">PSČ (oddělené čárkou)</label>
                             <input 
                                 className="w-full border rounded-lg p-2 text-sm font-mono" 
-                                placeholder="66417, 60200..." 
+                                placeholder="Např. 66417, 60200 (nechte prázdné pro všechna)" 
                                 value={filterZips} 
                                 onChange={e => setFilterZips(e.target.value)} 
                             />
+                            <p className="text-[10px] text-gray-400 mt-1">Kontroluje se doručovací i fakturační adresa.</p>
                         </div>
 
                         <div className="flex items-center justify-between pt-2">

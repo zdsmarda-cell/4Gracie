@@ -23,15 +23,9 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     const { subscription } = req.body;
     let userId = null;
     
-    // Attempt to identify user from token if present, but optional
     const authHeader = req.headers['authorization'];
-    if (authHeader) {
-        // Simple token decode logic duplication or relying on middleware if we enforce it. 
-        // For simplicity, we assume this endpoint might be hit by a user session logic.
-        // Better: Use authenticateToken optional middleware logic if available, or just parse if present.
-    }
-    // We will update user_id later if user logs in, based on endpoint match.
-    // Here we mainly save the endpoint.
+    // ... token parsing simplified for this block, actual implementation relies on middleware or simple parse if not strictly protected
+    // Here we just save the sub. If user is logged in elsewhere, they update this record.
 
     if (!subscription || !subscription.endpoint) {
         return res.status(400).json({ error: 'Invalid subscription' });
@@ -75,6 +69,9 @@ router.get('/history', requireAdmin, withDb(async (req, res, db) => {
 router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
     const { filters } = req.body; // { marketing: boolean, zips: string[] }
     
+    // Logic: Join user_addresses to check if ANY of user's addresses match the ZIP list.
+    // Use REPLACE to ignore spaces in DB column.
+    
     let query = `
         SELECT COUNT(DISTINCT s.endpoint) as cnt 
         FROM push_subscriptions s
@@ -88,8 +85,9 @@ router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
         query += ' AND u.marketing_consent = 1';
     }
 
+    // Only apply ZIP filter if array is NOT empty. Empty array = All ZIPs.
     if (filters.zips && filters.zips.length > 0) {
-        query += ' AND ua.zip IN (?)';
+        query += ' AND REPLACE(ua.zip, " ", "") IN (?)';
         params.push(filters.zips);
     }
 
@@ -123,7 +121,7 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
             query += ' AND u.marketing_consent = 1';
         }
         if (filters?.zips && filters.zips.length > 0) {
-            query += ' AND ua.zip IN (?)';
+            query += ' AND REPLACE(ua.zip, " ", "") IN (?)';
             params.push(filters.zips);
         }
     }
