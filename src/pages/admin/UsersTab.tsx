@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { User } from '../../types';
-import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search } from 'lucide-react';
+import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search, Smartphone } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Pagination } from '../../components/Pagination';
 
@@ -78,6 +78,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
             Telefon: u.phone,
             Role: u.role,
             Marketing: u.marketingConsent ? 'ANO' : 'NE',
+            Push: u.hasPushSubscription ? 'ANO' : 'NE',
             Stav: u.isBlocked ? 'BLOKOVÁN' : 'AKTIVNÍ'
         }));
 
@@ -194,6 +195,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                         <th className="px-6 py-4 text-left">{t('common.email')}</th>
                         <th className="px-6 py-4 text-left">{t('common.role')}</th>
                         <th className="px-6 py-4 text-center">Marketing</th>
+                        <th className="px-6 py-4 text-center">Push</th>
                         <th className="px-6 py-4 text-center">Emaily</th>
                         <th className="px-6 py-4 text-center">{t('common.status')}</th>
                         <th className="px-6 py-4 text-right">{t('common.actions')}</th>
@@ -214,6 +216,9 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                             <td className="px-6 py-4 uppercase font-bold text-[10px]">{u.role}</td>
                             <td className="px-6 py-4 text-center">
                                 {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                                {u.hasPushSubscription ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
                             </td>
                             <td className="px-6 py-4 text-center">
                                 <button 

@@ -43,6 +43,8 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     // Attempt to identify user from token if present
     const authHeader = req.headers['authorization'];
     // In a real app we decode token here or use middleware
+    // We assume the user is logged in context on frontend, so we should actually check token here properly
+    // For now, we trust the flow, or we can use authenticateToken middleware if we want strict binding
 
     if (!subscription || !subscription.endpoint) {
         return res.status(400).json({ error: 'Invalid subscription' });
@@ -136,16 +138,18 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
         return res.status(500).json({ error: 'Server VAPID keys not configured' });
     }
 
-    const { subject, body, filters, forceAll } = req.body;
+    const { subject, body, filters, forceAll, targetUserIds } = req.body;
 
     // 1. Save History
     const [histResult] = await db.query(
         'INSERT INTO notification_history (subject, body, filters, recipient_count) VALUES (?, ?, ?, 0)',
-        [subject, body, JSON.stringify(filters || {})]
+        [subject, body, JSON.stringify(filters || { targetIds: targetUserIds ? targetUserIds.length : 0 })]
     );
     const historyId = histResult.insertId;
 
     // 2. Fetch Recipients
+    // Logic: If targetUserIds provided, use them. Else use filters.
+    
     let query = `
         SELECT DISTINCT s.endpoint, s.p256dh, s.auth 
         FROM push_subscriptions s
@@ -155,7 +159,10 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
     `;
     const params = [];
 
-    if (!forceAll) {
+    if (targetUserIds && targetUserIds.length > 0) {
+        query += ' AND s.user_id IN (?)';
+        params.push(targetUserIds);
+    } else if (!forceAll) {
         if (filters?.marketing) {
             query += ' AND u.marketing_consent = 1';
         }
@@ -169,6 +176,10 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
     }
 
     const [subscriptions] = await db.query(query, params);
+
+    if (subscriptions.length === 0) {
+        return res.json({ success: true, count: 0, message: 'No recipients found' });
+    }
 
     // 3. Send
     let successCount = 0;

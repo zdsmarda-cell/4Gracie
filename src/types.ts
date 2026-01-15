@@ -192,6 +192,7 @@ export interface User {
   isBlocked?: boolean;
   passwordHash?: string;
   marketingConsent?: boolean;
+  hasPushSubscription?: boolean; // NEW FIELD
 }
 
 export interface OrderStatusHistory {

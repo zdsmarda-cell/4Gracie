@@ -13,10 +13,19 @@ const hashPassword = (pwd) => `hashed_${Buffer.from(pwd).toString('base64')}`;
 // GET USERS (Protected)
 router.get('/', withDb(async (req, res, db) => {
     const { search } = req.query;
-    let query = 'SELECT * FROM users WHERE 1=1';
+    
+    // Updated query to check for push subscriptions
+    let query = `
+        SELECT u.*, 
+        (SELECT COUNT(*) FROM push_subscriptions ps WHERE ps.user_id = u.id) > 0 as has_push 
+        FROM users u 
+        WHERE 1=1
+    `;
+    
     const params = [];
-    if (search) { query += ' AND (email LIKE ? OR name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
-    query += ' LIMIT 100';
+    if (search) { query += ' AND (u.email LIKE ? OR u.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+    query += ' LIMIT 200'; // Increased limit for better selection in notifications tab
+    
     const [rows] = await db.query(query, params);
     const users = [];
     for (const row of rows) {
@@ -24,6 +33,7 @@ router.get('/', withDb(async (req, res, db) => {
         users.push({
             id: row.id, email: row.email, name: row.name, phone: row.phone, role: row.role,
             isBlocked: Boolean(row.is_blocked), marketingConsent: Boolean(row.marketing_consent),
+            hasPushSubscription: Boolean(row.has_push), // NEW FIELD
             // passwordHash removed for security
             deliveryAddresses: addrs.filter(a => a.type === 'delivery'),
             billingAddresses: addrs.filter(a => a.type === 'billing')

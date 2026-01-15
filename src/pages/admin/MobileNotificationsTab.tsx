@@ -1,33 +1,42 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Smartphone, Send, RotateCcw, Filter, Users, Loader2 } from 'lucide-react';
+import { Smartphone, Send, RotateCcw, Filter, Users, Loader2, CheckSquare, Square } from 'lucide-react';
 import { Pagination } from '../../components/Pagination';
+import { User } from '../../types';
 
 export const MobileNotificationsTab: React.FC = () => {
-    const { getFullApiUrl, dataSource, t } = useStore();
-    const [history, setHistory] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [isSending, setIsSending] = useState(false);
+    const { getFullApiUrl, dataSource, searchUsers, t } = useStore();
     
-    // New Notification Form
-    const [subject, setSubject] = useState('');
-    const [body, setBody] = useState('');
-    const [filterMarketing, setFilterMarketing] = useState(false);
-    const [filterZips, setFilterZips] = useState('');
-    const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
-
-    // Pagination
+    // --- HISTORY STATE ---
+    const [history, setHistory] = useState<any[]>([]);
+    const [isHistoryLoading, setIsHistoryLoading] = useState(false);
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
 
+    // --- FORM STATE ---
+    const [subject, setSubject] = useState('');
+    const [body, setBody] = useState('');
+    const [isSending, setIsSending] = useState(false);
+
+    // --- TARGETING STATE ---
+    const [allUsers, setAllUsers] = useState<User[]>([]);
+    const [isUsersLoading, setIsUsersLoading] = useState(false);
+    const [filters, setFilters] = useState({
+        search: '',
+        zip: '',
+        marketing: 'all' as 'all' | 'yes' | 'no'
+    });
+    const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+
     useEffect(() => {
         loadHistory();
+        loadAllUsers();
     }, [page]);
 
     const loadHistory = async () => {
         if (dataSource !== 'api') return;
-        setIsLoading(true);
+        setIsHistoryLoading(true);
         try {
             const token = localStorage.getItem('auth_token');
             const res = await fetch(getFullApiUrl(`/api/notifications/history?page=${page}&limit=10`), {
@@ -41,46 +50,84 @@ export const MobileNotificationsTab: React.FC = () => {
         } catch (e) {
             console.error(e);
         } finally {
-            setIsLoading(false);
+            setIsHistoryLoading(false);
         }
     };
 
-    // Helper to parse ZIPs: split by comma, remove spaces, remove empty
-    const parseZips = (input: string) => {
-        return input.split(',')
-            .map(z => z.replace(/\s/g, '')) // Remove spaces (110 00 -> 11000)
-            .filter(z => z.length > 0);
+    const loadAllUsers = async () => {
+        setIsUsersLoading(true);
+        try {
+            // Fetch all users without filter first to do client-side filtering comfortably
+            const users = await searchUsers({ search: '' }); 
+            setAllUsers(users);
+        } catch(e) {
+            console.error(e);
+        } finally {
+            setIsUsersLoading(false);
+        }
     };
 
-    const handlePreview = async () => {
-        if (dataSource !== 'api') return;
-        
-        const zipsArray = parseZips(filterZips);
-        
-        const token = localStorage.getItem('auth_token');
-        const res = await fetch(getFullApiUrl('/api/notifications/preview-count'), {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}` 
-            },
-            body: JSON.stringify({ 
-                filters: { 
-                    marketing: filterMarketing,
-                    zips: zipsArray
-                } 
-            })
+    // Filter Users Logic
+    const filteredUsers = useMemo(() => {
+        return allUsers.filter(u => {
+            // Text Search (Name/Email)
+            if (filters.search) {
+                const term = filters.search.toLowerCase();
+                if (!u.name.toLowerCase().includes(term) && !u.email.toLowerCase().includes(term)) return false;
+            }
+            // Marketing
+            if (filters.marketing === 'yes' && !u.marketingConsent) return false;
+            if (filters.marketing === 'no' && u.marketingConsent) return false;
+            
+            // ZIP Check (Delivery OR Billing)
+            if (filters.zip) {
+                const zips = filters.zip.split(',').map(z => z.trim().replace(/\s/g, ''));
+                const userZips = [
+                    ...u.deliveryAddresses.map(a => a.zip.replace(/\s/g, '')), 
+                    ...u.billingAddresses.map(a => a.zip.replace(/\s/g, ''))
+                ];
+                // Check if any user ZIP matches any filter ZIP (partial match for flexibility)
+                const hasMatch = zips.some(filterZip => userZips.some(uz => uz.includes(filterZip)));
+                if (!hasMatch) return false;
+            }
+
+            return true;
         });
-        const data = await res.json();
-        setEstimatedCount(data.count);
+    }, [allUsers, filters]);
+
+    // Selection Handlers
+    const toggleUser = (id: string) => {
+        const newSet = new Set(selectedUserIds);
+        if (newSet.has(id)) newSet.delete(id);
+        else newSet.add(id);
+        setSelectedUserIds(newSet);
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedUserIds.size === filteredUsers.length && filteredUsers.length > 0) {
+            setSelectedUserIds(new Set());
+        } else {
+            const newSet = new Set(selectedUserIds);
+            filteredUsers.forEach(u => newSet.add(u.id));
+            setSelectedUserIds(newSet);
+        }
+    };
+
+    const getUserZipsString = (u: User) => {
+        const allZips = new Set([
+            ...u.deliveryAddresses.map(a => a.zip),
+            ...u.billingAddresses.map(a => a.zip)
+        ]);
+        return Array.from(allZips).join(', ');
     };
 
     const handleSend = async () => {
         if (!subject || !body) return alert('Vyplňte předmět a text.');
+        if (selectedUserIds.size === 0) return alert('Vyberte alespoň jednoho příjemce.');
         if (dataSource !== 'api') return alert('Dostupné pouze v API režimu.');
 
         setIsSending(true);
-        const zipsArray = parseZips(filterZips);
+        const targetIds = Array.from(selectedUserIds);
 
         try {
             const token = localStorage.getItem('auth_token');
@@ -93,10 +140,7 @@ export const MobileNotificationsTab: React.FC = () => {
                 body: JSON.stringify({ 
                     subject, 
                     body,
-                    filters: { 
-                        marketing: filterMarketing,
-                        zips: zipsArray
-                    }
+                    targetUserIds: targetIds // Send explicit list
                 })
             });
             const data = await res.json();
@@ -104,7 +148,10 @@ export const MobileNotificationsTab: React.FC = () => {
                 alert(`Odesláno na ${data.count} zařízení.`);
                 setSubject('');
                 setBody('');
+                setSelectedUserIds(new Set());
                 loadHistory();
+            } else {
+                alert('Chyba: ' + (data.error || 'Neznámá chyba'));
             }
         } catch (e) {
             console.error(e);
@@ -115,13 +162,9 @@ export const MobileNotificationsTab: React.FC = () => {
     };
 
     const handleResend = async (notification: any) => {
-        if (!confirm('Opravdu znovu odeslat?')) return;
+        if (!confirm('Opravdu znovu odeslat? (Budete moci upravit cílení)')) return;
         setSubject(notification.subject);
         setBody(notification.body);
-        // We prepopulate form, admin must click send manually to confirm filters
-        const filters = typeof notification.filters === 'string' ? JSON.parse(notification.filters) : notification.filters;
-        setFilterMarketing(filters?.marketing || false);
-        setFilterZips(filters?.zips?.join(', ') || '');
         window.scrollTo(0,0);
     };
 
@@ -129,15 +172,18 @@ export const MobileNotificationsTab: React.FC = () => {
 
     return (
         <div className="animate-fade-in space-y-8">
-            <div className="bg-white p-6 rounded-2xl border shadow-sm grid md:grid-cols-2 gap-8">
-                <div>
+            
+            {/* COMPOSER & TARGETING */}
+            <div className="grid lg:grid-cols-2 gap-8">
+                {/* 1. MESSAGE COMPOSER */}
+                <div className="bg-white p-6 rounded-2xl border shadow-sm h-fit">
                     <h3 className="text-lg font-bold text-primary mb-4 flex items-center">
-                        <Send className="mr-2 text-accent" size={20}/> Nová notifikace
+                        <Send className="mr-2 text-accent" size={20}/> Obsah zprávy
                     </h3>
                     <div className="space-y-4">
                         <input 
-                            className="w-full border rounded-xl p-3 text-sm focus:ring-accent outline-none" 
-                            placeholder="Předmět / Nadpis" 
+                            className="w-full border rounded-xl p-3 text-sm focus:ring-accent outline-none font-bold" 
+                            placeholder="Předmět / Nadpis (např. Akce na víkend)" 
                             value={subject} 
                             onChange={e => setSubject(e.target.value)} 
                         />
@@ -147,63 +193,105 @@ export const MobileNotificationsTab: React.FC = () => {
                             value={body} 
                             onChange={e => setBody(e.target.value)} 
                         />
-                    </div>
-                </div>
-
-                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <h3 className="text-sm font-bold text-gray-500 uppercase mb-4 flex items-center">
-                        <Filter className="mr-2" size={16}/> Cílení a Filtry
-                    </h3>
-                    
-                    <div className="space-y-4">
-                        <label className="flex items-center space-x-3 cursor-pointer p-2 bg-white rounded border hover:border-accent transition">
-                            <input 
-                                type="checkbox" 
-                                checked={filterMarketing} 
-                                onChange={e => setFilterMarketing(e.target.checked)}
-                                className="rounded text-accent w-5 h-5"
-                            />
-                            <span className="text-sm font-bold text-gray-700">Jen s marketingovým souhlasem</span>
-                        </label>
-
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">PSČ (oddělené čárkou)</label>
-                            <input 
-                                className="w-full border rounded-lg p-2 text-sm font-mono" 
-                                placeholder="Např. 66417, 60200 (nechte prázdné pro všechna)" 
-                                value={filterZips} 
-                                onChange={e => setFilterZips(e.target.value)} 
-                            />
-                            <p className="text-[10px] text-gray-400 mt-1">Kontroluje se doručovací i fakturační adresa.</p>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-2">
-                            <button onClick={handlePreview} className="text-xs font-bold text-blue-600 hover:underline flex items-center">
-                                <Users size={14} className="mr-1"/> Zkontrolovat počet příjemců
+                        <div className="flex justify-between items-center pt-2">
+                            <div className="text-xs text-gray-500">
+                                Vybráno příjemců: <strong className="text-primary text-lg">{selectedUserIds.size}</strong>
+                            </div>
+                            <button 
+                                onClick={handleSend} 
+                                disabled={isSending || !subject || !body || selectedUserIds.size === 0}
+                                className="bg-accent text-white px-8 py-3 rounded-xl font-bold shadow-lg hover:bg-purple-700 transition disabled:opacity-50 flex items-center"
+                            >
+                                {isSending ? <Loader2 className="animate-spin mr-2"/> : <Send size={18} className="mr-2"/>}
+                                Odeslat
                             </button>
-                            {estimatedCount !== null && (
-                                <span className="text-sm font-bold bg-blue-100 text-blue-700 px-3 py-1 rounded-full">
-                                    {estimatedCount} zařízení
-                                </span>
-                            )}
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <div className="flex justify-end">
-                <button 
-                    onClick={handleSend} 
-                    disabled={isSending || !subject || !body}
-                    className="bg-accent text-white px-8 py-3 rounded-xl font-bold shadow-lg hover:bg-purple-700 transition disabled:opacity-50 flex items-center"
-                >
-                    {isSending ? <Loader2 className="animate-spin mr-2"/> : <Send size={18} className="mr-2"/>}
-                    Odeslat notifikaci
-                </button>
+                {/* 2. TARGETING TABLE */}
+                <div className="bg-white p-6 rounded-2xl border shadow-sm flex flex-col h-[600px]">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold text-primary flex items-center">
+                            <Users className="mr-2 text-accent" size={20}/> Cílení ({filteredUsers.length})
+                        </h3>
+                        <button onClick={loadAllUsers} className="p-2 hover:bg-gray-100 rounded-full"><RotateCcw size={16}/></button>
+                    </div>
+
+                    {/* Filters */}
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                        <input 
+                            className="border rounded-lg p-2 text-xs" 
+                            placeholder="Hledat jméno/email..." 
+                            value={filters.search}
+                            onChange={e => setFilters({...filters, search: e.target.value})}
+                        />
+                        <input 
+                            className="border rounded-lg p-2 text-xs" 
+                            placeholder="PSČ (např. 664)" 
+                            value={filters.zip}
+                            onChange={e => setFilters({...filters, zip: e.target.value})}
+                        />
+                        <select 
+                            className="border rounded-lg p-2 text-xs bg-white"
+                            value={filters.marketing}
+                            onChange={e => setFilters({...filters, marketing: e.target.value as any})}
+                        >
+                            <option value="all">Všechny souhlasy</option>
+                            <option value="yes">Jen s marketingem</option>
+                            <option value="no">Bez marketingu</option>
+                        </select>
+                    </div>
+
+                    {/* Table */}
+                    <div className="flex-grow overflow-auto border rounded-xl relative">
+                        {isUsersLoading && (
+                            <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-10">
+                                <Loader2 className="animate-spin text-accent" size={32}/>
+                            </div>
+                        )}
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
+                                <tr>
+                                    <th className="px-4 py-3 text-center w-10">
+                                        <button onClick={toggleSelectAll} className="text-gray-500 hover:text-accent">
+                                            {selectedUserIds.size > 0 && selectedUserIds.size === filteredUsers.length ? <CheckSquare size={16}/> : <Square size={16}/>}
+                                        </button>
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-[10px] font-bold text-gray-500 uppercase">Uživatel</th>
+                                    <th className="px-4 py-3 text-left text-[10px] font-bold text-gray-500 uppercase">PSČ</th>
+                                    <th className="px-4 py-3 text-center text-[10px] font-bold text-gray-500 uppercase">Mkt</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y text-xs bg-white">
+                                {filteredUsers.map(u => (
+                                    <tr key={u.id} className={`hover:bg-gray-50 cursor-pointer ${selectedUserIds.has(u.id) ? 'bg-purple-50' : ''}`} onClick={() => toggleUser(u.id)}>
+                                        <td className="px-4 py-3 text-center">
+                                            {selectedUserIds.has(u.id) ? <CheckSquare size={16} className="text-accent inline"/> : <Square size={16} className="text-gray-300 inline"/>}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="font-bold text-gray-900">{u.name}</div>
+                                            <div className="text-gray-500">{u.email}</div>
+                                        </td>
+                                        <td className="px-4 py-3 text-gray-600 max-w-[100px] truncate" title={getUserZipsString(u)}>
+                                            {getUserZipsString(u)}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                            {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filteredUsers.length === 0 && (
+                                    <tr><td colSpan={4} className="p-8 text-center text-gray-400">Žádní uživatelé neodpovídají filtru.</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             {/* HISTORY */}
-            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden mt-8">
                 <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
                     <h3 className="font-bold text-gray-700 flex items-center">
                         <Smartphone className="mr-2" size={18}/> Historie odeslaných
@@ -249,7 +337,7 @@ export const MobileNotificationsTab: React.FC = () => {
                     onPageChange={setPage} 
                     limit={10} 
                     onLimitChange={()=>{}} 
-                    totalItems={totalPages*10} // approx
+                    totalItems={totalPages*10} 
                 />
             </div>
         </div>
