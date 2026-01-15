@@ -163,6 +163,7 @@ interface StoreContextType {
   updatePwa: () => void;
   pushSubscription: PushSubscription | null;
   subscribeToPush: () => Promise<boolean>;
+  unsubscribeFromPush: () => Promise<boolean>; // NEW
   isPwa: boolean;
 }
 
@@ -265,91 +266,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const showNotify = useCallback((message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
     setGlobalNotification({ message, type, autoClose });
   }, []);
-
-  // --- PWA LOGIC ---
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-        // Handle updates
-        navigator.serviceWorker.getRegistration().then(reg => {
-            if (reg) {
-                // If waiting worker exists, update is available
-                if (reg.waiting) {
-                    setWaitingWorker(reg.waiting);
-                    setIsPwaUpdateAvailable(true);
-                }
-                
-                // Monitor for future updates
-                reg.addEventListener('updatefound', () => {
-                    const newWorker = reg.installing;
-                    if (newWorker) {
-                        newWorker.addEventListener('statechange', () => {
-                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                setWaitingWorker(newWorker);
-                                setIsPwaUpdateAvailable(true);
-                            }
-                        });
-                    }
-                });
-
-                // Check existing push subscription
-                reg.pushManager.getSubscription().then(sub => {
-                    setPushSubscription(sub);
-                });
-            }
-        });
-
-        // Handle controller change (reload after update)
-        let refreshing = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-            if (!refreshing) {
-                refreshing = true;
-                window.location.reload();
-            }
-        });
-    }
-  }, []);
-
-  const updatePwa = () => {
-      if (waitingWorker) {
-          waitingWorker.postMessage({ type: 'SKIP_WAITING' });
-      }
-  };
-
-  const subscribeToPush = async (): Promise<boolean> => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-          showNotify('Push notifikace nejsou podporovány tímto prohlížečem.', 'error');
-          return false;
-      }
-
-      try {
-          const reg = await navigator.serviceWorker.ready;
-          // @ts-ignore
-          const vapidKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
-          
-          if (!vapidKey) {
-              console.warn("VAPID Key missing in env");
-              return false;
-          }
-
-          const sub = await reg.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: urlBase64ToUint8Array(vapidKey)
-          });
-
-          setPushSubscription(sub);
-
-          // Send to backend if connected
-          if (dataSource === 'api') {
-              await apiCall('/api/notifications/subscribe', 'POST', { subscription: sub });
-          }
-          
-          return true;
-      } catch (e) {
-          console.error("Push Subscribe Error:", e);
-          showNotify('Nepodařilo se povolit notifikace.', 'error');
-          return false;
-      }
-  };
 
   // --- API / FETCH LOGIC WITH REFRESH TOKEN ---
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any): Promise<any> => {
@@ -454,6 +370,113 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [showNotify]);
 
+  // --- PWA LOGIC ---
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+        // Handle updates
+        navigator.serviceWorker.getRegistration().then(reg => {
+            if (reg) {
+                // If waiting worker exists, update is available
+                if (reg.waiting) {
+                    setWaitingWorker(reg.waiting);
+                    setIsPwaUpdateAvailable(true);
+                }
+                
+                // Monitor for future updates
+                reg.addEventListener('updatefound', () => {
+                    const newWorker = reg.installing;
+                    if (newWorker) {
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                setWaitingWorker(newWorker);
+                                setIsPwaUpdateAvailable(true);
+                            }
+                        });
+                    }
+                });
+
+                // Check existing push subscription
+                reg.pushManager.getSubscription().then(sub => {
+                    setPushSubscription(sub);
+                });
+            }
+        });
+
+        // Handle controller change (reload after update)
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!refreshing) {
+                refreshing = true;
+                window.location.reload();
+            }
+        });
+    }
+  }, []);
+
+  const updatePwa = () => {
+      if (waitingWorker) {
+          waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+      }
+  };
+
+  const subscribeToPush = async (): Promise<boolean> => {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          showNotify('Push notifikace nejsou podporovány tímto prohlížečem.', 'error');
+          return false;
+      }
+
+      try {
+          const reg = await navigator.serviceWorker.ready;
+          // @ts-ignore
+          const vapidKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
+          
+          if (!vapidKey) {
+              console.warn("VAPID Key missing in env");
+              return false;
+          }
+
+          const sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(vapidKey)
+          });
+
+          setPushSubscription(sub);
+
+          // Send to backend if connected
+          if (dataSource === 'api') {
+              await apiCall('/api/notifications/subscribe', 'POST', { subscription: sub });
+          }
+          
+          showNotify('Notifikace zapnuty.', 'success');
+          return true;
+      } catch (e) {
+          console.error("Push Subscribe Error:", e);
+          showNotify('Nepodařilo se povolit notifikace.', 'error');
+          return false;
+      }
+  };
+
+  const unsubscribeFromPush = async (): Promise<boolean> => {
+      if (!pushSubscription) return true;
+
+      try {
+          // 1. Notify Backend
+          if (dataSource === 'api') {
+              await apiCall('/api/notifications/unsubscribe', 'POST', { endpoint: pushSubscription.endpoint });
+          }
+
+          // 2. Unsubscribe locally
+          await pushSubscription.unsubscribe();
+          setPushSubscription(null);
+          showNotify('Notifikace vypnuty.', 'success');
+          return true;
+      } catch (e) {
+          console.error("Push Unsubscribe Error:", e);
+          showNotify('Nepodařilo se zrušit notifikace.', 'error');
+          return false;
+      }
+  };
+
   const fetchData = useCallback(async () => {
       setIsLoading(true);
       setDbConnectionError(false);
@@ -528,6 +551,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           apiCall('/api/notifications/subscribe', 'POST', { subscription: pushSubscription });
       }
   }, [user, pushSubscription, dataSource, apiCall]);
+
+  // Auto-prompt for Push on Login (Mobile/PWA only)
+  useEffect(() => {
+      if (user && isPwa && Notification.permission === 'default') {
+          // Ask for permission if not granted/denied yet
+          subscribeToPush();
+      }
+  }, [user, isPwa]);
 
   // --- SYNC AUTH DATA WITH MAIN FETCH ---
   useEffect(() => {
@@ -1020,7 +1051,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       importDatabase, globalNotification, dismissNotification,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       cookieSettings, saveCookieSettings,
-      isPwaUpdateAvailable, updatePwa, pushSubscription, subscribeToPush, isPwa
+      isPwaUpdateAvailable, updatePwa, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa
     }}>
       {children}
     </StoreContext.Provider>

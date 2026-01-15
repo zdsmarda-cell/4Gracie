@@ -2,12 +2,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Navigate } from 'react-router-dom';
-import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck } from 'lucide-react';
+import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck, Smartphone } from 'lucide-react';
 import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMethod, ProductCategory } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Profile: React.FC = () => {
-  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl } = useStore();
+  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa } = useStore();
   
   // General Modal State (For Profile Address Management)
   const [modalType, setModalType] = useState<'billing' | 'delivery' | null>(null);
@@ -79,6 +79,14 @@ export const Profile: React.FC = () => {
     } else {
         setInfoMsg({ type: 'error', text: 'Chyba při ukládání.' });
     }
+  };
+
+  const handlePushToggle = async () => {
+      if (pushSubscription) {
+          await unsubscribeFromPush();
+      } else {
+          await subscribeToPush();
+      }
   };
 
   // Generic Address Save (Profile Tab)
@@ -492,19 +500,37 @@ export const Profile: React.FC = () => {
                 </div>
             )}
             
-            {/* Marketing Consent Toggle */}
-            <div className="pt-2 border-t mt-2">
-              <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none">
-                <input 
-                  type="checkbox" 
-                  checked={user.marketingConsent || false} 
-                  onChange={toggleMarketingConsent} 
-                  className="rounded text-accent" 
-                />
-                <span className={user.marketingConsent ? 'text-green-600' : 'text-gray-500'}>
-                  {user.marketingConsent ? 'Marketingový souhlas udělen' : 'Marketingový souhlas neudělen'}
-                </span>
-              </label>
+            <div className="pt-2 border-t mt-2 space-y-3">
+                {/* Marketing Consent Toggle */}
+                <label className="flex items-center space-x-2 text-xs font-bold cursor-pointer select-none">
+                    <input 
+                    type="checkbox" 
+                    checked={user.marketingConsent || false} 
+                    onChange={toggleMarketingConsent} 
+                    className="rounded text-accent" 
+                    />
+                    <span className={user.marketingConsent ? 'text-green-600' : 'text-gray-500'}>
+                    {user.marketingConsent ? 'Marketingový souhlas udělen' : 'Marketingový souhlas neudělen'}
+                    </span>
+                </label>
+
+                {/* Push Notifications Toggle */}
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-2">
+                        <Smartphone size={16} className="text-accent" />
+                        <span className="text-xs font-bold text-gray-700">Mobilní notifikace</span>
+                    </div>
+                    {isPwa ? (
+                        <button 
+                            onClick={handlePushToggle}
+                            className={`text-xs px-2 py-1 rounded font-bold transition ${pushSubscription ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}
+                        >
+                            {pushSubscription ? 'Zapnuto' : 'Vypnuto'}
+                        </button>
+                    ) : (
+                        <span className="text-[10px] text-gray-400 italic">Dostupné v aplikaci</span>
+                    )}
+                </div>
             </div>
           </div>
 

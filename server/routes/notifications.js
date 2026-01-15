@@ -23,9 +23,10 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     const { subscription } = req.body;
     let userId = null;
     
+    // Attempt to identify user from token if present
     const authHeader = req.headers['authorization'];
-    // ... token parsing simplified for this block, actual implementation relies on middleware or simple parse if not strictly protected
-    // Here we just save the sub. If user is logged in elsewhere, they update this record.
+    // In a real app we decode token here or use middleware, but subscription is often public/guest initially
+    // We will trust the client to re-subscribe with auth header if they log in later, updating the user_id.
 
     if (!subscription || !subscription.endpoint) {
         return res.status(400).json({ error: 'Invalid subscription' });
@@ -41,6 +42,20 @@ router.post('/subscribe', withDb(async (req, res, db) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Subscription Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+}));
+
+// UNSUBSCRIBE
+router.post('/unsubscribe', withDb(async (req, res, db) => {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
+
+    try {
+        await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [endpoint]);
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Unsubscribe Error:", e);
         res.status(500).json({ error: e.message });
     }
 }));
@@ -68,9 +83,6 @@ router.get('/history', requireAdmin, withDb(async (req, res, db) => {
 // GET TARGET USERS COUNT (Admin Preview)
 router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
     const { filters } = req.body; // { marketing: boolean, zips: string[] }
-    
-    // Logic: Join user_addresses to check if ANY of user's addresses match the ZIP list.
-    // Use REPLACE to ignore spaces in DB column.
     
     let query = `
         SELECT COUNT(DISTINCT s.endpoint) as cnt 
