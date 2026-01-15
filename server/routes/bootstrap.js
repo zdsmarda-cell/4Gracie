@@ -51,7 +51,9 @@ router.get('/', withDb(async (req, res, db) => {
         products: [],
         settings: null,
         discountCodes: [],
-        dayConfigs: []
+        dayConfigs: [],
+        // Send Public VAPID Key to frontend at runtime
+        vapidPublicKey: process.env.VITE_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY
     };
 
     // --- PUBLIC DATA (Available to Everyone) ---

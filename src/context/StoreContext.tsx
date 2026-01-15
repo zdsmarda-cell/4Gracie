@@ -166,6 +166,7 @@ interface StoreContextType {
   unsubscribeFromPush: () => Promise<boolean>; 
   isPwa: boolean;
   isPushSupported: boolean;
+  vapidKey: string | null;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -234,6 +235,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isPwaUpdateAvailable, setIsPwaUpdateAvailable] = useState(false);
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
   const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
+  const [vapidKey, setVapidKey] = useState<string | null>(null);
   
   // Simple detection of standalone mode
   const isPwa = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
@@ -447,16 +449,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
           const reg = await navigator.serviceWorker.ready;
           
-          // Use direct access to ensure it's picked up by Vite's replacement
-          // @ts-ignore
-          const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-          
           if (!vapidKey) {
-              console.warn("VAPID Key missing in env. Check .env file.");
-              // Fallback check in case of different build setup
-              // @ts-ignore
-              console.log("Debug VITE_VAPID_PUBLIC_KEY:", (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY);
-              showNotify('Chyba konfigurace: Chybí VAPID klíč.', 'error');
+              console.warn("VAPID Key missing.");
+              showNotify('Chyba: Server neposkytl VAPID klíč.', 'error');
               return false;
           }
 
@@ -476,11 +471,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           return true;
       } catch (e: any) {
           console.error("Push Subscribe Error:", e);
-          if (e.message && e.message.includes('No VAPID')) {
-              showNotify('Chyba konfigurace serveru (VAPID).', 'error');
-          } else {
-              showNotify('Nepodařilo se zapnout notifikace. Zkontrolujte nastavení aplikace.', 'error');
-          }
+          showNotify('Nepodařilo se zapnout notifikace.', 'error');
           return false;
       }
   };
@@ -526,6 +517,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
+              
+              // Set dynamic VAPID from server
+              if (data.vapidPublicKey) {
+                  setVapidKey(data.vapidPublicKey);
+              }
           } else {
               if(!data) setDbConnectionError(true);
           }
@@ -541,6 +537,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
+          
+          // Try loading VAPID from build env if strictly local
+          // @ts-ignore
+          const localVapid = import.meta.env?.VITE_VAPID_PUBLIC_KEY;
+          if (localVapid) setVapidKey(localVapid);
         }
       } catch (err: any) {
         showNotify('Kritická chyba při načítání aplikace: ' + err.message, 'error');
@@ -584,7 +585,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Auto-prompt for Push on Login (Uses Capability check now, not strict PWA check)
   useEffect(() => {
       // Check if user is logged in, push is supported, and permission is default (not asked yet)
-      if (user && isPushSupported && Notification.permission === 'default') {
+      if (user && isPushSupported && Notification.permission === 'default' && vapidKey) {
           // Wrap in a small timeout to avoid immediate rejection in some scenarios,
           // though modern browsers might still block this without a gesture.
           // The key fix is allowing the manual button in Profile to work.
@@ -595,7 +596,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               });
           }, 1000);
       }
-  }, [user, isPushSupported]);
+  }, [user, isPushSupported, vapidKey]);
 
   // --- SYNC AUTH DATA WITH MAIN FETCH ---
   useEffect(() => {
@@ -1089,7 +1090,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       cookieSettings, saveCookieSettings,
       isPwaUpdateAvailable, updatePwa, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa,
-      isPushSupported
+      isPushSupported, vapidKey
     }}>
       {children}
     </StoreContext.Provider>
