@@ -7,6 +7,12 @@ import webpush from 'web-push';
 
 const router = express.Router();
 
+const STATUS_TRANSLATIONS = {
+    cs: { created: 'Zadaná', confirmed: 'Potvrzená', preparing: 'Připravuje se', ready: 'Připravena', on_way: 'Na cestě', delivered: 'Doručena', not_picked_up: 'Nedoručena/Nevyzvednuta', cancelled: 'Stornována' },
+    en: { created: 'Created', confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready', on_way: 'On the way', delivered: 'Delivered', not_picked_up: 'Not picked up', cancelled: 'Cancelled' },
+    de: { created: 'Erstellt', confirmed: 'Bestätigt', preparing: 'In Vorbereitung', ready: 'Bereit', on_way: 'Unterwegs', delivered: 'Geliefert', not_picked_up: 'Nicht abgeholt', cancelled: 'Storniert' }
+};
+
 // Get Orders - Protected (Any logged in user can try, ideally filter by ID for non-admins, but simplistic auth for now)
 router.get('/', authenticateToken, withDb(async (req, res, db) => {
     const { id, dateFrom, dateTo, userId, status, customer, isEvent, isPaid, page = 1, limit = 50 } = req.query;
@@ -155,8 +161,6 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
         );
     }
 
-    const pushPromises = [];
-
     for(const o of orders) {
         let json = parseJsonCol(o, 'full_json');
         
@@ -181,32 +185,46 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
         if (sendPush && canPush && o.user_id) {
             const [subs] = await db.query('SELECT * FROM push_subscriptions WHERE user_id = ?', [o.user_id]);
             if (subs.length > 0) {
+                // Determine language and translate status
+                const lang = json.language || 'cs';
+                const translatedStatus = STATUS_TRANSLATIONS[lang]?.[status] || status;
+                
+                const pushTitle = `Změna stavu objednávky #${o.id}`;
+                const pushBody = `Vaše objednávka je nyní ve stavu: ${translatedStatus}`;
+
                 const payload = JSON.stringify({
-                    title: `Změna stavu objednávky #${o.id}`,
-                    body: `Vaše objednávka je nyní ve stavu: ${status.toUpperCase()}`,
+                    title: pushTitle,
+                    body: pushBody,
                     url: '/profile'
                 });
 
-                subs.forEach(sub => {
-                    pushPromises.push(
-                        webpush.sendNotification({
+                for (const sub of subs) {
+                    try {
+                        await webpush.sendNotification({
                             endpoint: sub.endpoint,
                             keys: { p256dh: sub.p256dh, auth: sub.auth }
-                        }, payload).catch(err => {
-                            if (err.statusCode === 410 || err.statusCode === 404) {
-                                db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
-                            }
-                        })
-                    );
-                });
+                        }, payload);
+
+                        // LOG SUCCESS TO DB
+                        await db.query(
+                            'INSERT INTO push_logs (user_id, title, body, status) VALUES (?, ?, ?, ?)',
+                            [o.user_id, pushTitle, pushBody, 'sent']
+                        );
+
+                    } catch (err) {
+                        // LOG ERROR TO DB
+                        await db.query(
+                            'INSERT INTO push_logs (user_id, title, body, status, error_message) VALUES (?, ?, ?, ?, ?)',
+                            [o.user_id, pushTitle, pushBody, 'error', err.message || 'Send failed']
+                        );
+
+                        if (err.statusCode === 410 || err.statusCode === 404) {
+                            db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
+                        }
+                    }
+                }
             }
         }
-    }
-
-    if (pushPromises.length > 0) {
-        Promise.allSettled(pushPromises).then(results => {
-            console.log(`Push notifications processed: ${results.length}`);
-        });
     }
 
     if (notifyCustomer) {

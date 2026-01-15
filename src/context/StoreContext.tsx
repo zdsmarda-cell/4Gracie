@@ -854,7 +854,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           if (res && res.success) return res.users;
           return [];
       } else {
-          return allUsers; 
+          // Local filtering logic
+          return allUsers.filter(u => {
+              if (params.search) {
+                  const s = params.search.toLowerCase();
+                  if (!u.email.toLowerCase().includes(s) && !u.name.toLowerCase().includes(s)) return false;
+              }
+              if (params.hasPush === 'true' && !u.hasPushSubscription) return false;
+              return true;
+          }); 
       }
   }, [dataSource, allUsers, apiCall]);
 

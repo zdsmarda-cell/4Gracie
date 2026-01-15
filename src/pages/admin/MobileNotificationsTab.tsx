@@ -57,8 +57,8 @@ export const MobileNotificationsTab: React.FC = () => {
     const loadAllUsers = async () => {
         setIsUsersLoading(true);
         try {
-            // Fetch all users without filter first to do client-side filtering comfortably
-            const users = await searchUsers({ search: '' }); 
+            // Fetch users WITH PUSH SUBSCRIPTION
+            const users = await searchUsers({ search: '', hasPush: 'true' }); 
             setAllUsers(users);
         } catch(e) {
             console.error(e);
@@ -292,7 +292,7 @@ export const MobileNotificationsTab: React.FC = () => {
                                     </tr>
                                 ))}
                                 {filteredUsers.length === 0 && (
-                                    <tr><td colSpan={4} className="p-8 text-center text-gray-400">Žádní uživatelé neodpovídají filtru.</td></tr>
+                                    <tr><td colSpan={4} className="p-8 text-center text-gray-400">Žádní uživatelé s aktivní notifikací.</td></tr>
                                 )}
                             </tbody>
                         </table>

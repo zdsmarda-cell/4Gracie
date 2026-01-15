@@ -12,7 +12,7 @@ const hashPassword = (pwd) => `hashed_${Buffer.from(pwd).toString('base64')}`;
 
 // GET USERS (Protected)
 router.get('/', withDb(async (req, res, db) => {
-    const { search } = req.query;
+    const { search, hasPush } = req.query;
     
     // Updated query to check for push subscriptions
     let query = `
@@ -24,6 +24,12 @@ router.get('/', withDb(async (req, res, db) => {
     
     const params = [];
     if (search) { query += ' AND (u.email LIKE ? OR u.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+    
+    // Filter only users with active push subscription if requested
+    if (hasPush === 'true') {
+        query += ' AND (SELECT COUNT(*) FROM push_subscriptions ps WHERE ps.user_id = u.id) > 0';
+    }
+
     query += ' LIMIT 200'; // Increased limit for better selection in notifications tab
     
     const [rows] = await db.query(query, params);
@@ -160,7 +166,7 @@ router.post('/refresh-token', async (req, res) => {
         const newAccessToken = jwt.sign(
             { id: user.id, email: user.email, role: user.role },
             SECRET_KEY,
-            { expiresIn: '15m' }
+            { expiresIn: '15m' } 
         );
 
         res.json({ success: true, token: newAccessToken });
