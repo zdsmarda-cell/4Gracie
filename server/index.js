@@ -19,6 +19,7 @@ import bootstrapRoutes from './routes/bootstrap.js';
 import settingsRoutes from './routes/settings.js';
 import aiRoutes from './routes/ai.js';
 import statsRoutes from './routes/stats.js';
+import notificationRoutes from './routes/notifications.js'; // NEW
 
 // --- POLYFILLS FOR NODE.JS ENVIRONMENT (Required for jsPDF) ---
 if (typeof global.btoa === 'undefined') {
@@ -68,6 +69,7 @@ app.use('/api/admin', adminRoutes); // Upload & Import & Emails
 app.use('/api/admin', aiRoutes); // Translation (/translate)
 app.use('/api/admin/stats', statsRoutes); // Stats (/load)
 app.use('/api', settingsRoutes); // Settings, Discounts, Calendar
+app.use('/api/notifications', notificationRoutes); // NEW Push Notifications
 
 // --- INITIALIZATION ---
 const initDb = async () => {
@@ -95,6 +97,28 @@ const initDb = async () => {
             payload JSON,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             processed_at TIMESTAMP NULL
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
+        // PUSH SUBSCRIPTIONS TABLE
+        await db.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(50),
+            endpoint TEXT NOT NULL,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_endpoint (endpoint(255))
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
+        // NOTIFICATION HISTORY TABLE
+        await db.query(`CREATE TABLE IF NOT EXISTS notification_history (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            subject VARCHAR(255),
+            body TEXT,
+            recipient_count INT,
+            filters JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
         try { await db.query('SELECT full_json FROM products LIMIT 1'); } 

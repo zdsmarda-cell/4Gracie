@@ -10,7 +10,7 @@ import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar, Mail 
+    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar, Mail, Smartphone
 } from 'lucide-react';
 import { OrdersTab } from './admin/OrdersTab';
 import { UsersTab } from './admin/UsersTab';
@@ -26,6 +26,7 @@ import { LoadTab } from './admin/LoadTab';
 import { SettingsTab } from './admin/SettingsTab';
 import { EventsTab } from './admin/EventsTab';
 import { EmailsTab } from './admin/EmailsTab';
+import { MobileNotificationsTab } from './admin/MobileNotificationsTab';
 import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
@@ -73,7 +74,7 @@ export const Admin: React.FC = () => {
     const availableTabs = [
         'orders', 'users', 'load', 'products', 'categories', 
         'delivery', 'pickup', 'capacities', 'events', 'discounts', 
-        'packaging', 'operator', 'payments', 'emails', 'app_settings'
+        'packaging', 'operator', 'payments', 'emails', 'mobile_notifications', 'app_settings'
     ];
 
     if (isPreviewEnvironment) {
@@ -94,7 +95,8 @@ export const Admin: React.FC = () => {
                     {tab === 'app_settings' && <Settings size={12} className="mr-1"/>}
                     {tab === 'events' && <Calendar size={12} className="mr-1"/>}
                     {tab === 'emails' && <Mail size={12} className="mr-1"/>}
-                    {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : tab === 'emails' ? 'Emaily' : t(`admin.${tab}`)}
+                    {tab === 'mobile_notifications' && <Smartphone size={12} className="mr-1"/>}
+                    {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : tab === 'emails' ? 'Emaily' : tab === 'mobile_notifications' ? 'Mobilní Notifikace' : t(`admin.${tab}`)}
                     </button>
                 ))}
                 </div>
@@ -115,6 +117,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'payments' && <PaymentsTab />}
             {activeTab === 'app_settings' && <SettingsTab />}
             {activeTab === 'emails' && <EmailsTab initialRecipient={emailFilter} />}
+            {activeTab === 'mobile_notifications' && <MobileNotificationsTab />}
             {activeTab === 'load' && <LoadTab onNavigateToDate={handleNavigateToDate} />}
 
             {/* Inline Tabs (DB) */}

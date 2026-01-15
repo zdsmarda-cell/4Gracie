@@ -5,6 +5,7 @@ import { StoreProvider, useStore } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { AuthModal } from './components/AuthModal';
 import { CookieBanner } from './components/CookieBanner';
+import { PwaUpdater } from './components/PwaUpdater';
 import { Menu } from './pages/Menu';
 import { Cart } from './pages/Cart';
 import { Admin } from './pages/Admin';
@@ -252,6 +253,7 @@ const MainContent = () => {
             <Navbar />
             <NotificationToast />
             <CookieBanner />
+            <PwaUpdater /> 
             <GlobalLoadingSpinner />
             <AuthModal />
             <DeliveryRegionsModal isOpen={isRegionsModalOpen} onClose={() => setIsRegionsModalOpen(false)} />

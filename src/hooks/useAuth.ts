@@ -13,7 +13,8 @@ export const useAuth = (
     dataSource: DataSourceMode,
     apiCall: (endpoint: string, method: string, body?: any) => Promise<any>,
     showNotify: (msg: string, type?: 'success'|'error', autoClose?: boolean) => void,
-    fetchDataTrigger: () => Promise<void>
+    fetchDataTrigger: () => Promise<void>,
+    isPwa: boolean = false
 ) => {
     const [allUsers, setAllUsers] = useState<User[]>([]);
     const [user, setUser] = useState<User | null>(() => {
@@ -25,7 +26,8 @@ export const useAuth = (
 
     const login = async (email: string, password?: string) => {
         if (dataSource === 'api') {
-            const res = await apiCall('/api/users/login', 'POST', { email, password });
+            // Pass isPwa flag to server to request long-lived token
+            const res = await apiCall('/api/users/login', 'POST', { email, password, isPwa });
             if (res && res.success) {
                 setUser(res.user);
                 localStorage.setItem('session_user', JSON.stringify(res.user));

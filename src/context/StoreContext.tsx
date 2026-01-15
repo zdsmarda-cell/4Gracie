@@ -28,7 +28,7 @@ interface ValidateDiscountResult {
   error?: string;
 }
 
-export interface ImportResult {
+interface ImportResult {
   success: boolean;
   collisions?: string[];
   message?: string;
@@ -157,6 +157,13 @@ interface StoreContextType {
 
   cookieSettings: CookieSettings | null;
   saveCookieSettings: (settings: CookieSettings) => void;
+
+  // PWA Support
+  isPwaUpdateAvailable: boolean;
+  updatePwa: () => void;
+  pushSubscription: PushSubscription | null;
+  subscribeToPush: () => Promise<boolean>;
+  isPwa: boolean;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -183,10 +190,25 @@ const onTokenRefreshed = (token: string) => {
   refreshSubscribers = [];
 };
 
+// URL Base64 to Uint8Array converter for VAPID key
+const urlBase64ToUint8Array = (base64String: string) => {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+};
+
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // --- CORE STATE ---
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
-    // Safely access env
     // @ts-ignore
     const env = (import.meta as any).env;
     if (env && env.PROD) {
@@ -195,7 +217,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return (localStorage.getItem('app_data_source') as DataSourceMode) || 'local';
   });
   
-  // Safely access env.DEV to prevent crash
   // @ts-ignore
   const isPreviewEnvironment = (import.meta as any).env ? (import.meta as any).env.DEV : false;
 
@@ -206,6 +227,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
   const [cookieSettings, setCookieSettings] = useState<CookieSettings | null>(() => loadFromStorage('cookie_settings', null));
+
+  // PWA State
+  const [isPwaUpdateAvailable, setIsPwaUpdateAvailable] = useState(false);
+  const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
+  const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
+  // Simple detection of standalone mode
+  const isPwa = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
 
   // --- ENTITY STATES ---
   const [orders, setOrders] = useState<Order[]>(() => loadFromStorage('db_orders', MOCK_ORDERS));
@@ -238,6 +266,91 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type, autoClose });
   }, []);
 
+  // --- PWA LOGIC ---
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+        // Handle updates
+        navigator.serviceWorker.getRegistration().then(reg => {
+            if (reg) {
+                // If waiting worker exists, update is available
+                if (reg.waiting) {
+                    setWaitingWorker(reg.waiting);
+                    setIsPwaUpdateAvailable(true);
+                }
+                
+                // Monitor for future updates
+                reg.addEventListener('updatefound', () => {
+                    const newWorker = reg.installing;
+                    if (newWorker) {
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                setWaitingWorker(newWorker);
+                                setIsPwaUpdateAvailable(true);
+                            }
+                        });
+                    }
+                });
+
+                // Check existing push subscription
+                reg.pushManager.getSubscription().then(sub => {
+                    setPushSubscription(sub);
+                });
+            }
+        });
+
+        // Handle controller change (reload after update)
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!refreshing) {
+                refreshing = true;
+                window.location.reload();
+            }
+        });
+    }
+  }, []);
+
+  const updatePwa = () => {
+      if (waitingWorker) {
+          waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+      }
+  };
+
+  const subscribeToPush = async (): Promise<boolean> => {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          showNotify('Push notifikace nejsou podporovány tímto prohlížečem.', 'error');
+          return false;
+      }
+
+      try {
+          const reg = await navigator.serviceWorker.ready;
+          // @ts-ignore
+          const vapidKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
+          
+          if (!vapidKey) {
+              console.warn("VAPID Key missing in env");
+              return false;
+          }
+
+          const sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(vapidKey)
+          });
+
+          setPushSubscription(sub);
+
+          // Send to backend if connected
+          if (dataSource === 'api') {
+              await apiCall('/api/notifications/subscribe', 'POST', { subscription: sub });
+          }
+          
+          return true;
+      } catch (e) {
+          console.error("Push Subscribe Error:", e);
+          showNotify('Nepodařilo se povolit notifikace.', 'error');
+          return false;
+      }
+  };
+
   // --- API / FETCH LOGIC WITH REFRESH TOKEN ---
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any): Promise<any> => {
     const controller = new AbortController();
@@ -267,7 +380,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     try {
       let res: any = await Promise.race([makeRequest(token), timeoutPromise]);
 
-      // --- REFRESH TOKEN LOGIC START ---
       if (res.status === 401 || res.status === 403) {
           if (!isRefreshing) {
               isRefreshing = true;
@@ -275,7 +387,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               
               if (refreshToken) {
                   try {
-                      // Attempt to refresh
                       const refreshRes = await fetch(getFullApiUrl('/api/users/refresh-token'), {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
@@ -285,20 +396,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                       const refreshData = await refreshRes.json();
                       
                       if (refreshData.success && refreshData.token) {
-                          // Update token
                           localStorage.setItem('auth_token', refreshData.token);
                           onTokenRefreshed(refreshData.token);
                           isRefreshing = false;
-                          
-                          // Retry original request
                           res = await makeRequest(refreshData.token);
                       } else {
-                          // Refresh failed -> Logout
                           isRefreshing = false;
                           localStorage.removeItem('session_user');
                           localStorage.removeItem('auth_token');
                           localStorage.removeItem('refresh_token');
-                          // Force page reload or state update to reflect logout
                           window.location.reload(); 
                           throw new Error("Session expired. Please login again.");
                       }
@@ -311,22 +417,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                       throw e;
                   }
               } else {
-                  // No refresh token -> Logout
                   localStorage.removeItem('session_user');
                   localStorage.removeItem('auth_token');
                   window.location.reload(); 
                   throw new Error("Unauthorized");
               }
           } else {
-              // If already refreshing, wait for new token
               const newToken = await new Promise<string>((resolve) => {
                   subscribeTokenRefresh((token) => resolve(token));
               });
-              // Retry request with new token
               res = await makeRequest(newToken);
           }
       }
-      // --- REFRESH TOKEN LOGIC END ---
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -414,10 +516,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // --- SUB-HOOKS ---
   const { cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart } = useCart(showNotify);
   
+  // Pass isPwa flag to Auth hook for login adjustments
   const { 
       user, allUsers, setAllUsers, login, register, logout, addUser, updateUser, updateUserAdmin, 
       toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, INITIAL_USERS 
-  } = useAuth(dataSource, apiCall, showNotify, fetchData);
+  } = useAuth(dataSource, apiCall, showNotify, fetchData, isPwa);
+
+  // Sync Push Subscription if user logs in
+  useEffect(() => {
+      if (user && pushSubscription && dataSource === 'api') {
+          apiCall('/api/notifications/subscribe', 'POST', { subscription: pushSubscription });
+      }
+  }, [user, pushSubscription, dataSource, apiCall]);
 
   // --- SYNC AUTH DATA WITH MAIN FETCH ---
   useEffect(() => {
@@ -864,7 +974,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const generateInvoice = (o: Order) => `API_INVOICE_${o.id}`;
   
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
-      // Use Client-Side generator for immediate feedback in all modes
       await generateInvoicePdf(o, type, settings);
   };
   
@@ -910,7 +1019,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       t, tData, generateInvoice, printInvoice, generateCzIban, getImageUrl, uploadImage, getFullApiUrl,
       importDatabase, globalNotification, dismissNotification,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
-      cookieSettings, saveCookieSettings
+      cookieSettings, saveCookieSettings,
+      isPwaUpdateAvailable, updatePwa, pushSubscription, subscribeToPush, isPwa
     }}>
       {children}
     </StoreContext.Provider>

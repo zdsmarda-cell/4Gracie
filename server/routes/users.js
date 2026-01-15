@@ -47,7 +47,7 @@ router.post('/', withDb(async (req, res, db) => {
 
 // AUTH LOGIN - Generates Tokens
 router.post('/login', withDb(async (req, res, db) => {
-    const { email, password } = req.body;
+    const { email, password, isPwa } = req.body;
     const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
     
     if (rows.length > 0) {
@@ -62,6 +62,11 @@ router.post('/login', withDb(async (req, res, db) => {
             return res.json({ success: false, message: 'Účet je zablokován.' });
         }
 
+        // Token Expiration Logic
+        // Web: 24h refresh
+        // PWA: 1y refresh (permanent login)
+        const refreshExp = isPwa ? (365 * 24 * 60 * 60) : (24 * 60 * 60);
+
         // 1. Access Token (Short lived - 15 mins)
         const token = jwt.sign(
             { id: u.id, email: u.email, role: u.role }, 
@@ -69,11 +74,11 @@ router.post('/login', withDb(async (req, res, db) => {
             { expiresIn: '15m' } 
         );
 
-        // 2. Refresh Token (Long lived - 24 hours - acts as the session limit)
+        // 2. Refresh Token
         const refreshToken = jwt.sign(
             { id: u.id, email: u.email, role: u.role, type: 'refresh' },
             REFRESH_SECRET_KEY,
-            { expiresIn: '24h' }
+            { expiresIn: refreshExp }
         );
 
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
