@@ -446,11 +446,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
 
           const reg = await navigator.serviceWorker.ready;
+          
+          // Use direct access to ensure it's picked up by Vite's replacement
           // @ts-ignore
-          const vapidKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
+          const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
           
           if (!vapidKey) {
-              console.warn("VAPID Key missing in env");
+              console.warn("VAPID Key missing in env. Check .env file.");
+              // Fallback check in case of different build setup
+              // @ts-ignore
+              console.log("Debug VITE_VAPID_PUBLIC_KEY:", (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY);
               showNotify('Chyba konfigurace: Chybí VAPID klíč.', 'error');
               return false;
           }

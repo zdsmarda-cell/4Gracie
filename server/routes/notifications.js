@@ -6,17 +6,34 @@ import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Configure Web Push
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    webpush.setVapidDetails(
-        `mailto:${process.env.EMAIL_FROM || 'info@4gracie.cz'}`,
-        process.env.VAPID_PUBLIC_KEY,
-        process.env.VAPID_PRIVATE_KEY
-    );
-    console.log("✅ VAPID Keys configured for Push Notifications");
-} else {
-    console.warn("⚠️ VAPID keys missing. Push notifications will not work.");
-}
+let isWebPushConfigured = false;
+
+// Configure Web Push Function
+const configureWebPush = () => {
+    if (isWebPushConfigured) return true;
+    
+    if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+        try {
+            webpush.setVapidDetails(
+                `mailto:${process.env.EMAIL_FROM || 'info@4gracie.cz'}`,
+                process.env.VAPID_PUBLIC_KEY,
+                process.env.VAPID_PRIVATE_KEY
+            );
+            console.log("✅ VAPID Keys configured for Push Notifications");
+            isWebPushConfigured = true;
+            return true;
+        } catch (e) {
+            console.error("❌ Failed to configure VAPID:", e.message);
+            return false;
+        }
+    } else {
+        console.warn("⚠️ VAPID keys missing in env. Push notifications will not work.");
+        return false;
+    }
+};
+
+// Try configure immediately (will work if .env loaded correctly now)
+configureWebPush();
 
 // SUBSCRIBE (Logged in users or guests)
 router.post('/subscribe', withDb(async (req, res, db) => {
@@ -25,8 +42,7 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     
     // Attempt to identify user from token if present
     const authHeader = req.headers['authorization'];
-    // In a real app we decode token here or use middleware, but subscription is often public/guest initially
-    // We will trust the client to re-subscribe with auth header if they log in later, updating the user_id.
+    // In a real app we decode token here or use middleware
 
     if (!subscription || !subscription.endpoint) {
         return res.status(400).json({ error: 'Invalid subscription' });
@@ -82,10 +98,8 @@ router.get('/history', requireAdmin, withDb(async (req, res, db) => {
 
 // GET TARGET USERS COUNT (Admin Preview)
 router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
-    const { filters } = req.body; // { marketing: boolean, zips: string[] }
+    const { filters } = req.body; 
     
-    console.log("DEBUG Preview Filters:", JSON.stringify(filters));
-
     let query = `
         SELECT COUNT(DISTINCT s.endpoint) as cnt 
         FROM push_subscriptions s
@@ -99,32 +113,29 @@ router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
         query += ' AND u.marketing_consent = 1';
     }
 
-    // ZIP Filter Logic Check
     if (filters.zips && filters.zips.length > 0) {
-        // Only valid ZIPs
         const validZips = filters.zips.filter(z => z && z.trim().length > 0);
         if (validZips.length > 0) {
-            // Using OR logic to match if user has address with that zip OR no address info but matched by other criteria (actually, ZIP targeting implies we only want users WITH that zip)
             query += ' AND REPLACE(ua.zip, " ", "") IN (?)';
             params.push(validZips);
         }
     }
 
-    console.log("DEBUG Preview SQL:", query);
-    console.log("DEBUG Preview Params:", params);
-
     try {
         const [rows] = await db.query(query, params);
-        console.log("DEBUG Preview Result:", rows[0].cnt);
         res.json({ count: rows[0].cnt });
     } catch (e) {
-        console.error("DEBUG Preview Error:", e);
+        console.error("Preview Error:", e);
         res.status(500).json({ error: e.message });
     }
 }));
 
 // SEND NOTIFICATION (Admin)
 router.post('/send', requireAdmin, withDb(async (req, res, db) => {
+    if (!configureWebPush()) {
+        return res.status(500).json({ error: 'Server VAPID keys not configured' });
+    }
+
     const { subject, body, filters, forceAll } = req.body;
 
     // 1. Save History
@@ -173,7 +184,6 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
             .then(() => { successCount++; })
             .catch(err => {
                 if (err.statusCode === 410 || err.statusCode === 404) {
-                    // Subscription expired, remove from DB
                     db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
                 }
             });

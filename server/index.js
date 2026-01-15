@@ -1,7 +1,7 @@
 
+import 'dotenv/config'; // CRITICAL: Must be first import to load .env before other modules
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -19,7 +19,7 @@ import bootstrapRoutes from './routes/bootstrap.js';
 import settingsRoutes from './routes/settings.js';
 import aiRoutes from './routes/ai.js';
 import statsRoutes from './routes/stats.js';
-import notificationRoutes from './routes/notifications.js'; // NEW
+import notificationRoutes from './routes/notifications.js';
 
 // --- POLYFILLS FOR NODE.JS ENVIRONMENT (Required for jsPDF) ---
 if (typeof global.btoa === 'undefined') {
@@ -37,7 +37,6 @@ const __dirname = path.dirname(__filename);
 
 // --- CONFIG ---
 console.log("--- 4Gracie Server Startup ---");
-dotenv.config();
 
 // Check JWT Secret
 if (!process.env.JWT_SECRET) {
