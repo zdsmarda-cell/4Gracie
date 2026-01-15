@@ -110,13 +110,24 @@ const initDb = async () => {
             UNIQUE KEY unique_endpoint (endpoint(255))
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-        // NOTIFICATION HISTORY TABLE
+        // NOTIFICATION HISTORY TABLE (Aggregated campaigns)
         await db.query(`CREATE TABLE IF NOT EXISTS notification_history (
             id INT AUTO_INCREMENT PRIMARY KEY,
             subject VARCHAR(255),
             body TEXT,
             recipient_count INT,
             filters JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
+        // PUSH LOGS TABLE (Granular history per user)
+        await db.query(`CREATE TABLE IF NOT EXISTS push_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(50),
+            title VARCHAR(255),
+            body TEXT,
+            status ENUM('sent', 'error') DEFAULT 'sent',
+            error_message TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 

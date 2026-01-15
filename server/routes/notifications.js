@@ -2,9 +2,11 @@
 import express from 'express';
 import { withDb } from '../db.js';
 import webpush from 'web-push';
+import jwt from 'jsonwebtoken'; // Import JWT for decoding
 import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
+const SECRET_KEY = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod';
 
 let isWebPushConfigured = false;
 
@@ -32,7 +34,7 @@ const configureWebPush = () => {
     }
 };
 
-// Try configure immediately (will work if .env loaded correctly now)
+// Try configure immediately
 configureWebPush();
 
 // SUBSCRIBE (Logged in users or guests)
@@ -40,11 +42,20 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     const { subscription } = req.body;
     let userId = null;
     
-    // Attempt to identify user from token if present
+    // Extract User ID from Token
     const authHeader = req.headers['authorization'];
-    // In a real app we decode token here or use middleware
-    // We assume the user is logged in context on frontend, so we should actually check token here properly
-    // For now, we trust the flow, or we can use authenticateToken middleware if we want strict binding
+    if (authHeader) {
+        const token = authHeader.split(' ')[1];
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, SECRET_KEY);
+                userId = decoded.id;
+            } catch (err) {
+                // Token invalid or expired, proceed as anonymous or log warning
+                // console.warn("Push Subscribe: Invalid Token", err.message);
+            }
+        }
+    }
 
     if (!subscription || !subscription.endpoint) {
         return res.status(400).json({ error: 'Invalid subscription' });
@@ -78,16 +89,22 @@ router.post('/unsubscribe', withDb(async (req, res, db) => {
     }
 }));
 
-// GET HISTORY (Admin)
+// GET HISTORY (Admin) - GRANULAR LOGS
 router.get('/history', requireAdmin, withDb(async (req, res, db) => {
     const { page = 1, limit = 20 } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     
-    const [rows] = await db.query(
-        'SELECT * FROM notification_history ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    // Fetch granular logs joined with user info
+    const [rows] = await db.query(`
+        SELECT pl.*, u.name as user_name, u.email as user_email
+        FROM push_logs pl
+        LEFT JOIN users u ON pl.user_id = u.id
+        ORDER BY pl.created_at DESC 
+        LIMIT ? OFFSET ?`,
         [Number(limit), Number(offset)]
     );
-    const [count] = await db.query('SELECT COUNT(*) as t FROM notification_history');
+    
+    const [count] = await db.query('SELECT COUNT(*) as t FROM push_logs');
     
     res.json({ 
         success: true, 
@@ -132,7 +149,7 @@ router.post('/preview-count', requireAdmin, withDb(async (req, res, db) => {
     }
 }));
 
-// SEND NOTIFICATION (Admin)
+// SEND NOTIFICATION (Admin) - MODIFIED TO LOG TO PUSH_LOGS
 router.post('/send', requireAdmin, withDb(async (req, res, db) => {
     if (!configureWebPush()) {
         return res.status(500).json({ error: 'Server VAPID keys not configured' });
@@ -140,18 +157,9 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
 
     const { subject, body, filters, forceAll, targetUserIds } = req.body;
 
-    // 1. Save History
-    const [histResult] = await db.query(
-        'INSERT INTO notification_history (subject, body, filters, recipient_count) VALUES (?, ?, ?, 0)',
-        [subject, body, JSON.stringify(filters || { targetIds: targetUserIds ? targetUserIds.length : 0 })]
-    );
-    const historyId = histResult.insertId;
-
-    // 2. Fetch Recipients
-    // Logic: If targetUserIds provided, use them. Else use filters.
-    
+    // 1. Fetch Recipients
     let query = `
-        SELECT DISTINCT s.endpoint, s.p256dh, s.auth 
+        SELECT DISTINCT s.endpoint, s.p256dh, s.auth, s.user_id
         FROM push_subscriptions s
         LEFT JOIN users u ON s.user_id = u.id
         LEFT JOIN user_addresses ua ON u.id = ua.user_id
@@ -181,29 +189,44 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
         return res.json({ success: true, count: 0, message: 'No recipients found' });
     }
 
-    // 3. Send
+    // 2. Send and Log individually
     let successCount = 0;
     const payload = JSON.stringify({ title: subject, body: body, url: '/' });
 
-    const promises = subscriptions.map(sub => {
+    const promises = subscriptions.map(async (sub) => {
         const pushConfig = {
             endpoint: sub.endpoint,
             keys: { p256dh: sub.p256dh, auth: sub.auth }
         };
         
-        return webpush.sendNotification(pushConfig, payload)
-            .then(() => { successCount++; })
-            .catch(err => {
-                if (err.statusCode === 410 || err.statusCode === 404) {
-                    db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
-                }
-            });
+        try {
+            await webpush.sendNotification(pushConfig, payload);
+            successCount++;
+            // LOG SUCCESS
+            await db.query(
+                'INSERT INTO push_logs (user_id, title, body, status) VALUES (?, ?, ?, ?)',
+                [sub.user_id, subject, body, 'sent']
+            );
+        } catch (err) {
+            // LOG ERROR
+            await db.query(
+                'INSERT INTO push_logs (user_id, title, body, status, error_message) VALUES (?, ?, ?, ?, ?)',
+                [sub.user_id, subject, body, 'error', err.message || 'Send failed']
+            );
+
+            if (err.statusCode === 410 || err.statusCode === 404) {
+                await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
+            }
+        }
     });
 
     await Promise.all(promises);
 
-    // 4. Update History
-    await db.query('UPDATE notification_history SET recipient_count = ? WHERE id = ?', [successCount, historyId]);
+    // Optional: Keep aggregate history for quick stats if desired, but granular logs are primary now.
+    await db.query(
+        'INSERT INTO notification_history (subject, body, filters, recipient_count) VALUES (?, ?, ?, ?)',
+        [subject, body, JSON.stringify(filters || { targetIds: targetUserIds ? targetUserIds.length : 0 }), successCount]
+    );
 
     res.json({ success: true, count: successCount });
 }));

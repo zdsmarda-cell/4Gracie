@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Smartphone, Send, RotateCcw, Filter, Users, Loader2, CheckSquare, Square } from 'lucide-react';
+import { Smartphone, Send, RotateCcw, Filter, Users, Loader2, CheckSquare, Square, CheckCircle, AlertCircle, Clock, Redo } from 'lucide-react';
 import { Pagination } from '../../components/Pagination';
 import { User } from '../../types';
 
@@ -39,7 +39,7 @@ export const MobileNotificationsTab: React.FC = () => {
         setIsHistoryLoading(true);
         try {
             const token = localStorage.getItem('auth_token');
-            const res = await fetch(getFullApiUrl(`/api/notifications/history?page=${page}&limit=10`), {
+            const res = await fetch(getFullApiUrl(`/api/notifications/history?page=${page}&limit=20`), {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
@@ -161,11 +161,21 @@ export const MobileNotificationsTab: React.FC = () => {
         }
     };
 
-    const handleResend = async (notification: any) => {
-        if (!confirm('Opravdu znovu odeslat? (Budete moci upravit cílení)')) return;
-        setSubject(notification.subject);
-        setBody(notification.body);
-        window.scrollTo(0,0);
+    const handleResend = async (notificationLog: any) => {
+        if (!confirm('Opravdu znovu odeslat tomuto uživateli?')) return;
+        
+        // Populate form with content
+        setSubject(notificationLog.title);
+        setBody(notificationLog.body);
+        
+        // Select just this user if user_id exists
+        if (notificationLog.user_id) {
+            setSelectedUserIds(new Set([notificationLog.user_id]));
+            // Also ensure we are scrolled to top to see the form
+            window.scrollTo(0,0);
+        } else {
+            alert('Nelze automaticky vybrat uživatele (chybí ID). Prosím vyberte uživatele ručně.');
+        }
     };
 
     if (dataSource !== 'api') return <div className="p-8 text-center text-gray-400">Dostupné pouze s databází.</div>;
@@ -290,54 +300,75 @@ export const MobileNotificationsTab: React.FC = () => {
                 </div>
             </div>
 
-            {/* HISTORY */}
+            {/* HISTORY (Granular Logs) */}
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden mt-8">
                 <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
                     <h3 className="font-bold text-gray-700 flex items-center">
-                        <Smartphone className="mr-2" size={18}/> Historie odeslaných
+                        <Smartphone className="mr-2" size={18}/> Detailní historie odeslání
                     </h3>
                     <button onClick={loadHistory} className="p-2 hover:bg-gray-200 rounded-full"><RotateCcw size={16}/></button>
                 </div>
-                <table className="min-w-full divide-y">
-                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                        <tr>
-                            <th className="px-6 py-3 text-left">Datum</th>
-                            <th className="px-6 py-3 text-left">Předmět</th>
-                            <th className="px-6 py-3 text-left">Text</th>
-                            <th className="px-6 py-3 text-center">Příjemců</th>
-                            <th className="px-6 py-3 text-right">Akce</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y text-xs">
-                        {history.map(h => (
-                            <tr key={h.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-4 font-mono text-gray-500 whitespace-nowrap">
-                                    {new Date(h.created_at).toLocaleString()}
-                                </td>
-                                <td className="px-6 py-4 font-bold text-primary">{h.subject}</td>
-                                <td className="px-6 py-4 text-gray-600 max-w-md truncate">{h.body}</td>
-                                <td className="px-6 py-4 text-center">
-                                    <span className="bg-gray-100 px-2 py-1 rounded font-bold">{h.recipient_count}</span>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                    <button 
-                                        onClick={() => handleResend(h)} 
-                                        className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded font-bold transition"
-                                    >
-                                        Použít znovu
-                                    </button>
-                                </td>
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y">
+                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                            <tr>
+                                <th className="px-6 py-3 text-left">Datum</th>
+                                <th className="px-6 py-3 text-left">Uživatel</th>
+                                <th className="px-6 py-3 text-left">Email</th>
+                                <th className="px-6 py-3 text-left">Předmět</th>
+                                <th className="px-6 py-3 text-left">Zpráva</th>
+                                <th className="px-6 py-3 text-center">Stav</th>
+                                <th className="px-6 py-3 text-right">Akce</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y text-xs">
+                            {history.map(h => (
+                                <tr key={h.id} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 font-mono text-gray-500 whitespace-nowrap">
+                                        {new Date(h.created_at).toLocaleString()}
+                                    </td>
+                                    <td className="px-6 py-4 font-bold text-gray-800">
+                                        {h.user_name || 'Neznámý'}
+                                    </td>
+                                    <td className="px-6 py-4 text-gray-600">
+                                        {h.user_email || '-'}
+                                    </td>
+                                    <td className="px-6 py-4 font-bold text-primary">{h.title}</td>
+                                    <td className="px-6 py-4 text-gray-600 max-w-xs truncate" title={h.body}>{h.body}</td>
+                                    <td className="px-6 py-4 text-center">
+                                        {h.status === 'sent' ? (
+                                            <span className="flex items-center justify-center text-green-600 font-bold bg-green-50 px-2 py-1 rounded">
+                                                <CheckCircle size={12} className="mr-1"/> Odesláno
+                                            </span>
+                                        ) : (
+                                            <span className="flex items-center justify-center text-red-600 font-bold bg-red-50 px-2 py-1 rounded" title={h.error_message}>
+                                                <AlertCircle size={12} className="mr-1"/> Chyba
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4 text-right">
+                                        <button 
+                                            onClick={() => handleResend(h)} 
+                                            className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded font-bold transition flex items-center ml-auto"
+                                        >
+                                            <Redo size={12} className="mr-1"/> Znovu
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {history.length === 0 && (
+                                <tr><td colSpan={7} className="p-8 text-center text-gray-400">Žádná historie</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
                 <Pagination 
                     currentPage={page} 
                     totalPages={totalPages} 
                     onPageChange={setPage} 
-                    limit={10} 
+                    limit={20} 
                     onLimitChange={()=>{}} 
-                    totalItems={totalPages*10} 
+                    totalItems={totalPages*20} 
                 />
             </div>
         </div>
