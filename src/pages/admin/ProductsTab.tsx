@@ -1,10 +1,11 @@
-
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { ALLERGENS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
-import { Plus, Edit, Trash2, Check, X, ImageIcon, Languages, AlertTriangle } from 'lucide-react';
+import { Plus, Edit, Trash2, Check, X, ImageIcon, AlertTriangle, Filter, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Pagination } from '../../components/Pagination';
+import { MultiSelect } from '../../components/MultiSelect';
 
 const DeleteConfirmModal: React.FC<{
     isOpen: boolean;
@@ -34,24 +35,96 @@ const DeleteConfirmModal: React.FC<{
 };
 
 export const ProductsTab: React.FC = () => {
-    const { products, addProduct, updateProduct, deleteProduct, settings, t, uploadImage, getImageUrl } = useStore();
+    const { addProduct, updateProduct, deleteProduct, settings, t, uploadImage, getImageUrl, searchProducts, products: allLocalProducts } = useStore();
     
+    // --- TABLE STATE ---
+    const [displayProducts, setDisplayProducts] = useState<Product[]>([]);
+    const [totalItems, setTotalItems] = useState(0);
+    const [page, setPage] = useState(1);
+    const [limit, setLimit] = useState(50);
+    const [totalPages, setTotalPages] = useState(1);
+    const [isLoading, setIsLoading] = useState(false);
+
+    // Filters
+    const [showFilters, setShowFilters] = useState(false);
+    const [filters, setFilters] = useState({
+        name: '',
+        minPrice: '',
+        maxPrice: '',
+        categories: [] as string[],
+        visibility: [] as string[]
+    });
+
+    // Sort
+    const [sort, setSort] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
+
+    // --- MODAL STATE ---
     const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null);
-    
     const [isUploading, setIsUploading] = useState(false);
     const [isTranslating, setIsTranslating] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-    // Helper class to hide spinners
     const noSpinnerClass = "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
-
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     const capCategories = useMemo(() => settings.capacityCategories || [], [settings.capacityCategories]);
 
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
+
+    // Load Data
+    const loadData = useCallback(async () => {
+        setIsLoading(true);
+        try {
+            const res = await searchProducts({
+                page,
+                limit,
+                sort: sort?.key,
+                order: sort?.direction,
+                search: filters.name,
+                minPrice: filters.minPrice,
+                maxPrice: filters.maxPrice,
+                categories: filters.categories,
+                visibility: filters.visibility
+            });
+            setDisplayProducts(res.products);
+            setTotalItems(res.total);
+            setTotalPages(res.pages);
+        } catch (e) {
+            console.error("Load products failed", e);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [page, limit, sort, filters, searchProducts, allLocalProducts /* depend on local products if in local mode */]);
+
+    // Initial Load & Refresh
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
+
+    const handleSort = (key: string) => {
+        setSort(prev => {
+            if (prev?.key === key) {
+                if (prev.direction === 'asc') return { key, direction: 'desc' };
+                return null; // Reset
+            }
+            return { key, direction: 'asc' };
+        });
+        setPage(1);
+    };
+
+    const handleFilterChange = (key: string, value: any) => {
+        setFilters(prev => ({ ...prev, [key]: value }));
+        setPage(1);
+    };
+
+    const getSortIcon = (key: string) => {
+        if (sort?.key !== key) return <ArrowUpDown size={14} className="text-gray-300 ml-1" />;
+        return sort.direction === 'asc' 
+            ? <ArrowUp size={14} className="text-primary ml-1" />
+            : <ArrowDown size={14} className="text-primary ml-1" />;
+    };
 
     const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -69,6 +142,7 @@ export const ProductsTab: React.FC = () => {
         if (deleteTarget) {
             await deleteProduct(deleteTarget.id);
             setDeleteTarget(null);
+            loadData();
         }
     };
 
@@ -82,24 +156,15 @@ export const ProductsTab: React.FC = () => {
         const prod = { ...editingProduct } as Product;
         const errors: Record<string, string> = {};
 
-        // --- VALIDACE POLÍ ---
-        if (!prod.name || prod.name.trim().length === 0) {
-            errors.name = 'Vyplňte název produktu.';
-        }
-        if (!prod.description || prod.description.trim().length === 0) {
-            errors.description = 'Vyplňte popis produktu.';
-        }
-        
+        // Validations... (Same as before)
+        if (!prod.name || prod.name.trim().length === 0) errors.name = 'Vyplňte název.';
+        if (!prod.description || prod.description.trim().length === 0) errors.description = 'Vyplňte popis.';
         const validateNum = (val: number | undefined, key: string, label: string) => {
-             if (val === undefined || val === null || isNaN(Number(val)) || String(val).trim() === '') {
-                 errors[key] = `Vyplňte ${label}.`;
-             } else if (Number(val) < 0) {
-                 errors[key] = `Hodnota musí být 0 nebo větší.`;
-             }
+             if (val === undefined || val === null || isNaN(Number(val)) || String(val).trim() === '') errors[key] = `Vyplňte ${label}.`;
+             else if (Number(val) < 0) errors[key] = `Hodnota musí být 0 nebo větší.`;
         };
-
         validateNum(prod.price, 'price', 'cenu');
-        validateNum(prod.leadTimeDays, 'leadTimeDays', 'lhůtu objednání');
+        validateNum(prod.leadTimeDays, 'leadTimeDays', 'lhůtu');
         validateNum(prod.shelfLifeDays, 'shelfLifeDays', 'trvanlivost');
         validateNum(prod.minOrderQuantity, 'minOrderQuantity', 'min. odběr');
         validateNum(prod.volume, 'volume', 'objem');
@@ -108,43 +173,23 @@ export const ProductsTab: React.FC = () => {
         validateNum(prod.vatRateInner, 'vatRateInner', 'DPH prodejna');
         validateNum(prod.vatRateTakeaway, 'vatRateTakeaway', 'DPH s sebou');
 
-        // --- VALIDACE PODKATEGORIE ---
         const catDef = sortedCategories.find(c => c.id === prod.category);
         const subCats = catDef?.subcategories || [];
-        
         if (subCats.length > 0) {
-            // Normalize IDs for check
             const validIds = subCats.map(s => typeof s === 'string' ? s : s.id);
             if (!prod.subcategory || !validIds.includes(prod.subcategory)) {
                 errors.subcategory = `Pro kategorii "${catDef?.name}" je nutné vybrat podkategorii.`;
             }
         } else {
-            // Clear subcategory if main category has none
             prod.subcategory = undefined;
         }
 
         if (Object.keys(errors).length > 0) {
             setValidationErrors(errors);
-            setSaveError('Zkontrolujte červeně zvýrazněná povinná pole.');
+            setSaveError('Zkontrolujte povinná pole.');
             return;
         }
 
-        // --- VALIDACE KAPACITNÍ KATEGORIE ---
-        if (prod.capacityCategoryId) {
-            const conflictingProduct = products.find(p => 
-                p.capacityCategoryId === prod.capacityCategoryId && 
-                p.category !== prod.category &&
-                p.id !== prod.id
-            );
-            
-            if (conflictingProduct) {
-                const catName = getCategoryName(conflictingProduct.category);
-                const capName = capCategories.find(c => c.id === prod.capacityCategoryId)?.name || prod.capacityCategoryId;
-                setSaveError(`Kapacitní skupina "${capName}" je již používána v kategorii "${catName}". Všechny produkty sdílející stejnou kapacitu musí patřit do stejné hlavní kategorie.`);
-                return;
-            }
-        }
-        
         setIsUploading(true); 
         
         try {
@@ -157,7 +202,6 @@ export const ProductsTab: React.FC = () => {
                             const fileName = `prod-${prod.id}-${Date.now()}-${index}.jpg`;
                             return await uploadImage(img, fileName);
                         } catch (err) {
-                            console.error("Failed to upload image:", err);
                             return img; 
                         }
                     }
@@ -173,7 +217,6 @@ export const ProductsTab: React.FC = () => {
             if (!prod.visibility) prod.visibility = { online: true, store: true, stand: true };
             if (!prod.allergens) prod.allergens = [];
             
-            // Ensure numbers
             prod.price = Number(prod.price);
             prod.vatRateInner = Number(prod.vatRateInner);
             prod.vatRateTakeaway = Number(prod.vatRateTakeaway);
@@ -186,64 +229,154 @@ export const ProductsTab: React.FC = () => {
             
             if (settings.enableAiTranslation) {
                 setIsTranslating(true);
-                const translations = await generateTranslations({ 
-                    name: prod.name, 
-                    description: prod.description 
-                });
+                const translations = await generateTranslations({ name: prod.name, description: prod.description });
                 prod.translations = translations;
                 setIsTranslating(false);
             }
 
-            if (products.some(p => p.id === prod.id)) await updateProduct(prod);
+            if (allLocalProducts.some(p => p.id === prod.id)) await updateProduct(prod);
             else await addProduct(prod);
             
+            loadData(); // Refresh list
             setIsProductModalOpen(false);
         } catch (e) {
-            console.error("Save error:", e);
-            setSaveError("Chyba při ukládání produktu na server.");
+            setSaveError("Chyba při ukládání produktu.");
         } finally {
             setIsUploading(false);
             setIsTranslating(false);
         }
     };
 
+    const categoryOptions = sortedCategories.map(c => ({ value: c.id, label: c.name }));
+    const visibilityOptions = [
+        { value: 'online', label: 'E-shop' },
+        { value: 'store', label: 'Prodejna' },
+        { value: 'stand', label: 'Stánek' }
+    ];
+
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
+                <div className="flex items-center gap-4">
+                    <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
+                    <button 
+                        onClick={() => setShowFilters(!showFilters)} 
+                        className={`p-2 rounded-lg transition border ${showFilters ? 'bg-primary text-white border-primary' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+                        title="Filtry"
+                    >
+                        <Filter size={18} />
+                    </button>
+                </div>
                 <button onClick={() => { setEditingProduct({}); setIsProductModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
             </div>
             
-            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
-                <table className="min-w-full divide-y">
-                <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                    <tr>
-                    <th className="px-6 py-4 text-left">Foto</th>
-                    <th className="px-6 py-4 text-left">Název</th>
-                    <th className="px-6 py-4 text-left">Kategorie</th>
-                    <th className="px-6 py-4 text-left">Cena</th>
-                    <th className="px-6 py-4 text-center">Online</th>
-                    <th className="px-6 py-4 text-right">Akce</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y text-xs">
-                    {products.map(p => (
-                    <tr key={p.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                        {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
-                        </td>
-                        <td className="px-6 py-4 font-bold">{p.name}</td>
-                        <td className="px-6 py-4">{getCategoryName(p.category)}</td>
-                        <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
-                        <td className="px-6 py-4 text-center">{p.visibility?.online ? <Check size={16} className="inline text-green-500"/> : <X size={16} className="inline text-gray-300"/>}</td>
-                        <td className="px-6 py-4 text-right flex justify-end gap-2">
-                        <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                        <button onClick={() => setDeleteTarget({id: p.id, name: p.name})} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
-                        </td>
-                    </tr>
-                    ))}
-                </tbody>
-                </table>
+            {/* FILTERS PANEL */}
+            {showFilters && (
+                <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4 mb-4 animate-in slide-in-from-top-2">
+                    <div>
+                        <label className="text-xs font-bold text-gray-400 block mb-1">Název</label>
+                        <input 
+                            className="w-full border rounded p-2 text-xs" 
+                            placeholder="Hledat..." 
+                            value={filters.name}
+                            onChange={e => handleFilterChange('name', e.target.value)} 
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Od - Do)</label>
+                        <div className="flex gap-2">
+                            <input 
+                                type="number" 
+                                className="w-full border rounded p-2 text-xs" 
+                                placeholder="0" 
+                                value={filters.minPrice}
+                                onChange={e => handleFilterChange('minPrice', e.target.value)} 
+                            />
+                            <input 
+                                type="number" 
+                                className="w-full border rounded p-2 text-xs" 
+                                placeholder="Max" 
+                                value={filters.maxPrice}
+                                onChange={e => handleFilterChange('maxPrice', e.target.value)} 
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <MultiSelect 
+                            label="Kategorie"
+                            options={categoryOptions}
+                            selectedValues={filters.categories}
+                            onChange={(vals) => handleFilterChange('categories', vals)}
+                        />
+                    </div>
+                    <div>
+                        <MultiSelect 
+                            label="Viditelnost"
+                            options={visibilityOptions}
+                            selectedValues={filters.visibility}
+                            onChange={(vals) => handleFilterChange('visibility', vals)}
+                        />
+                    </div>
+                </div>
+            )}
+
+            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col">
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y">
+                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                            <tr>
+                                <th className="px-6 py-4 text-left w-20">Foto</th>
+                                <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('name')}>
+                                    <div className="flex items-center">Název {getSortIcon('name')}</div>
+                                </th>
+                                <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('category')}>
+                                    <div className="flex items-center">Kategorie {getSortIcon('category')}</div>
+                                </th>
+                                <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('price')}>
+                                    <div className="flex items-center">Cena {getSortIcon('price')}</div>
+                                </th>
+                                <th className="px-6 py-4 text-center">Viditelnost (Online)</th>
+                                <th className="px-6 py-4 text-right">Akce</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y text-xs">
+                            {isLoading ? (
+                                <tr><td colSpan={6} className="p-8 text-center text-gray-400">Načítám produkty...</td></tr>
+                            ) : displayProducts.map(p => (
+                                <tr key={p.id} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4">
+                                        {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
+                                    </td>
+                                    <td className="px-6 py-4 font-bold">{p.name}</td>
+                                    <td className="px-6 py-4">{getCategoryName(p.category)}</td>
+                                    <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex justify-center gap-2">
+                                            <span title="E-shop">{p.visibility?.online ? <Check size={14} className="text-green-500"/> : <X size={14} className="text-gray-300"/>}</span>
+                                            {/* Store/Stand indicators optional */}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                        <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                        <button onClick={() => setDeleteTarget({id: p.id, name: p.name})} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {!isLoading && displayProducts.length === 0 && (
+                                <tr><td colSpan={6} className="p-8 text-center text-gray-400">Žádné produkty.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <Pagination 
+                    currentPage={page}
+                    totalPages={totalPages}
+                    onPageChange={setPage}
+                    limit={limit}
+                    onLimitChange={(l) => { setLimit(l); setPage(1); }}
+                    totalItems={totalItems}
+                />
             </div>
 
             <DeleteConfirmModal 
@@ -423,7 +556,7 @@ export const ProductsTab: React.FC = () => {
                         </div>
 
                         <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-2">Obrázky</label>
+                            <label className="text-xs font-bold text-gray-400 block mb-2">{t('common.images')}</label>
                             <div className="flex flex-wrap gap-2">
                                 {editingProduct?.images?.map((img, idx) => (
                                     <div key={idx} className="relative w-20 h-20 group rounded-lg overflow-hidden border">

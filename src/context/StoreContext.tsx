@@ -52,6 +52,13 @@ interface RegionDateInfo {
   reason?: string;
 }
 
+export interface ProductsSearchResult {
+    products: Product[];
+    total: number;
+    page: number;
+    pages: number;
+}
+
 export type DataSourceMode = 'local' | 'api';
 
 interface GlobalNotification {
@@ -104,6 +111,7 @@ interface StoreContextType {
   addProduct: (product: Product) => Promise<boolean>;
   updateProduct: (product: Product) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
+  searchProducts: (params: any) => Promise<ProductsSearchResult>;
   
   discountCodes: DiscountCode[];
   appliedDiscounts: AppliedDiscount[];
@@ -952,6 +960,77 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  // SEARCH PRODUCTS (Server-side compatible)
+  const searchProducts = useCallback(async (params: any): Promise<ProductsSearchResult> => {
+      if (dataSource === 'api') {
+          // Flatten arrays for query string
+          const queryParams = new URLSearchParams();
+          Object.keys(params).forEach(key => {
+              if (Array.isArray(params[key])) {
+                  params[key].forEach((v: string) => queryParams.append(key, v));
+              } else if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+                  queryParams.append(key, String(params[key]));
+              }
+          });
+          
+          const res = await apiCall(`/api/products?${queryParams.toString()}`, 'GET');
+          if (res && res.success) {
+              return { products: res.products, total: res.total, page: res.page, pages: res.pages };
+          }
+          return { products: [], total: 0, page: 1, pages: 1 };
+      } else {
+          // Local Filtering
+          let result = [...products];
+          
+          // Search
+          if (params.search) {
+              const term = params.search.toLowerCase();
+              result = result.filter(p => p.name.toLowerCase().includes(term));
+          }
+          
+          // Price
+          if (params.minPrice) result = result.filter(p => p.price >= Number(params.minPrice));
+          if (params.maxPrice) result = result.filter(p => p.price <= Number(params.maxPrice));
+          
+          // Categories
+          if (params.categories && params.categories.length > 0) {
+              result = result.filter(p => params.categories.includes(p.category));
+          }
+          
+          // Visibility
+          if (params.visibility && params.visibility.length > 0) {
+              result = result.filter(p => {
+                  if (params.visibility.includes('online') && p.visibility.online) return true;
+                  if (params.visibility.includes('store') && p.visibility.store) return true;
+                  if (params.visibility.includes('stand') && p.visibility.stand) return true;
+                  return false;
+              });
+          }
+          
+          // Sort
+          if (params.sort) {
+              result.sort((a: any, b: any) => {
+                  let valA = a[params.sort];
+                  let valB = b[params.sort];
+                  
+                  if (typeof valA === 'string') valA = valA.toLowerCase();
+                  if (typeof valB === 'string') valB = valB.toLowerCase();
+                  
+                  if (valA < valB) return params.order === 'asc' ? -1 : 1;
+                  if (valA > valB) return params.order === 'asc' ? 1 : -1;
+                  return 0;
+              });
+          }
+          
+          const limit = Number(params.limit) || 50;
+          const page = Number(params.page) || 1;
+          const start = (page - 1) * limit;
+          const paged = result.slice(start, start + limit);
+          
+          return { products: paged, total: result.length, page, pages: Math.ceil(result.length / limit) };
+      }
+  }, [dataSource, products, apiCall]);
+
   // Settings & Configs
   const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
     if (dataSource === 'api') {
@@ -1142,7 +1221,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration, searchOrders, searchUsers,
-      products, addProduct, updateProduct, deleteProduct,
+      products, addProduct, updateProduct, deleteProduct, searchProducts,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, 
       updateEventSlot, removeEventSlot, notifyEventSubscribers, getAvailableEventDates, isEventCapacityAvailable,
