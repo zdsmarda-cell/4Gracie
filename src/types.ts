@@ -1,4 +1,3 @@
-
 export interface RideStep {
   orderId: string;
   type: 'pickup' | 'delivery';

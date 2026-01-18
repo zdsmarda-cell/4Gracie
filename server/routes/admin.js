@@ -5,7 +5,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { sendEventNotification } from '../services/email.js';
-import { requireAdmin } from '../middleware/auth.js'; // Import middleware
+import { requireAdmin } from '../middleware/auth.js'; 
+import { processImage } from '../services/imageProcessor.js'; // NEW
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -29,6 +30,11 @@ router.post('/upload', requireAdmin, async (req, res) => {
     
     try { 
         fs.writeFileSync(fullPath, buffer);
+        
+        // --- NEW: Generate Optimized Variants ---
+        // Fire and forget - don't block the response for optimization
+        processImage(buffer, fileName).catch(err => console.error("Optimization failed:", err));
+
         console.log(`✅ Image saved: ${fullPath}`);
         res.json({ success: true, url: `/api/uploads/images/${fileName}` }); 
     } catch (err) { 

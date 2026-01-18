@@ -40,9 +40,10 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
         title="Kliknutím zvětšíte"
       >
         <img 
-          src={getImageUrl(product.images[currentIndex])} 
+          src={getImageUrl(product.images[currentIndex], 'medium')} 
           alt={product.name} 
           className="w-full h-full object-cover transition duration-500 group-hover/gallery:scale-105" 
+          loading="lazy"
         />
         
         {/* Zoom Hint Icon */}
@@ -83,7 +84,7 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
         )}
       </div>
 
-      {/* Lightbox Modal */}
+      {/* Lightbox Modal - Uses Original Quality */}
       {isZoomed && (
         <div 
           className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
@@ -98,7 +99,7 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
           
           <div className="relative max-w-full max-h-full flex items-center justify-center animate-in zoom-in duration-300">
              <img 
-              src={getImageUrl(product.images[currentIndex])} 
+              src={getImageUrl(product.images[currentIndex], 'original')} 
               alt={product.name} 
               className="max-w-[90vw] max-h-[85vh] object-contain shadow-2xl rounded"
               onClick={(e) => e.stopPropagation()}
