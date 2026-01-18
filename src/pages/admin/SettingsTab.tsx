@@ -2,7 +2,7 @@
 import React from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Language } from '../../types';
-import { Settings as SettingsIcon, Languages, Wand2, Server, Terminal } from 'lucide-react';
+import { Settings as SettingsIcon, Languages, Wand2, Server, Terminal, Clock, Truck } from 'lucide-react';
 
 export const SettingsTab: React.FC = () => {
     const { settings, updateSettings, t } = useStore();
@@ -37,12 +37,59 @@ export const SettingsTab: React.FC = () => {
     };
 
     return (
-        <div className="animate-fade-in max-w-2xl bg-white p-8 rounded-2xl border shadow-sm">
+        <div className="animate-fade-in max-w-4xl bg-white p-8 rounded-2xl border shadow-sm">
             <h2 className="text-xl font-bold mb-6 flex items-center">
                 <SettingsIcon className="mr-2 text-accent" /> {t('admin.app_settings')}
             </h2>
 
             <div className="space-y-8">
+                
+                {/* Logistics Section */}
+                <div className="bg-gray-50 p-6 rounded-xl border border-gray-100">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
+                        <Truck size={20} className="mr-2 text-green-600" />
+                        {t('admin.logistics_settings')}
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Doba jedné zastávky (min)</label>
+                            <input 
+                                type="number" 
+                                className="w-full border rounded p-2 text-sm" 
+                                value={settings.logistics?.stopTimeMinutes}
+                                onChange={e => updateSettings({ ...settings, logistics: { ...settings.logistics, stopTimeMinutes: Number(e.target.value) } })}
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Čas naložení 1 ks na depu (sec)</label>
+                            <input 
+                                type="number" 
+                                className="w-full border rounded p-2 text-sm" 
+                                value={settings.logistics?.loadingSecondsPerItem}
+                                onChange={e => updateSettings({ ...settings, logistics: { ...settings.logistics, loadingSecondsPerItem: Number(e.target.value) } })}
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Doba vykládky - Zaplaceno (sec)</label>
+                            <input 
+                                type="number" 
+                                className="w-full border rounded p-2 text-sm" 
+                                value={settings.logistics?.unloadingPaidSeconds}
+                                onChange={e => updateSettings({ ...settings, logistics: { ...settings.logistics, unloadingPaidSeconds: Number(e.target.value) } })}
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Doba vykládky - Dobírka (sec)</label>
+                            <input 
+                                type="number" 
+                                className="w-full border rounded p-2 text-sm" 
+                                value={settings.logistics?.unloadingUnpaidSeconds}
+                                onChange={e => updateSettings({ ...settings, logistics: { ...settings.logistics, unloadingUnpaidSeconds: Number(e.target.value) } })}
+                            />
+                        </div>
+                    </div>
+                </div>
+
                 {/* Language Section */}
                 <div className="bg-gray-50 p-6 rounded-xl border border-gray-100">
                     <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center">

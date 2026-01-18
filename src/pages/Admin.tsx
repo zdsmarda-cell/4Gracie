@@ -10,7 +10,7 @@ import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar, Mail, Smartphone
+    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar, Mail, Smartphone, Map
 } from 'lucide-react';
 import { OrdersTab } from './admin/OrdersTab';
 import { UsersTab } from './admin/UsersTab';
@@ -27,6 +27,7 @@ import { SettingsTab } from './admin/SettingsTab';
 import { EventsTab } from './admin/EventsTab';
 import { EmailsTab } from './admin/EmailsTab';
 import { MobileNotificationsTab } from './admin/MobileNotificationsTab';
+import { RidesTab } from './admin/RidesTab'; // Import
 import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
@@ -34,18 +35,14 @@ export const Admin: React.FC = () => {
         dataSource, setDataSource, t, isPreviewEnvironment, user
     } = useStore();
 
-    // Guard Clause: Redirect if not logged in or not admin
     if (!user || user.role !== 'admin') {
         return <Navigate to="/" replace />;
     }
 
     const [activeTab, setActiveTab] = useState('orders');
     
-    // Navigation State for Orders
     const [filterDate, setFilterDate] = useState<string | null>(null);
     const [filterEventOnly, setFilterEventOnly] = useState(false);
-
-    // Navigation State for Emails
     const [emailFilter, setEmailFilter] = useState<string | null>(null);
 
     const handleNavigateToDate = (date: string) => {
@@ -70,9 +67,8 @@ export const Admin: React.FC = () => {
         setFilterEventOnly(false);
     };
 
-    // Determine available tabs
     const availableTabs = [
-        'orders', 'users', 'load', 'products', 'categories', 
+        'orders', 'rides', 'users', 'load', 'products', 'categories', // Rides added
         'delivery', 'pickup', 'capacities', 'events', 'discounts', 
         'packaging', 'operator', 'payments', 'emails', 'mobile_notifications', 'app_settings'
     ];
@@ -96,7 +92,8 @@ export const Admin: React.FC = () => {
                     {tab === 'events' && <Calendar size={12} className="mr-1"/>}
                     {tab === 'emails' && <Mail size={12} className="mr-1"/>}
                     {tab === 'mobile_notifications' && <Smartphone size={12} className="mr-1"/>}
-                    {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : tab === 'emails' ? 'Emaily' : tab === 'mobile_notifications' ? 'Mobilní Notifikace' : t(`admin.${tab}`)}
+                    {tab === 'rides' && <Map size={12} className="mr-1"/>}
+                    {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : tab === 'emails' ? 'Emaily' : tab === 'mobile_notifications' ? 'Mobilní Notifikace' : tab === 'rides' ? t('admin.rides') : t(`admin.${tab}`)}
                     </button>
                 ))}
                 </div>
@@ -104,6 +101,7 @@ export const Admin: React.FC = () => {
 
             {/* Modular Tabs */}
             {activeTab === 'orders' && <OrdersTab initialDate={filterDate} initialEventOnly={filterEventOnly} onClearFilters={clearFilters} />}
+            {activeTab === 'rides' && <RidesTab />}
             {activeTab === 'users' && <UsersTab onNavigateToEmails={handleNavigateToEmails} />}
             {activeTab === 'products' && <ProductsTab />}
             {activeTab === 'discounts' && <DiscountsTab />}

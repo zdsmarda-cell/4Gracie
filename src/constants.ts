@@ -105,7 +105,7 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     [ProductCategory.DESSERT]: 500,
     [ProductCategory.DRINK]: 5000
   },
-  eventSlots: [], // DEFAULT EMPTY
+  eventSlots: [], 
   companyDetails: {
     name: '4Gracie s.r.o.',
     ic: '12345678',
@@ -146,6 +146,12 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     ],
     freeFrom: 5000
   },
+  logistics: {
+    stopTimeMinutes: 5,
+    loadingSecondsPerItem: 30,
+    unloadingPaidSeconds: 120, // 2 mins
+    unloadingUnpaidSeconds: 300 // 5 mins
+  },
   enabledLanguages: [Language.CS, Language.EN, Language.DE],
   enableAiTranslation: true,
   sqlDebug: false,
@@ -177,6 +183,12 @@ export const EMPTY_SETTINGS: GlobalSettings = {
   packaging: {
     types: [],
     freeFrom: 0
+  },
+  logistics: {
+    stopTimeMinutes: 5,
+    loadingSecondsPerItem: 30,
+    unloadingPaidSeconds: 120,
+    unloadingUnpaidSeconds: 300
   },
   enabledLanguages: [],
   enableAiTranslation: false,
@@ -214,4 +226,82 @@ export const MOCK_ORDERS: Order[] = [
     language: Language.CS,
     note: 'Prosím doručit do 12:00'
   },
+  // Added Mock Orders for Route Planning
+  {
+    id: 'ord-12346',
+    userId: 'u1',
+    userName: 'Firma ABC s.r.o.',
+    items: [ { ...PRODUCTS[0], quantity: 5 } ],
+    totalPrice: 3250,
+    packagingFee: 0,
+    deliveryFee: 150,
+    deliveryType: DeliveryType.DELIVERY,
+    deliveryDate: '2025-11-15',
+    deliveryName: 'Firma ABC',
+    deliveryStreet: 'Karlovo náměstí 10',
+    deliveryCity: 'Praha 2',
+    deliveryZip: '12000',
+    deliveryPhone: '+420 777 111 222',
+    billingName: 'Firma ABC',
+    billingStreet: 'Karlovo náměstí 10',
+    billingCity: 'Praha 2',
+    billingZip: '12000',
+    status: OrderStatus.CONFIRMED,
+    isPaid: true,
+    paymentMethod: PaymentMethod.GATEWAY,
+    createdAt: '2025-01-11T09:00:00Z',
+    language: Language.CS,
+    note: 'Vrátnice vlevo'
+  },
+  {
+    id: 'ord-12347',
+    userId: 'u1',
+    userName: 'Petr Svoboda',
+    items: [ { ...PRODUCTS[1], quantity: 20 } ],
+    totalPrice: 900,
+    packagingFee: 15,
+    deliveryFee: 150,
+    deliveryType: DeliveryType.DELIVERY,
+    deliveryDate: '2025-11-15',
+    deliveryName: 'Petr Svoboda',
+    deliveryStreet: 'Národní 20',
+    deliveryCity: 'Praha 1',
+    deliveryZip: '11000',
+    deliveryPhone: '+420 608 333 444',
+    billingName: 'Petr Svoboda',
+    billingStreet: 'Národní 20',
+    billingCity: 'Praha 1',
+    billingZip: '11000',
+    status: OrderStatus.CONFIRMED,
+    isPaid: false,
+    paymentMethod: PaymentMethod.CASH,
+    createdAt: '2025-01-11T10:30:00Z',
+    language: Language.CS,
+    note: 'Volat předem'
+  },
+  {
+    id: 'ord-12348',
+    userId: 'u1',
+    userName: 'Eva Dvořáková',
+    items: [ { ...PRODUCTS[2], quantity: 2 } ],
+    totalPrice: 1780,
+    packagingFee: 35,
+    deliveryFee: 150,
+    deliveryType: DeliveryType.DELIVERY,
+    deliveryDate: '2025-11-15',
+    deliveryName: 'Eva Dvořáková',
+    deliveryStreet: 'Vodičkova 30',
+    deliveryCity: 'Praha 1',
+    deliveryZip: '11000',
+    deliveryPhone: '+420 721 555 666',
+    billingName: 'Eva Dvořáková',
+    billingStreet: 'Vodičkova 30',
+    billingCity: 'Praha 1',
+    billingZip: '11000',
+    status: OrderStatus.PREPARING,
+    isPaid: true,
+    paymentMethod: PaymentMethod.QR,
+    createdAt: '2025-01-11T11:00:00Z',
+    language: Language.CS
+  }
 ];

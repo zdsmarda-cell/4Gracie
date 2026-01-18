@@ -6,7 +6,8 @@ const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
 
 const INITIAL_USERS: User[] = [
   { id: 'admin1', name: 'Admin User', email: 'info@4gracie.cz', phone: '+420123456789', role: 'admin', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') },
-  { id: 'user1', name: 'Jan Novák', email: 'jan.novak@example.com', phone: '+420987654321', role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: true }
+  { id: 'user1', name: 'Jan Novák', email: 'jan.novak@example.com', phone: '+420987654321', role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: true },
+  { id: 'driver1', name: 'Petr Řidič', email: 'ridic@4gracie.cz', phone: '+420777888999', role: 'driver', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') }
 ];
 
 export const useAuth = (

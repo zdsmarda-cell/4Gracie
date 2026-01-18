@@ -1,8 +1,9 @@
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Order, GlobalSettings } from '../types';
+import { Order, GlobalSettings, Ride, Product } from '../types';
 import { formatDate, calculateCzIban } from './helpers';
+import { calculatePackageCountLogic } from './orderLogic'; // Import logic
 
 // Helper to load font as Base64 for jsPDF (Browser version)
 const fetchFont = async (url: string): Promise<string> => {
@@ -24,7 +25,6 @@ const fetchFont = async (url: string): Promise<string> => {
 export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final' = 'proforma', settings: GlobalSettings) => {
     const doc = new jsPDF();
     
-    // --- 1. LOAD FONTS (Roboto for Diacritics) ---
     try {
         const regularBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
         const mediumBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
@@ -40,7 +40,6 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
         console.error("Font loading failed, falling back to default (diacritics may fail):", e);
     }
 
-    // --- 2. PREPARE DATA ---
     let comp = type === 'final' 
         ? (order.deliveryCompanyDetailsSnapshot || order.companyDetailsSnapshot || settings.companyDetails) 
         : (order.companyDetailsSnapshot || settings.companyDetails);
@@ -53,14 +52,12 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
         ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" 
         : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
     
-    // Use finalInvoiceDate for final invoices if available, otherwise createdAt
     const dateToUse = type === 'final' 
         ? (order.finalInvoiceDate || new Date().toISOString()) 
         : order.createdAt;
 
     const brandColor: [number, number, number] = [147, 51, 234]; // Purple #9333ea
 
-    // --- 3. HEADER ---
     doc.setTextColor(...brandColor);
     doc.setFont("Roboto", "bold");
     doc.setFontSize(20);
@@ -76,7 +73,6 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
         doc.text(`Datum zdan. plnění: ${formatDate(dateToUse)}`, 105, 40, { align: "center" });
     }
 
-    // --- 4. SUPPLIER / CUSTOMER ---
     doc.setFontSize(11);
     doc.setFont("Roboto", "bold");
     doc.text("DODAVATEL:", 14, 55);
@@ -102,14 +98,12 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
     if (order.billingIc) { doc.text(`IČ: ${order.billingIc}`, 110, yPos); yPos += 5; }
     if (order.billingDic) { doc.text(`DIČ: ${order.billingDic}`, 110, yPos); yPos += 5; }
 
-    // --- 5. CALCULATIONS ---
     const getBase = (priceWithVat: number, rate: number) => priceWithVat / (1 + rate / 100);
     const getVat = (priceWithVat: number, rate: number) => priceWithVat - getBase(priceWithVat, rate);
 
     const itemsGrossTotalsByRate: Record<number, number> = {};
     const feesGrossTotalsByRate: Record<number, number> = {};
     
-    // Group ITEMS totals by rate
     order.items.forEach(item => {
         const rate = Number(item.vatRateTakeaway || 0);
         itemsGrossTotalsByRate[rate] = (itemsGrossTotalsByRate[rate] || 0) + (item.price * item.quantity);
@@ -117,22 +111,18 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
 
     let maxVatRate = 0;
     Object.keys(itemsGrossTotalsByRate).forEach(k => { if(Number(k) > maxVatRate) maxVatRate = Number(k); });
-    const feeVatRate = maxVatRate > 0 ? maxVatRate : 21; // Fallback VAT for fees if no items
+    const feeVatRate = maxVatRate > 0 ? maxVatRate : 21; 
 
-    // Group FEES totals by rate
     if (order.packagingFee > 0) feesGrossTotalsByRate[feeVatRate] = (feesGrossTotalsByRate[feeVatRate] || 0) + order.packagingFee;
     if (order.deliveryFee > 0) feesGrossTotalsByRate[feeVatRate] = (feesGrossTotalsByRate[feeVatRate] || 0) + order.deliveryFee;
 
     const grandItemsTotal = Object.values(itemsGrossTotalsByRate).reduce((a, b) => a + b, 0);
     const totalDiscount = order.appliedDiscounts?.reduce((a, b) => a + b.amount, 0) || 0;
-    
-    // Discount ratio applies ONLY to items
     const discountRatio = grandItemsTotal > 0 ? (totalDiscount / grandItemsTotal) : 0;
 
     const tableBody: any[] = [];
     const taxSummary: Record<number, { total: number, base: number, vat: number }> = {};
 
-    // Helper to merge into tax summary
     const addToTaxSummary = (rate: number, total: number) => {
         if (!taxSummary[rate]) taxSummary[rate] = { total: 0, base: 0, vat: 0 };
         const base = getBase(total, rate);
@@ -142,22 +132,19 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
         taxSummary[rate].vat += vat;
     };
 
-    // 1. Process ITEMS (affected by discount)
     Object.keys(itemsGrossTotalsByRate).forEach(k => {
         const r = Number(k);
         const gross = itemsGrossTotalsByRate[r];
-        const netAtRate = gross * (1 - discountRatio); // Reduce item base by discount ratio
+        const netAtRate = gross * (1 - discountRatio); 
         addToTaxSummary(r, netAtRate);
     });
 
-    // 2. Process FEES (FULL price, NOT affected by discount)
     Object.keys(feesGrossTotalsByRate).forEach(k => {
         const r = Number(k);
         const gross = feesGrossTotalsByRate[r];
         addToTaxSummary(r, gross);
     });
 
-    // Items table rows
     order.items.forEach(item => {
         const lineTotal = item.price * item.quantity;
         const rate = Number(item.vatRateTakeaway || 0);
@@ -192,7 +179,6 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
         tableBody.push(row);
     });
 
-    // --- 6. TABLE GENERATION ---
     const head = isVatPayer 
         ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem s DPH']]
         : [['Položka', 'Ks', 'Cena/ks', 'Celkem']];
@@ -214,7 +200,6 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
 
     let finalY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : 150;
 
-    // --- 7. VAT RECAP TABLE ---
     if (isVatPayer) {
         doc.setFontSize(10);
         doc.setFont("Roboto", "bold");
@@ -241,8 +226,6 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
         } else { finalY += 5; }
     }
 
-    // --- 8. TOTALS & FOOTER ---
-    // Total = (Items - Discount) + Fees. Ensure result is not negative.
     const grandTotal = Math.max(0, grandItemsTotal - totalDiscount) + (order.packagingFee || 0) + (order.deliveryFee || 0);
     
     doc.setFont("Roboto", "bold");
@@ -264,8 +247,7 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
               const qrString = `SPD*1.0*ACC:${iban}${bic}*AM:${grandTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:OBJ${order.id}`;
               const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
               
-              // Load QR
-              const base64QR = await fetchFont(qrUrl); // Reusing fetchFont as generic fetch-to-base64
+              const base64QR = await fetchFont(qrUrl);
               
               doc.addImage(base64QR, "PNG", 150, finalY + 10, 40, 40);
               doc.setFontSize(8);
@@ -275,4 +257,124 @@ export const generateInvoicePdf = async (order: Order, type: 'proforma' | 'final
     }
 
     doc.save(`faktura_${order.id}_${type}.pdf`);
+};
+
+export const generateRouteSheetPdf = async (
+    ride: Ride, 
+    driverName: string, 
+    products: Product[], // Needed to calculate volumes
+    settings: GlobalSettings // Needed for packaging types & depot addr
+) => {
+    // Legacy function, using the enhanced one below
+};
+
+// Updated signature to accept orders for accurate package calculation
+export const generateRouteSheetPdfWithOrders = async (
+    ride: Ride, 
+    driverName: string, 
+    orders: Order[],
+    products: Product[],
+    settings: GlobalSettings
+) => {
+    const doc = new jsPDF('l'); 
+    
+    try {
+        const regularBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
+        const mediumBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
+        doc.addFileToVFS("Roboto-Regular.ttf", regularBase64);
+        doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+        doc.addFileToVFS("Roboto-Medium.ttf", mediumBase64);
+        doc.addFont("Roboto-Medium.ttf", "Roboto", "bold");
+        doc.setFont("Roboto");
+    } catch (e) { }
+
+    doc.setFontSize(18);
+    doc.text(`Rozvozový list - ${formatDate(ride.date)}`, 14, 20);
+    doc.setFontSize(12);
+    doc.text(`Řidič: ${driverName}`, 14, 28);
+
+    const tableBody: any[][] = [];
+    let totalCashToCollect = 0;
+
+    // 1. DEPOT
+    tableBody.push([
+        { content: 'START', styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: ride.departureTime, styles: { fontStyle: 'bold' } },
+        { content: 'DEPO / NAKLÁDKA', styles: { fontStyle: 'bold' } },
+        `${settings.companyDetails.street}, ${settings.companyDetails.city}`,
+        '-',
+        '-',
+        'Naložit vše'
+    ]);
+
+    // 2. STOPS
+    if (ride.steps) {
+        ride.steps.forEach(step => {
+            if (step.type === 'delivery') {
+                // Find full order to calc packages
+                const fullOrder = orders.find(o => o.id === step.orderId);
+                
+                // Calculate Packages
+                let pkgCount = 0;
+                let paymentCell: any = 'ZAPLACENO';
+
+                if (fullOrder) {
+                    if (fullOrder.items) {
+                        const enrichedItems = fullOrder.items.map(i => {
+                            const p = products.find(prod => prod.id === i.id);
+                            return { ...i, volume: p?.volume || i.volume || 0 };
+                        });
+                        pkgCount = calculatePackageCountLogic(enrichedItems, settings.packaging.types);
+                    } else {
+                        pkgCount = 1;
+                    }
+
+                    if (!fullOrder.isPaid) {
+                        const discount = fullOrder.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
+                        const toPay = Math.max(0, fullOrder.totalPrice - discount) + fullOrder.packagingFee + (fullOrder.deliveryFee || 0);
+                        totalCashToCollect += toPay;
+                        paymentCell = { 
+                            content: `DOBÍRKA: ${toPay} Kč`, 
+                            styles: { textColor: [200, 0, 0], fontStyle: 'bold' } 
+                        };
+                    }
+                } else {
+                    pkgCount = 1; 
+                }
+
+                tableBody.push([
+                    step.orderId,
+                    step.arrivalTime,
+                    step.customerName,
+                    step.address,
+                    step.customerPhone || '-',
+                    paymentCell,
+                    pkgCount
+                ]);
+            }
+        });
+    }
+
+    autoTable(doc, {
+        startY: 35,
+        head: [['ID Obj.', 'Čas', 'Zákazník', 'Adresa', 'Telefon', 'Platba', 'Balíků']],
+        body: tableBody,
+        theme: 'grid',
+        styles: { font: 'Roboto', fontSize: 10 },
+        columnStyles: { 
+            0: { fontStyle: 'bold' },
+            5: { fontStyle: 'bold' },
+            6: { halign: 'center' }
+        }
+    });
+
+    // TOTAL CASH FOOTER
+    if (totalCashToCollect > 0) {
+        const finalY = (doc as any).lastAutoTable.finalY + 10;
+        doc.setFontSize(14);
+        doc.setTextColor(200, 0, 0); // Red
+        doc.text(`Celkem hotovost k vybrání: ${totalCashToCollect} Kč`, 196, finalY, { align: "right" });
+    }
+
+    doc.save(`rozvoz_${ride.date}_${driverName}.pdf`);
 };

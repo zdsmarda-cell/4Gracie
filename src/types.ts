@@ -1,4 +1,93 @@
 
+export interface RideStep {
+  orderId: string;
+  type: 'pickup' | 'delivery';
+  arrivalTime: string; // HH:MM
+  departureTime: string; // HH:MM
+  address: string;
+  distanceKm?: number;
+  note?: string;
+  isPaid?: boolean;
+  itemsCount?: number;
+  customerName?: string;
+  customerPhone?: string;
+  error?: string; // NEW: Error message for invalid address
+}
+
+export interface Ride {
+  id: string;
+  date: string;
+  driverId: string;
+  orderIds: string[];
+  departureTime: string; // HH:MM
+  status: 'planned' | 'active' | 'completed';
+  steps?: RideStep[]; // Calculated route
+}
+
+export interface GlobalSettings {
+  categories: Category[]; 
+  capacityCategories: CapacityCategory[]; 
+  defaultCapacities: CategoryCapacities;
+  eventSlots: EventSlot[]; 
+  companyDetails: CompanyDetails;
+  paymentMethods: PaymentMethodConfig[];
+  deliveryRegions: DeliveryRegion[];
+  pickupLocations: PickupLocation[]; 
+  packaging: {
+    types: PackagingType[];
+    freeFrom: number;
+  };
+  logistics: LogisticsSettings; // NEW FIELD
+  enabledLanguages: Language[]; 
+  enableAiTranslation: boolean;
+  sqlDebug: boolean;
+  server?: ServerSettings; 
+}
+
+export interface BackupData {
+  users?: User[];
+  orders?: Order[];
+  products?: Product[];
+  discountCodes?: DiscountCode[];
+  dayConfigs?: DayConfig[];
+  settings?: GlobalSettings;
+  rides?: Ride[]; // NEW FIELD
+}
+
+export interface CookieSettings {
+  essential: boolean; 
+  analytics: boolean;
+  marketing: boolean;
+  timestamp: string;
+}
+
+export interface OrdersSearchResult {
+  orders: Order[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export type DataSourceMode = 'local' | 'api';
+
+export interface ImportResult {
+  success: boolean;
+  collisions?: string[];
+  message?: string;
+}
+
+export interface EmailLog {
+    id: number;
+    type: string;
+    recipient_email: string;
+    subject: string;
+    status: 'pending' | 'processing' | 'sent' | 'error';
+    error_message?: string;
+    created_at: string;
+    processed_at?: string;
+    payload?: any; // Added payload for inspection
+}
+
 export enum Language {
   CS = 'cs',
   EN = 'en',
@@ -288,64 +377,9 @@ export interface ServerSettings {
   consoleLogging: boolean;
 }
 
-export interface GlobalSettings {
-  categories: Category[]; 
-  capacityCategories: CapacityCategory[]; 
-  defaultCapacities: CategoryCapacities;
-  eventSlots: EventSlot[]; 
-  companyDetails: CompanyDetails;
-  paymentMethods: PaymentMethodConfig[];
-  deliveryRegions: DeliveryRegion[];
-  pickupLocations: PickupLocation[]; 
-  packaging: {
-    types: PackagingType[];
-    freeFrom: number;
-  };
-  enabledLanguages: Language[]; 
-  enableAiTranslation: boolean;
-  sqlDebug: boolean;
-  server?: ServerSettings; 
-}
-
-export interface BackupData {
-  users?: User[];
-  orders?: Order[];
-  products?: Product[];
-  discountCodes?: DiscountCode[];
-  dayConfigs?: DayConfig[];
-  settings?: GlobalSettings;
-}
-
-export interface CookieSettings {
-  essential: boolean; 
-  analytics: boolean;
-  marketing: boolean;
-  timestamp: string;
-}
-
-export interface OrdersSearchResult {
-  orders: Order[];
-  total: number;
-  page: number;
-  pages: number;
-}
-
-export type DataSourceMode = 'local' | 'api';
-
-export interface ImportResult {
-  success: boolean;
-  collisions?: string[];
-  message?: string;
-}
-
-export interface EmailLog {
-    id: number;
-    type: string;
-    recipient_email: string;
-    subject: string;
-    status: 'pending' | 'processing' | 'sent' | 'error';
-    error_message?: string;
-    created_at: string;
-    processed_at?: string;
-    payload?: any; // Added payload for inspection
+export interface LogisticsSettings {
+  stopTimeMinutes: number;
+  loadingSecondsPerItem: number;
+  unloadingPaidSeconds: number; // For already paid orders (fast drop)
+  unloadingUnpaidSeconds: number; // For cash/collect orders (slow drop)
 }

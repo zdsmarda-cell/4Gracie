@@ -14,6 +14,7 @@ import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Terms } from './pages/Terms';
 import { Contacts } from './pages/Contacts';
+import { Driver } from './pages/Driver'; // IMPORT DRIVER PAGE
 import { X, Truck, AlertCircle, CheckCircle, Loader2, Store, Settings, RefreshCw } from 'lucide-react';
 import { initGA, logPageView } from './utils/analytics';
 
@@ -73,9 +74,10 @@ const LoginMock = () => {
   return (
     <div className="fixed bottom-4 right-4 bg-white p-4 shadow-xl rounded-lg border border-gray-200 z-50">
       <p className="text-xs text-gray-500 mb-2">Rychlé Demo Přihlášení (Lokální):</p>
-      <div className="space-x-2">
+      <div className="space-x-2 flex flex-wrap gap-2">
         <button onClick={() => login('jan.novak@example.com', '1234')} className="px-3 py-1 bg-gray-800 text-white text-xs rounded">User (Heslo: 1234)</button>
         <button onClick={() => login('info@4gracie.cz', '1234')} className="px-3 py-1 bg-red-800 text-white text-xs rounded">Admin (Heslo: 1234)</button>
+        <button onClick={() => login('ridic@4gracie.cz', '1234')} className="px-3 py-1 bg-green-700 text-white text-xs rounded">Řidič (Heslo: 1234)</button>
       </div>
     </div>
   );
@@ -266,6 +268,7 @@ const MainContent = () => {
                     <Route path="/cart" element={<Cart />} />
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/admin" element={<Admin />} />
+                    <Route path="/driver" element={<Driver />} /> 
                     <Route path="/reset-password" element={<ResetPassword />} />
                     <Route path="/terms" element={<Terms />} />
                     <Route path="/contacts" element={<Contacts />} />

@@ -1,12 +1,13 @@
 
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, OrderStatus, DiscountCode, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, CookieSettings, OrdersSearchResult, EventSlot } from '../types';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, OrderStatus, DiscountCode, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, CookieSettings, OrdersSearchResult, EventSlot, Ride, LogisticsSettings, RideStep } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 
 // Logic imports
-import { calculateDiscountAmountLogic, calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic } from '../utils/orderLogic';
-import { generateInvoicePdf } from '../utils/pdfGenerator';
+import { calculateDiscountAmountLogic, calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic, calculatePackageCountLogic } from '../utils/orderLogic';
+import { generateInvoicePdf, generateRouteSheetPdf } from '../utils/pdfGenerator';
+import { calculateOptimalRoute } from '../utils/routeOptimizer';
 import { formatDate, removeDiacritics, calculateCzIban } from '../utils/helpers';
 
 // Hooks imports
@@ -74,7 +75,7 @@ interface StoreContextType {
   isOperationPending: boolean;
   dbConnectionError: boolean;
   isPreviewEnvironment: boolean;
-  appVersion: string; // NEW
+  appVersion: string; 
   
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -129,7 +130,11 @@ interface StoreContextType {
   updateDayConfig: (config: DayConfig) => Promise<boolean>;
   removeDayConfig: (date: string) => Promise<boolean>;
   
-  // Event Slots
+  rides: Ride[];
+  updateRide: (ride: Ride) => Promise<boolean>;
+  deleteRide: (id: string) => Promise<boolean>;
+  recalculateRideRoute: (ride: Ride) => Promise<Ride>; 
+
   updateEventSlot: (slot: EventSlot) => Promise<boolean>;
   removeEventSlot: (date: string) => Promise<boolean>;
   notifyEventSubscribers: (date: string) => Promise<boolean>;
@@ -143,11 +148,13 @@ interface StoreContextType {
   getRegionInfoForDate: (region: DeliveryRegion, date: string) => RegionDateInfo;
   getPickupPointInfo: (location: PickupLocation, date: string) => RegionDateInfo;
   calculatePackagingFee: (items: CartItem[]) => number;
+  calculatePackageCount: (items: CartItem[]) => number;
   
   t: (key: string, params?: Record<string, string>) => string;
   tData: (obj: any, key: string) => string;
   generateInvoice: (order: Order) => string;
   printInvoice: (order: Order, type?: 'proforma' | 'final') => Promise<void>;
+  printRouteSheet: (ride: Ride, driverName: string) => Promise<void>;
   generateCzIban: (accountStr: string) => string;
   removeDiacritics: (str: string) => string;
   formatDate: (dateStr: string) => string;
@@ -167,7 +174,6 @@ interface StoreContextType {
   cookieSettings: CookieSettings | null;
   saveCookieSettings: (settings: CookieSettings) => void;
 
-  // PWA Support
   isPwaUpdateAvailable: boolean;
   updatePwa: () => void;
   pushSubscription: PushSubscription | null;
@@ -189,7 +195,6 @@ const loadFromStorage = <T,>(key: string, fallback: T): T => {
   }
 };
 
-// Variable to track if a refresh is in progress
 let isRefreshing = false;
 let refreshSubscribers: ((token: string) => void)[] = [];
 
@@ -202,16 +207,11 @@ const onTokenRefreshed = (token: string) => {
   refreshSubscribers = [];
 };
 
-// URL Base64 to Uint8Array converter for VAPID key
 const urlBase64ToUint8Array = (base64String: string) => {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding)
-    .replace(/\-/g, '+')
-    .replace(/_/g, '/');
-
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
-
   for (let i = 0; i < rawData.length; ++i) {
     outputArray[i] = rawData.charCodeAt(i);
   }
@@ -219,7 +219,6 @@ const urlBase64ToUint8Array = (base64String: string) => {
 };
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // --- CORE STATE ---
   const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
     // @ts-ignore
     const env = (import.meta as any).env;
@@ -232,7 +231,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // @ts-ignore
   const isPreviewEnvironment = (import.meta as any).env ? (import.meta as any).env.DEV : false;
   
-  // Retrieve injected version
   const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'DEV';
 
   const [isLoading, setIsLoading] = useState(true);
@@ -243,7 +241,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
   const [cookieSettings, setCookieSettings] = useState<CookieSettings | null>(() => loadFromStorage('cookie_settings', null));
 
-  // PWA State
   const [isPwaUpdateAvailable, setIsPwaUpdateAvailable] = useState(false);
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
   const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
@@ -252,17 +249,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const isPwa = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
   const isPushSupported = 'serviceWorker' in navigator && 'PushManager' in window;
 
-  // --- ENTITY STATES ---
   const [orders, setOrders] = useState<Order[]>(() => loadFromStorage('db_orders', MOCK_ORDERS));
   const [products, setProducts] = useState<Product[]>(() => loadFromStorage('db_products', INITIAL_PRODUCTS));
   const [discountCodes, setDiscountCodes] = useState<DiscountCode[]>(() => loadFromStorage('db_discounts', []));
   const [settings, setSettings] = useState<GlobalSettings>(() => {
       const s = loadFromStorage('db_settings', DEFAULT_SETTINGS);
       if (!s.categories) s.categories = DEFAULT_SETTINGS.categories;
+      // Ensure Logistics Exists
+      if (!s.logistics) s.logistics = DEFAULT_SETTINGS.logistics;
       return s;
   });
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>(() => loadFromStorage('db_dayconfigs', []));
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
+  // Rides State
+  const [rides, setRides] = useState<Ride[]>(() => loadFromStorage('db_rides', []));
 
   const getFullApiUrl = (endpoint: string) => {
     // @ts-ignore
@@ -283,65 +283,42 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type, autoClose });
   }, []);
 
-  // --- VERSION CHECK LOGIC ---
   const checkForUpdate = useCallback(async () => {
-      // Don't check in DEV
       if (appVersion === 'DEV' || appVersion === 'BUILD_PENDING') return;
-
       try {
           const res = await fetch(`/version.json?t=${new Date().getTime()}`);
           if (res.ok) {
               const remote = await res.json();
-              // Compare remote version with running version
               if (remote.version && remote.version !== appVersion) {
-                  console.log(`New version available: ${remote.version} (Current: ${appVersion})`);
-                  
-                  // Trigger update logic
-                  // Ideally, standard SW lifecycle handles this, but explicit check helps if SW is stuck
                   if ('serviceWorker' in navigator) {
                       const reg = await navigator.serviceWorker.getRegistration();
                       if (reg) {
                           reg.update();
                       }
                   }
-                  
-                  // If standard SW update doesn't trigger state change, force UI
                   setIsPwaUpdateAvailable(true);
               }
           }
-      } catch (e) {
-          // Silent fail
-      }
+      } catch (e) { }
   }, [appVersion]);
 
-  // Check version on mount and interval
   useEffect(() => {
       checkForUpdate();
-      const interval = setInterval(checkForUpdate, 60 * 60 * 1000); // Every hour
+      const interval = setInterval(checkForUpdate, 60 * 60 * 1000); 
       return () => clearInterval(interval);
   }, [checkForUpdate]);
 
-  // Check version on visibility change (when user returns to app)
-  useEffect(() => {
-      const handleVisibilityChange = () => {
-          if (document.visibilityState === 'visible') {
-              checkForUpdate();
-          }
-      };
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [checkForUpdate]);
-
-
-  // --- API / FETCH LOGIC WITH REFRESH TOKEN ---
   const apiCall = useCallback(async (endpoint: string, method: string, body?: any): Promise<any> => {
     const controller = new AbortController();
     setIsOperationPending(true);
+    // Increased timeout for AI operations or heavy uploads to avoid premature aborts
+    const timeoutSeconds = endpoint.includes('optimize') || endpoint.includes('upload') ? 60000 : 8000;
+    
     const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
             controller.abort();
             reject(new Error('TIMEOUT_LIMIT_REACHED'));
-        }, 8000); 
+        }, timeoutSeconds); 
     });
 
     const url = getFullApiUrl(endpoint);
@@ -350,7 +327,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const makeRequest = async (tokenToUse: string | null) => {
         const headers: any = { 'Content-Type': 'application/json' };
         if (tokenToUse) headers['Authorization'] = `Bearer ${tokenToUse}`;
-        
         return await fetch(url, {
             method,
             headers,
@@ -366,7 +342,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           if (!isRefreshing) {
               isRefreshing = true;
               const refreshToken = localStorage.getItem('refresh_token');
-              
               if (refreshToken) {
                   try {
                       const refreshRes = await fetch(getFullApiUrl('/api/users/refresh-token'), {
@@ -374,9 +349,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ refreshToken })
                       });
-                      
                       const refreshData = await refreshRes.json();
-                      
                       if (refreshData.success && refreshData.token) {
                           localStorage.setItem('auth_token', refreshData.token);
                           onTokenRefreshed(refreshData.token);
@@ -416,14 +389,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       if (!contentType || !contentType.includes("application/json")) {
           throw new Error("Server vrátil neplatná data.");
       }
-      
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `API Chyba: ${res.status}`);
       return json;
     } catch (e: any) {
       if (e.message === 'TIMEOUT_LIMIT_REACHED' || e.name === 'AbortError') {
-         showNotify('Nepodařilo se operaci dokončit z důvodu nedostupnosti DB.', 'error');
-         setDbConnectionError(true);
+         showNotify('Operace trvala příliš dlouho nebo server neodpovídá.', 'error');
+         if (!endpoint.includes('optimize')) setDbConnectionError(true); // Don't block app on AI fail
       } else if (e.message.includes('Session expired') || e.message.includes('Unauthorized')) {
          showNotify('Vaše přihlášení vypršelo. Přihlaste se prosím znovu.', 'error');
       } else {
@@ -436,19 +408,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [showNotify]);
 
-  // --- PWA LOGIC ---
   useEffect(() => {
+    // ... SW code unchanged ...
     if ('serviceWorker' in navigator) {
-        // Handle updates
         navigator.serviceWorker.getRegistration().then(reg => {
             if (reg) {
-                // If waiting worker exists, update is available
                 if (reg.waiting) {
                     setWaitingWorker(reg.waiting);
                     setIsPwaUpdateAvailable(true);
                 }
-                
-                // Monitor for future updates
                 reg.addEventListener('updatefound', () => {
                     const newWorker = reg.installing;
                     if (newWorker) {
@@ -460,15 +428,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                         });
                     }
                 });
-
-                // Check existing push subscription
                 reg.pushManager.getSubscription().then(sub => {
                     setPushSubscription(sub);
                 });
             }
         });
-
-        // Handle controller change (reload after update)
         let refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
             if (!refreshing) {
@@ -479,11 +443,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, []);
 
+  // ... Update PWA, Push Subs logic unchanged ...
+
   const updatePwa = () => {
       if (waitingWorker) {
           waitingWorker.postMessage({ type: 'SKIP_WAITING' });
       } else {
-          // If update button clicked but no worker waiting (fallback for version.json check)
           window.location.reload();
       }
   };
@@ -493,15 +458,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           showNotify('Push notifikace nejsou podporovány tímto prohlížečem.', 'error');
           return false;
       }
-
-      // Check Notification Permission
       if (Notification.permission === 'denied') {
           showNotify('Notifikace jsou zakázány. Povolte je prosím v nastavení prohlížeče.', 'error');
           return false;
       }
-
       try {
-          // Explicitly request permission if not granted
           if (Notification.permission !== 'granted') {
               const permission = await Notification.requestPermission();
               if (permission !== 'granted') {
@@ -509,27 +470,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   return false;
               }
           }
-
           const reg = await navigator.serviceWorker.ready;
-          
           if (!vapidKey) {
               console.warn("VAPID Key missing.");
               showNotify('Chyba: Server neposkytl VAPID klíč.', 'error');
               return false;
           }
-
           const sub = await reg.pushManager.subscribe({
               userVisibleOnly: true,
               applicationServerKey: urlBase64ToUint8Array(vapidKey)
           });
-
           setPushSubscription(sub);
-
-          // Send to backend if connected
           if (dataSource === 'api') {
               await apiCall('/api/notifications/subscribe', 'POST', { subscription: sub });
           }
-          
           showNotify('Notifikace zapnuty.', 'success');
           return true;
       } catch (e: any) {
@@ -541,14 +495,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const unsubscribeFromPush = async (): Promise<boolean> => {
       if (!pushSubscription) return true;
-
       try {
-          // 1. Notify Backend
           if (dataSource === 'api') {
               await apiCall('/api/notifications/unsubscribe', 'POST', { endpoint: pushSubscription.endpoint });
           }
-
-          // 2. Unsubscribe locally
           await pushSubscription.unsubscribe();
           setPushSubscription(null);
           showNotify('Notifikace vypnuty.', 'success');
@@ -560,14 +510,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   };
 
+  // ... fetchData and effects unchanged ...
+
   const fetchData = useCallback(async () => {
       setIsLoading(true);
       setDbConnectionError(false);
       try {
         if (dataSource === 'api') {
-          // Clear current
-          setProducts([]); setOrders([]); setDiscountCodes([]); setDayConfigs([]);
-          
+          setProducts([]); setOrders([]); setDiscountCodes([]); setDayConfigs([]); setRides([]);
           const data = await apiCall('/api/bootstrap', 'GET');
           if (data && data.success) {
               setProducts(data.products || []);
@@ -576,32 +526,38 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                  const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
                  if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
                  if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
+                 if (!mergedSettings.logistics) mergedSettings.logistics = DEFAULT_SETTINGS.logistics;
                  setSettings(mergedSettings); 
               }
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
               
-              // Set dynamic VAPID from server
               if (data.vapidPublicKey) {
                   setVapidKey(data.vapidPublicKey);
+              }
+
+              // Load Rides for Admin/Driver
+              const userRole = JSON.parse(localStorage.getItem('session_user') || '{}')?.role;
+              if (userRole === 'admin' || userRole === 'driver') {
+                  const ridesRes = await apiCall('/api/admin/rides', 'GET');
+                  if (ridesRes && ridesRes.success) {
+                      setRides(ridesRes.rides);
+                  }
               }
           } else {
               if(!data) setDbConnectionError(true);
           }
         } else {
-          // Local Storage Load
           setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
-          
           const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
           if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
           if (!loadedSettings.pickupLocations) loadedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
-          
+          if (!loadedSettings.logistics) loadedSettings.logistics = DEFAULT_SETTINGS.logistics;
           setSettings(loadedSettings);
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
-          
-          // Try loading VAPID from build env if strictly local
+          setRides(loadFromStorage('db_rides', []));
           // @ts-ignore
           const localVapid = import.meta.env?.VITE_VAPID_PUBLIC_KEY;
           if (localVapid) setVapidKey(localVapid);
@@ -618,7 +574,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     fetchData();
   }, [fetchData]);
 
-  // --- PERSISTENCE FOR LOCAL MODE ---
   useEffect(() => {
     if (dataSource === 'local') {
       localStorage.setItem('db_orders', JSON.stringify(orders));
@@ -626,42 +581,34 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       localStorage.setItem('db_discounts', JSON.stringify(discountCodes));
       localStorage.setItem('db_settings', JSON.stringify(settings));
       localStorage.setItem('db_dayconfigs', JSON.stringify(dayConfigs));
+      localStorage.setItem('db_rides', JSON.stringify(rides));
     }
-  }, [orders, products, discountCodes, settings, dayConfigs, dataSource]);
+  }, [orders, products, discountCodes, settings, dayConfigs, rides, dataSource]);
 
-  // --- SUB-HOOKS ---
+  // ... useCart, useAuth calls unchanged ...
   const { cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart } = useCart(showNotify);
-  
-  // Pass isPwa flag to Auth hook for login adjustments
   const { 
       user, allUsers, setAllUsers, login, register, logout, addUser, updateUser, updateUserAdmin, 
       toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, INITIAL_USERS 
   } = useAuth(dataSource, apiCall, showNotify, fetchData, isPwa);
 
-  // Sync Push Subscription if user logs in
+  // ... Auto subscribe effect unchanged ...
   useEffect(() => {
       if (user && pushSubscription && dataSource === 'api') {
           apiCall('/api/notifications/subscribe', 'POST', { subscription: pushSubscription });
       }
   }, [user, pushSubscription, dataSource, apiCall]);
 
-  // Auto-prompt for Push on Login (Uses Capability check now, not strict PWA check)
   useEffect(() => {
-      // Check if user is logged in, push is supported, and permission is default (not asked yet)
       if (user && isPushSupported && Notification.permission === 'default' && vapidKey) {
-          // Wrap in a small timeout to avoid immediate rejection in some scenarios,
-          // though modern browsers might still block this without a gesture.
-          // The key fix is allowing the manual button in Profile to work.
           setTimeout(() => {
               subscribeToPush().catch(() => {
-                  // Silent catch, let them enable in profile
                   console.log("Auto-subscribe prevented by browser policy.");
               });
           }, 1000);
       }
   }, [user, isPushSupported, vapidKey]);
 
-  // --- SYNC AUTH DATA WITH MAIN FETCH ---
   useEffect(() => {
       if (dataSource === 'local' && allUsers.length === 0) {
           setAllUsers(loadFromStorage('db_users', INITIAL_USERS));
@@ -674,8 +621,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [allUsers, dataSource]);
 
-  // --- ACTIONS & LOGIC ---
-
   const setDataSource = (mode: DataSourceMode) => {
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
@@ -686,7 +631,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       localStorage.setItem('cookie_settings', JSON.stringify(s));
   };
 
-  // Translations
   const t = (key: string, params?: Record<string, string>) => {
     let text = TRANSLATIONS[language]?.[key] || key;
     if (params) {
@@ -703,14 +647,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return obj[key] || '';
   };
 
-  // Logic Functions (Delegated to utils)
-  
   const validateDiscount = (code: string, currentCart: CartItem[]) => {
       return calculateDiscountAmountLogic(code, currentCart, discountCodes, orders);
   };
 
   const calculatePackagingFee = (items: CartItem[]) => {
       return calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
+  };
+
+  const calculatePackageCount = (items: CartItem[]) => {
+      return calculatePackageCountLogic(items, settings.packaging.types);
   };
 
   const getDailyLoad = (date: string, excludeOrderId?: string) => {
@@ -721,7 +667,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       );
   };
 
-  // This one specifically re-implements checkAvailabilityLogic but needs access to context state
+  // ... checkAvailability, getDateStatus, getAvailableEventDates ...
   const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
@@ -790,7 +736,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const isEventCapacityAvailable = (product: Product) => getAvailableEventDates(product).length > 0;
 
-  // Discounts Logic Wrapper
+  // ... applyDiscount ...
   const applyDiscount = (code: string): { success: boolean; error?: string } => {
     if (appliedDiscounts.some(d => d.code.toUpperCase() === code.toUpperCase())) return { success: false, error: t('discount.applied') };
     const result = validateDiscount(code, cart);
@@ -805,7 +751,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const removeAppliedDiscount = (code: string) => setAppliedDiscounts(prev => prev.filter(d => d.code !== code));
 
-  // Recalculate discounts on cart change
   useEffect(() => {
     if (appliedDiscounts.length === 0) return;
     let updatedDiscounts: AppliedDiscount[] = [];
@@ -825,7 +770,117 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }, [cart]);
 
-  // Order Management
+  // --- RIDE MANAGEMENT ---
+  
+  const recalculateRideRoute = async (ride: Ride): Promise<Ride> => {
+      const relevantOrders = orders.filter(o => ride.orderIds.includes(o.id));
+      // Call async optimizer
+      const steps = await calculateOptimalRoute(relevantOrders, ride.departureTime, settings, apiCall);
+      return { ...ride, steps };
+  };
+
+  const updateRide = async (ride: Ride): Promise<boolean> => {
+      setIsOperationPending(true); // Manually trigger loading state for AI
+      try {
+        const calculatedRide = await recalculateRideRoute(ride);
+        
+        if (dataSource === 'api') {
+            const res = await apiCall('/api/admin/rides', 'POST', calculatedRide);
+            if (res && res.success) {
+                setRides(prev => {
+                    const index = prev.findIndex(r => r.id === ride.id);
+                    if (index > -1) {
+                        const newRides = [...prev];
+                        newRides[index] = calculatedRide;
+                        return newRides;
+                    }
+                    return [...prev, calculatedRide];
+                });
+                return true;
+            }
+            return false;
+        } else {
+            setRides(prev => {
+                const index = prev.findIndex(r => r.id === ride.id);
+                if (index > -1) {
+                    const newRides = [...prev];
+                    newRides[index] = calculatedRide;
+                    return newRides;
+                }
+                return [...prev, calculatedRide];
+            });
+            return true;
+        }
+      } catch (e) {
+          showNotify('Chyba při výpočtu trasy', 'error');
+          return false;
+      } finally {
+          setIsOperationPending(false);
+      }
+  };
+
+  const deleteRide = async (id: string): Promise<boolean> => {
+      if (dataSource === 'api') {
+          const res = await apiCall(`/api/admin/rides/${id}`, 'DELETE');
+          if (res && res.success) {
+              setRides(prev => prev.filter(r => r.id !== id));
+              return true;
+          }
+          return false;
+      } else {
+          setRides(prev => prev.filter(r => r.id !== id));
+          return true;
+      }
+  };
+
+  // ... cleanupRideOrders ...
+  const cleanupRideOrders = (orderId: string, orderDate: string, orderAddress: string, orderStatus: OrderStatus) => {
+      const affectedRides = rides.filter(r => r.orderIds.includes(orderId));
+      
+      let changed = false;
+      let newRides = [...rides];
+
+      // Note: We cannot easily await async calls inside standard state updates triggered by other events
+      // So we just remove the order here without full AI recalculation (it will be recalculated next time user opens it)
+      // Or we can just flag it. For now, simple removal.
+      
+      affectedRides.forEach(ride => {
+          if (ride.status === 'completed') return;
+
+          const originalOrder = orders.find(o => o.id === orderId);
+          if (!originalOrder) return;
+
+          const shouldRemove = 
+              orderStatus === OrderStatus.CANCELLED ||
+              orderStatus === OrderStatus.DELIVERED || 
+              ride.date !== orderDate || 
+              (originalOrder.deliveryAddress !== orderAddress && originalOrder.deliveryAddress);
+
+          if (shouldRemove) {
+              const updatedRide = {
+                  ...ride,
+                  orderIds: ride.orderIds.filter(id => id !== orderId),
+                  // steps: [] // Invalidating steps might be safer to force recalc
+              };
+              
+              newRides = newRides.map(r => r.id === ride.id ? updatedRide : r);
+              changed = true;
+              
+              if (ride.status === 'planned') {
+                  showNotify(`Objednávka #${orderId} byla vyřazena z naplánované jízdy řidiče.`, 'error', false);
+              }
+              
+              // Trigger API update if needed for sync
+              if (dataSource === 'api') {
+                  apiCall('/api/admin/rides', 'POST', updatedRide).catch(console.error);
+              }
+          }
+      });
+
+      if (changed) setRides(newRides);
+  };
+
+  // ... addOrder, updateOrder ...
   const addOrder = async (order: Order): Promise<boolean> => {
     const orderWithHistory: Order = {
       ...order,
@@ -847,6 +902,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const updateOrder = async (order: Order, sendNotify?: boolean, isUserEdit?: boolean): Promise<boolean> => {
+    const original = orders.find(o => o.id === order.id);
+    if (original) {
+        const newAddr = order.deliveryAddress || `${order.deliveryStreet}, ${order.deliveryCity}`;
+        cleanupRideOrders(order.id, order.deliveryDate, newAddr, order.status);
+    }
+
     let updatedOrder = { ...order };
     if (updatedOrder.items.length === 0 && updatedOrder.status !== OrderStatus.CANCELLED) {
       updatedOrder.status = OrderStatus.CANCELLED;
@@ -867,6 +928,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const updateOrderStatus = async (ids: string[], status: OrderStatus, notify?: boolean, sendPush?: boolean): Promise<boolean> => {
+    ids.forEach(id => {
+        const o = orders.find(ord => ord.id === id);
+        if (o) cleanupRideOrders(id, o.deliveryDate, o.deliveryAddress || '', status);
+    });
+
     if (dataSource === 'api') {
        const res = await apiCall('/api/orders/status', 'PUT', { ids, status, notifyCustomer: notify, sendPush });
        if (res && res.success) {
@@ -890,7 +956,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // Searching (Mostly for Admin)
+  // ... searchOrders, searchUsers ...
   const searchOrders = useCallback(async (params: any): Promise<OrdersSearchResult> => {
       if (dataSource === 'api') {
           const query = new URLSearchParams(params).toString();
@@ -917,7 +983,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           if (res && res.success) return res.users;
           return [];
       } else {
-          // Local filtering logic
           return allUsers.filter(u => {
               if (params.search) {
                   const s = params.search.toLowerCase();
@@ -929,7 +994,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [dataSource, allUsers, apiCall]);
 
-  // Product CRUD
+  // ... addProduct ... (rest of the file is identical)
   const addProduct = async (p: Product): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/products', 'POST', p);
@@ -960,10 +1025,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // SEARCH PRODUCTS (Server-side compatible)
   const searchProducts = useCallback(async (params: any): Promise<ProductsSearchResult> => {
       if (dataSource === 'api') {
-          // Flatten arrays for query string
           const queryParams = new URLSearchParams();
           Object.keys(params).forEach(key => {
               if (Array.isArray(params[key])) {
@@ -979,25 +1042,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           }
           return { products: [], total: 0, page: 1, pages: 1 };
       } else {
-          // Local Filtering
           let result = [...products];
-          
-          // Search
           if (params.search) {
               const term = params.search.toLowerCase();
               result = result.filter(p => p.name.toLowerCase().includes(term));
           }
-          
-          // Price
           if (params.minPrice) result = result.filter(p => p.price >= Number(params.minPrice));
           if (params.maxPrice) result = result.filter(p => p.price <= Number(params.maxPrice));
-          
-          // Categories
           if (params.categories && params.categories.length > 0) {
               result = result.filter(p => params.categories.includes(p.category));
           }
-          
-          // Visibility
           if (params.visibility && params.visibility.length > 0) {
               result = result.filter(p => {
                   if (params.visibility.includes('online') && p.visibility.online) return true;
@@ -1006,22 +1060,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                   return false;
               });
           }
-          
-          // Sort
           if (params.sort) {
               result.sort((a: any, b: any) => {
                   let valA = a[params.sort];
                   let valB = b[params.sort];
-                  
                   if (typeof valA === 'string') valA = valA.toLowerCase();
                   if (typeof valB === 'string') valB = valB.toLowerCase();
-                  
                   if (valA < valB) return params.order === 'asc' ? -1 : 1;
                   if (valA > valB) return params.order === 'asc' ? 1 : -1;
                   return 0;
               });
           }
-          
           const limit = Number(params.limit) || 50;
           const page = Number(params.page) || 1;
           const start = (page - 1) * limit;
@@ -1031,7 +1080,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   }, [dataSource, products, apiCall]);
 
-  // Settings & Configs
   const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
     if (dataSource === 'api') {
         const res = await apiCall('/api/settings', 'POST', s);
@@ -1123,7 +1171,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
   };
 
-  // Helper getters
   const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
   
   const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { const ex = r.exceptions?.find(e => e.date === d); return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; };
@@ -1175,6 +1222,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             if (s.discountCodes && d.discountCodes) setDiscountCodes(d.discountCodes);
             if (s.dayConfigs && d.dayConfigs) setDayConfigs(d.dayConfigs);
             if (s.settings && d.settings) setSettings(d.settings);
+            if (s.rides && d.rides) setRides(d.rides);
             return { success: true };
         } catch (e: any) {
             return { success: false, message: e.message };
@@ -1186,6 +1234,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
       await generateInvoicePdf(o, type, settings);
+  };
+
+  const printRouteSheet = async (ride: Ride, driverName: string) => {
+      await generateRouteSheetPdf(ride, driverName, products, settings);
   };
   
   const generateCzIban = calculateCzIban;
@@ -1216,7 +1268,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     <StoreContext.Provider value={{
       dataSource, setDataSource,
       isLoading, isOperationPending, dbConnectionError, isPreviewEnvironment,
-      appVersion, // EXPOSED
+      appVersion, 
       language, setLanguage, 
       cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart, 
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
@@ -1224,11 +1276,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       products, addProduct, updateProduct, deleteProduct, searchProducts,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, 
+      rides, updateRide, deleteRide, recalculateRideRoute,
       updateEventSlot, removeEventSlot, notifyEventSubscribers, getAvailableEventDates, isEventCapacityAvailable,
       checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate,
       getPickupPointInfo,
-      calculatePackagingFee,
-      t, tData, generateInvoice, printInvoice, generateCzIban, getImageUrl, uploadImage, getFullApiUrl,
+      calculatePackagingFee, calculatePackageCount,
+      t, tData, generateInvoice, printInvoice, printRouteSheet, generateCzIban, getImageUrl, uploadImage, getFullApiUrl,
       importDatabase, globalNotification, dismissNotification,
       isAuthModalOpen, openAuthModal, closeAuthModal, removeDiacritics, formatDate,
       cookieSettings, saveCookieSettings,

@@ -46,6 +46,10 @@ export const Navbar: React.FC = () => {
             {user?.role === 'admin' && (
               <Link to="/admin" className="text-red-600 font-bold hover:text-red-800 transition">{t('nav.admin')}</Link>
             )}
+
+            {user?.role === 'driver' && (
+              <Link to="/driver" className="text-blue-600 font-bold hover:text-blue-800 transition">{t('nav.driver')}</Link>
+            )}
             
             {/* Language Switcher */}
             {availableLanguages.length > 1 && (
@@ -134,6 +138,12 @@ export const Navbar: React.FC = () => {
              {user?.role === 'admin' && (
                 <Link to="/admin" className="block px-3 py-3 rounded-xl bg-red-50 text-base font-bold text-red-600" onClick={() => setIsMobileMenuOpen(false)}>
                     {t('nav.admin')}
+                </Link>
+             )}
+
+             {user?.role === 'driver' && (
+                <Link to="/driver" className="block px-3 py-3 rounded-xl bg-blue-50 text-base font-bold text-blue-600" onClick={() => setIsMobileMenuOpen(false)}>
+                    {t('nav.driver')}
                 </Link>
              )}
 

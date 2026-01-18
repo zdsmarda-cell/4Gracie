@@ -42,6 +42,36 @@ export const calculatePackagingFeeLogic = (
     return totalFee;
 };
 
+export const calculatePackageCountLogic = (
+    items: CartItem[], 
+    packagingTypes: PackagingType[]
+): number => {
+    const totalVolume = items.reduce((sum, item) => {
+        if (item.noPackaging) return sum; 
+        return sum + (item.volume || 0) * item.quantity;
+    }, 0);
+
+    if (totalVolume === 0) return 0;
+
+    const availableTypes = [...packagingTypes].sort((a, b) => a.volume - b.volume); // Smallest to Largest
+    if (availableTypes.length === 0) return 1; // Fallback 1 package if types unknown
+    
+    const largestBox = availableTypes[availableTypes.length - 1];
+    let remainingVolume = totalVolume;
+    let count = 0;
+    
+    while (remainingVolume > 0) {
+      count++;
+      if (remainingVolume > largestBox.volume) { 
+          remainingVolume -= largestBox.volume; 
+      } else {
+        // Fits in one of the boxes
+        remainingVolume = 0; 
+      }
+    }
+    return count;
+};
+
 interface ValidateDiscountResult {
   success: boolean;
   discount?: DiscountCode;

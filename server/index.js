@@ -20,6 +20,7 @@ import settingsRoutes from './routes/settings.js';
 import aiRoutes from './routes/ai.js';
 import statsRoutes from './routes/stats.js';
 import notificationRoutes from './routes/notifications.js';
+import ridesRoutes from './routes/rides.js'; // NEW IMPORT
 
 // --- POLYFILLS FOR NODE.JS ENVIRONMENT (Required for jsPDF) ---
 if (typeof global.btoa === 'undefined') {
@@ -66,9 +67,28 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes); // Upload & Import & Emails
 app.use('/api/admin', aiRoutes); // Translation (/translate)
+app.use('/api/admin/rides', ridesRoutes); // NEW RIDES ROUTE
 app.use('/api/admin/stats', statsRoutes); // Stats (/load)
 app.use('/api', settingsRoutes); // Settings, Discounts, Calendar
 app.use('/api/notifications', notificationRoutes); // NEW Push Notifications
+
+// --- ERROR HANDLING MIDDLEWARE ---
+// Catches "request aborted" and other client-connection errors gracefully
+app.use((err, req, res, next) => {
+    if (err.type === 'entity.parse.failed') {
+        return res.status(400).json({ error: 'Invalid JSON body' });
+    }
+    // Handle request aborted (ECONNABORTED or explicit BadRequestError)
+    if (err.code === 'ECONNABORTED' || (err.message && err.message.includes('aborted'))) {
+        console.warn(`⚠️ Request aborted by client: ${req.method} ${req.originalUrl}`);
+        return; // Do not send response, connection is closed
+    }
+    
+    console.error("❌ Unhandled Server Error:", err);
+    if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
 
 // --- INITIALIZATION ---
 const initDb = async () => {
@@ -85,6 +105,18 @@ const initDb = async () => {
         await db.query(`CREATE TABLE IF NOT EXISTS discounts (id VARCHAR(50) PRIMARY KEY, code VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         await db.query(`CREATE TABLE IF NOT EXISTS calendar_exceptions (date VARCHAR(20) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         
+        // RIDES TABLE (NEW)
+        await db.query(`CREATE TABLE IF NOT EXISTS rides (
+            id VARCHAR(50) PRIMARY KEY,
+            date DATE,
+            driver_id VARCHAR(50),
+            status VARCHAR(20),
+            departure_time VARCHAR(10),
+            order_ids JSON,
+            steps JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
         // EMAIL QUEUE TABLE
         await db.query(`CREATE TABLE IF NOT EXISTS email_queue (
             id INT AUTO_INCREMENT PRIMARY KEY,
