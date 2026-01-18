@@ -275,7 +275,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setGlobalNotification({ message, type, autoClose });
   };
 
-  const getFullApiUrl = (endpoint: string) => {
+  const getFullApiUrl = useCallback((endpoint: string) => {
     // @ts-ignore
     const env = (import.meta as any).env;
     if (env.DEV) return endpoint;
@@ -288,7 +288,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     return `${baseUrl}${cleanEndpoint}`;
-  };
+  }, []);
 
   // UPDATED getImageUrl to handle size variants
   const getImageUrl = (path?: string, size: 'original' | 'medium' | 'small' = 'original') => {
@@ -311,7 +311,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return getFullApiUrl(path);
   };
 
-  const apiCall = async (endpoint: string, method: string, body?: any) => {
+  // Define logout early so apiCall can use it
+  const logout = useCallback(() => { 
+      setUser(null); 
+      localStorage.removeItem('session_user');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('refresh_token');
+  }, []);
+
+  // Memoized API Call to avoid re-creation on renders
+  const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
     const controller = new AbortController();
     setIsOperationPending(true);
     const timeoutPromise = new Promise((_, reject) => {
@@ -365,7 +374,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } finally {
         setIsOperationPending(false); 
     }
-  };
+  }, [getFullApiUrl, logout]);
 
   const fetchData = async () => {
       setIsLoading(true);
@@ -622,7 +631,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const searchOrders = async (filters: any) => {
+  const searchOrders = useCallback(async (filters: any) => {
       if (dataSource === 'api') {
           const q = new URLSearchParams(filters).toString();
           const res = await apiCall(`/api/orders?${q}`, 'GET');
@@ -632,7 +641,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           // Local mock search not fully implemented for all filters, returning all for simplicity in demo
           return { orders: orders, total: orders.length, page: 1, pages: 1 };
       }
-  };
+  }, [dataSource, apiCall, orders]);
 
   // --- PRODUCT & CATEGORY ACTIONS ---
 
@@ -666,7 +675,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const searchProducts = async (filters: any) => {
+  const searchProducts = useCallback(async (filters: any) => {
       if (dataSource === 'api') {
           const q = new URLSearchParams(filters).toString();
           const res = await apiCall(`/api/products?${q}`, 'GET');
@@ -676,7 +685,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           // Local pagination logic for demo
           return { products: products, total: products.length, page: 1, pages: 1 };
       }
-  };
+  }, [dataSource, apiCall, products]);
 
   const uploadImage = async (base64: string, name: string) => {
       if (dataSource === 'api') {
@@ -731,13 +740,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } else {
         setAllUsers(prev => [...prev, newUser]); setUser(newUser); 
     }
-  };
-
-  const logout = () => { 
-      setUser(null); 
-      localStorage.removeItem('session_user');
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('refresh_token');
   };
 
   // User Mgmt
@@ -806,7 +808,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return { success: true, message: 'Heslo změněno' };
   };
 
-  const searchUsers = async (filters: any) => {
+  const searchUsers = useCallback(async (filters: any) => {
       if (dataSource === 'api') {
           const q = new URLSearchParams(filters).toString();
           const res = await apiCall(`/api/users?${q}`, 'GET');
@@ -814,7 +816,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           return [];
       }
       return allUsers; // Local filter handled in component
-  };
+  }, [dataSource, apiCall, allUsers]);
 
   // --- SETTINGS & CONFIG ---
 
@@ -1124,7 +1126,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           ? (o.finalInvoiceDate || new Date().toISOString()) 
           : o.createdAt;
 
-      const brandColor = [147, 51, 234]; // Purple #9333ea
+      const brandColor: [number, number, number] = [147, 51, 234]; // Purple #9333ea
 
       // --- HEADER ---
       doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
