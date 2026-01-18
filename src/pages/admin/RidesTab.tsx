@@ -163,7 +163,7 @@ const RideDetail: React.FC<{
                         </div>
                         <div className="flex-grow overflow-y-auto p-6 space-y-6">
                             {dayRides.map(ride => {
-                                const driver = drivers.find(d => d.driverId === ride.driverId) || allUsers.find(u => u.id === ride.driverId);
+                                const driver = drivers.find(d => d.id === ride.driverId) || allUsers.find(u => u.id === ride.driverId);
                                 const rideOrders = orders.filter(o => ride.orderIds.includes(o.id));
                                 
                                 return (
