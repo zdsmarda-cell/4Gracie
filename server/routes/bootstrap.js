@@ -1,4 +1,3 @@
-
 import express from 'express';
 import { withDb, parseJsonCol } from '../db.js';
 import jwt from '../services/jwt.js';
@@ -43,7 +42,8 @@ router.get('/', withDb(async (req, res, db) => {
     }
 
     const isAdmin = user?.role === 'admin';
-    const isCustomer = user?.role === 'customer' || user?.role === 'driver';
+    const isDriver = user?.role === 'driver';
+    const isCustomer = user?.role === 'customer';
 
     const response = {
         users: [],
@@ -52,7 +52,7 @@ router.get('/', withDb(async (req, res, db) => {
         settings: null,
         discountCodes: [],
         dayConfigs: [],
-        // Send Public VAPID Key to frontend at runtime
+        rides: [], // ADDED THIS
         vapidPublicKey: process.env.VITE_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY
     };
 
@@ -73,13 +73,21 @@ router.get('/', withDb(async (req, res, db) => {
 
     // --- SENSITIVE DATA (Role Based) ---
 
-    if (isAdmin) {
-        // ADMIN: Load Everything
+    if (isAdmin || isDriver) {
+        // ADMIN & DRIVER DATA
         
-        // Users
-        response.users = await fetchUsersWithAddresses(db);
+        // Users (Admins need all, Drivers might need contact info)
+        if (isAdmin) {
+             response.users = await fetchUsersWithAddresses(db);
+        } else {
+             // Drivers only need their own profile primarily, but code might rely on finding user objects
+             // For now, load all users for drivers too to resolve customer names in rides easily
+             // Optimization: In real app, only load relevant customers
+             response.users = await fetchUsersWithAddresses(db);
+        }
 
         // Orders (Recent history)
+        // Drivers need orders to see delivery details
         const [oRows] = await db.query('SELECT full_json, final_invoice_date FROM orders ORDER BY delivery_date DESC LIMIT 500');
         response.orders = oRows.map(r => {
             const o = parseJsonCol(r, 'full_json');
@@ -87,9 +95,35 @@ router.get('/', withDb(async (req, res, db) => {
             return o;
         });
 
-        // Discount Codes
-        const [dRows] = await db.query('SELECT data FROM discounts');
-        response.discountCodes = dRows.map(r => parseJsonCol(r));
+        // Discount Codes (Admin only)
+        if (isAdmin) {
+            const [dRows] = await db.query('SELECT data FROM discounts');
+            response.discountCodes = dRows.map(r => parseJsonCol(r));
+        }
+
+        // RIDES (Crucial for Driver Tab)
+        // Fetch recent rides
+        let rideQuery = 'SELECT * FROM rides WHERE date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+        const rideParams = [];
+        
+        // Drivers only see their own rides? Or all? Usually drivers just need theirs.
+        // But for "RidesTab" in Admin, we need all.
+        // Let's filter if just driver.
+        if (isDriver && !isAdmin) {
+             rideQuery += ' AND driver_id = ?';
+             rideParams.push(user.id);
+        }
+        
+        const [rRows] = await db.query(rideQuery, rideParams);
+        response.rides = rRows.map(r => ({
+            id: r.id,
+            date: r.date,
+            driverId: r.driver_id,
+            status: r.status,
+            departureTime: r.departure_time,
+            orderIds: parseJsonCol(r, 'order_ids'),
+            steps: parseJsonCol(r, 'steps')
+        }));
 
     } else if (isCustomer) {
         // CUSTOMER: Load only own data
