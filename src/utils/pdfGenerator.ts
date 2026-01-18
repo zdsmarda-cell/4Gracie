@@ -311,14 +311,31 @@ export const generateRouteSheetPdfWithOrders = async (
     if (ride.steps) {
         ride.steps.forEach(step => {
             if (step.type === 'delivery') {
-                // Find full order to calc packages
+                // Find full order to calc packages & check timing
                 const fullOrder = orders.find(o => o.id === step.orderId);
+                let arrivalCell: any = step.arrivalTime;
                 
                 // Calculate Packages
                 let pkgCount = 0;
                 let paymentCell: any = 'ZAPLACENO';
 
                 if (fullOrder) {
+                    // --- Late Delivery Logic ---
+                    if (fullOrder.deliveryZip && settings.deliveryRegions) {
+                        const region = settings.deliveryRegions.find(r => r.enabled && r.zips.includes(fullOrder.deliveryZip!.replace(/\s/g, '')));
+                        if (region) {
+                            const ex = region.exceptions?.find(e => e.date === ride.date);
+                            const regionEndTime = (ex && ex.isOpen) ? ex.deliveryTimeEnd : region.deliveryTimeEnd;
+                            
+                            if (regionEndTime && step.arrivalTime > regionEndTime) {
+                                arrivalCell = { 
+                                    content: `${step.arrivalTime} (! POZDĚ !)`, 
+                                    styles: { textColor: [200, 0, 0], fontStyle: 'bold' } 
+                                };
+                            }
+                        }
+                    }
+
                     if (fullOrder.items) {
                         const enrichedItems = fullOrder.items.map(i => {
                             const p = products.find(prod => prod.id === i.id);
@@ -344,7 +361,7 @@ export const generateRouteSheetPdfWithOrders = async (
 
                 tableBody.push([
                     step.orderId,
-                    step.arrivalTime,
+                    arrivalCell,
                     step.customerName,
                     step.address,
                     step.customerPhone || '-',

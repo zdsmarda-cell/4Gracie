@@ -426,18 +426,7 @@ export const RidesTab: React.FC = () => {
     const handleSaveOrder = async (updatedOrder: Order) => {
         await updateOrder(updatedOrder, false, true);
         setIsEditModalOpen(false);
-        
-        // AUTOMATIC RECALCULATION TRIGGER
-        // If this order belongs to a pending/planned ride, reset steps so worker picks up new address
-        const rideToReset = rides.find(r => 
-            r.status === 'planned' && 
-            r.orderIds.includes(updatedOrder.id)
-        );
-
-        if (rideToReset) {
-            await updateRide({ ...rideToReset, steps: [] }); 
-        }
-
+        // Automatic triggering removed.
         await refreshData();
     };
 

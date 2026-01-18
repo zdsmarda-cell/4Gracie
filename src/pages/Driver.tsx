@@ -116,7 +116,7 @@ const DriverActionModal: React.FC<{
 };
 
 export const Driver: React.FC = () => {
-  const { orders, rides, updateOrderStatus, updateOrder, t, formatDate, user, updateRide, isOperationPending, products, settings } = useStore();
+  const { orders, rides, updateOrderStatus, updateOrder, t, formatDate, user, updateRide, isOperationPending, products, settings, refreshData, getDeliveryRegion, getRegionInfoForDate } = useStore();
   const [activeRideId, setActiveRideId] = useState<string | null>(null);
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [editingTimes, setEditingTimes] = useState<Record<string, string>>({});
@@ -132,12 +132,14 @@ export const Driver: React.FC = () => {
       else localStorage.removeItem('driver_active_stop');
   }, [activeStopId]);
 
-  // 1. Group Rides by Date
+  // 1. Group Rides by Date - SORTED ASCENDING (Future)
   const ridesByDate = useMemo<Record<string, Ride[]>>(() => {
       if (!user) return {};
+      const today = new Date().toISOString().split('T')[0];
+      
       const myRides = rides
-        .filter(r => r.driverId === user.id)
-        .sort((a, b) => b.date.localeCompare(a.date)); // Newest first
+        .filter(r => r.driverId === user.id && r.date >= today) // Filter out past
+        .sort((a, b) => a.date.localeCompare(b.date)); // Oldest (today) first, future last
 
       const grouped: Record<string, Ride[]> = {};
       myRides.forEach(r => {
@@ -159,12 +161,22 @@ export const Driver: React.FC = () => {
       const newTime = editingTimes[rideId];
       const ride = rides.find(r => r.id === rideId);
       if (ride && newTime && newTime !== ride.departureTime) {
-          await updateRide({ ...ride, departureTime: newTime });
+          // Trigger Recalculation: Reset steps and set status to planned
+          await updateRide({ 
+              ...ride, 
+              departureTime: newTime,
+              steps: [], 
+              status: 'planned' 
+          });
+          
           setEditingTimes(prev => {
               const newState = { ...prev };
               delete newState[rideId];
               return newState;
           });
+          
+          // Force refresh to show "pending" state immediately
+          await refreshData();
       }
   };
 
@@ -214,14 +226,28 @@ export const Driver: React.FC = () => {
       return Math.max(0, order.totalPrice - discount) + order.packagingFee + (order.deliveryFee || 0);
   };
 
-  const getMapLink = (address: string) => {
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  // --- Late Check Logic ---
+  const isDeliveryLate = (arrivalTime: string, order: Order): boolean => {
+      if (!arrivalTime || !order.deliveryZip) return false;
+      const region = getDeliveryRegion(order.deliveryZip);
+      if (!region) return false;
+      
+      const regionInfo = getRegionInfoForDate(region, order.deliveryDate);
+      // If region allows delivery (isOpen), verify time
+      if (regionInfo.isOpen) {
+          const endTime = regionInfo.timeEnd || region.deliveryTimeEnd || "23:59";
+          return arrivalTime > endTime;
+      }
+      return false; // Should not happen if planned correctly, but safe fallback
   };
 
   // --- DETAIL VIEW ---
   if (activeRide) {
       const rideOrders = orders.filter(o => activeRide.orderIds.includes(o.id));
       
+      // Check if ride is still pending calculation
+      const isPending = !activeRide.steps || activeRide.steps.length === 0;
+
       return (
         <div className="max-w-md mx-auto min-h-screen bg-gray-50 pb-20">
             <div className="bg-white p-4 sticky top-0 z-10 shadow-sm border-b">
@@ -245,130 +271,148 @@ export const Driver: React.FC = () => {
                 </div>
             </div>
 
-            <div className="p-4 space-y-6 relative">
-                {/* Depot Node */}
-                <div className="relative pl-10 opacity-70">
-                    <div className="absolute left-2.5 top-3 w-3 h-3 rounded-full bg-gray-300 z-10 transform -translate-x-1/2"></div>
-                    <div className="absolute left-4 top-4 bottom-[-24px] w-0.5 bg-gray-200 z-0"></div>
-                    <div className="absolute left-0 top-0 text-[10px] font-mono font-bold bg-white px-1 border rounded text-gray-500 shadow-sm z-10">
-                        {activeRide.departureTime}
-                    </div>
-                    <div className="bg-gray-50 rounded-xl border p-3">
-                        <div className="font-bold text-sm text-gray-700">DEPO / NAKLÁDKA</div>
-                        <div className="text-xs text-gray-500">{settings.companyDetails.street}</div>
-                    </div>
+            {isPending ? (
+                <div className="p-12 text-center flex flex-col items-center justify-center h-64 text-gray-500">
+                    <RefreshCw size={48} className="animate-spin text-accent mb-4"/>
+                    <h3 className="font-bold text-lg text-gray-800">Přepočítávám trasu...</h3>
+                    <p className="text-sm mt-2">Vydržte prosím, optimalizuji zastávky podle nového času.</p>
+                    <button onClick={refreshData} className="mt-6 text-blue-600 underline text-sm">Zkontrolovat stav</button>
                 </div>
+            ) : (
+                <div className="p-4 space-y-6 relative">
+                    {/* Depot Node */}
+                    <div className="relative pl-10 opacity-70">
+                        <div className="absolute left-2.5 top-3 w-3 h-3 rounded-full bg-gray-300 z-10 transform -translate-x-1/2"></div>
+                        <div className="absolute left-4 top-4 bottom-[-24px] w-0.5 bg-gray-200 z-0"></div>
+                        <div className="absolute left-0 top-0 text-[10px] font-mono font-bold bg-white px-1 border rounded text-gray-500 shadow-sm z-10">
+                            {activeRide.departureTime}
+                        </div>
+                        <div className="bg-gray-50 rounded-xl border p-3">
+                            <div className="font-bold text-sm text-gray-700">DEPO / NAKLÁDKA</div>
+                            <div className="text-xs text-gray-500">{settings.companyDetails.street}</div>
+                        </div>
+                    </div>
 
-                {activeRide.steps?.map((step, idx) => {
-                    const isDepot = step.type === 'pickup';
-                    if (isDepot) return null; 
+                    {activeRide.steps?.map((step, idx) => {
+                        const isDepot = step.type === 'pickup';
+                        if (isDepot) return null; 
 
-                    const order = orders.find(o => o.id === step.orderId);
-                    if (!order) return null; // Safety
+                        const order = orders.find(o => o.id === step.orderId);
+                        if (!order) return null; // Safety
 
-                    const isDelivered = order.status === OrderStatus.DELIVERED;
-                    const isFailed = order.status === OrderStatus.NOT_PICKED_UP || order.status === OrderStatus.CANCELLED;
-                    const isLast = idx === (activeRide.steps?.length || 0) - 1;
-                    const isActive = activeStopId === step.orderId;
+                        const isDelivered = order.status === OrderStatus.DELIVERED;
+                        const isFailed = order.status === OrderStatus.NOT_PICKED_UP || order.status === OrderStatus.CANCELLED;
+                        const isLast = idx === (activeRide.steps?.length || 0) - 1;
+                        const isActive = activeStopId === step.orderId;
+                        
+                        const isLate = isDeliveryLate(step.arrivalTime, order);
 
-                    // Calculate Package Count for Display
-                    const enrichedItems = order.items.map(i => {
-                        const p = products.find(prod => prod.id === i.id);
-                        return { ...i, volume: p?.volume || i.volume || 0 };
-                    });
-                    const pkgCount = calculatePackageCountLogic(enrichedItems, settings.packaging.types);
+                        // Calculate Package Count for Display
+                        const enrichedItems = order.items.map(i => {
+                            const p = products.find(prod => prod.id === i.id);
+                            return { ...i, volume: p?.volume || i.volume || 0 };
+                        });
+                        const pkgCount = calculatePackageCountLogic(enrichedItems, settings.packaging.types);
 
-                    // Correct COD Logic: Only if not paid and not finished
-                    const showCod = !order.isPaid && !isDelivered && !isFailed;
-                    const amountToPay = showCod ? getOrderAmountToPay(order) : 0;
+                        // Correct COD Logic: Only if not paid and not finished
+                        const showCod = !order.isPaid && !isDelivered && !isFailed;
+                        const amountToPay = showCod ? getOrderAmountToPay(order) : 0;
 
-                    return (
-                        <div key={idx} className={`relative pl-10 ${isDelivered || isFailed ? 'opacity-60 grayscale' : ''}`}>
-                            <div className={`absolute left-2.5 top-6 w-3 h-3 rounded-full border-2 border-white z-10 transform -translate-x-1/2 ${isDelivered ? 'bg-green-500' : isFailed ? 'bg-red-500' : 'bg-accent'}`}></div>
-                            {!isLast && <div className="absolute left-4 top-6 bottom-[-24px] w-0.5 bg-gray-200 z-0"></div>}
-                            
-                            <div className="absolute left-0 top-0 text-[10px] font-mono font-bold bg-white px-1 border rounded text-gray-500 shadow-sm z-10">
-                                {step.arrivalTime}
-                            </div>
+                        return (
+                            <div key={idx} className={`relative pl-10 ${isDelivered || isFailed ? 'opacity-60 grayscale' : ''}`}>
+                                <div className={`absolute left-2.5 top-6 w-3 h-3 rounded-full border-2 border-white z-10 transform -translate-x-1/2 ${isDelivered ? 'bg-green-500' : isFailed ? 'bg-red-500' : 'bg-accent'}`}></div>
+                                {!isLast && <div className="absolute left-4 top-6 bottom-[-24px] w-0.5 bg-gray-200 z-0"></div>}
+                                
+                                <div className={`absolute left-0 top-0 text-[10px] font-mono font-bold px-1 border rounded shadow-sm z-10 ${isLate && !isDelivered ? 'bg-red-600 text-white border-red-600 animate-pulse' : 'bg-white text-gray-500'}`}>
+                                    {step.arrivalTime}
+                                </div>
 
-                            <div className={`bg-white rounded-2xl shadow-sm border overflow-hidden mt-3 transition-all duration-300 ${isActive ? 'ring-2 ring-blue-400 border-blue-400 transform scale-[1.02]' : ''} ${step.error ? 'border-red-300 ring-1 ring-red-100' : ''}`}>
-                                <div className="p-4">
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div>
-                                            {/* Order ID above Name */}
-                                            <div className="text-[10px] text-gray-400 font-mono mb-0.5">#{order.id}</div>
-                                            <div className="font-bold text-lg">{step.customerName}</div>
-                                        </div>
-                                        <div className="text-right flex flex-col items-end">
-                                            {/* Package Count Badge */}
-                                            <div className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center mb-1">
-                                                <Package size={10} className="mr-1"/> {pkgCount} {pkgCount === 1 ? 'balík' : pkgCount < 5 ? 'balíky' : 'balíků'}
+                                <div className={`bg-white rounded-2xl shadow-sm border overflow-hidden mt-3 transition-all duration-300 ${isActive ? 'ring-2 ring-blue-400 border-blue-400 transform scale-[1.02]' : ''} ${step.error || (isLate && !isDelivered) ? 'border-red-300 ring-1 ring-red-100' : ''}`}>
+                                    <div className="p-4">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div>
+                                                {/* Order ID above Name */}
+                                                <div className="text-[10px] text-gray-400 font-mono mb-0.5">#{order.id}</div>
+                                                <div className="font-bold text-lg">{step.customerName}</div>
+                                                {/* Phone Number Display */}
+                                                {step.customerPhone && (
+                                                    <a href={`tel:${step.customerPhone}`} className="text-sm font-bold text-blue-600 flex items-center mt-1 hover:underline">
+                                                        <Phone size={14} className="mr-1"/> {step.customerPhone}
+                                                    </a>
+                                                )}
                                             </div>
+                                            <div className="text-right flex flex-col items-end">
+                                                {/* Package Count Badge */}
+                                                <div className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center mb-1">
+                                                    <Package size={10} className="mr-1"/> {pkgCount} {pkgCount === 1 ? 'balík' : pkgCount < 5 ? 'balíky' : 'balíků'}
+                                                </div>
 
-                                            {/* Status Badges */}
-                                            {isDelivered && <div className="text-green-600 font-bold text-xs flex items-center justify-end"><CheckCircle size={12} className="mr-1"/> Doručeno</div>}
-                                            {isFailed && <div className="text-red-600 font-bold text-xs flex items-center justify-end"><XCircle size={12} className="mr-1"/> Nedoručeno</div>}
+                                                {/* Status Badges */}
+                                                {isDelivered && <div className="text-green-600 font-bold text-xs flex items-center justify-end"><CheckCircle size={12} className="mr-1"/> Doručeno</div>}
+                                                {isFailed && <div className="text-red-600 font-bold text-xs flex items-center justify-end"><XCircle size={12} className="mr-1"/> Nedoručeno</div>}
+                                                
+                                                {/* Late Warning */}
+                                                {isLate && !isDelivered && !isFailed && (
+                                                    <div className="text-red-600 font-black text-xs bg-red-50 px-2 py-1 rounded border border-red-100 mb-1 flex items-center">
+                                                        <AlertTriangle size={10} className="mr-1"/> POZOR: ZPOŽDĚNÍ
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Payment Badge */}
+                                                {!isDelivered && !isFailed && (
+                                                    showCod 
+                                                        ? <div className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded text-xs border border-red-100 mt-1">Dobírka: {amountToPay} Kč</div>
+                                                        : <div className="text-green-600 font-bold text-xs bg-green-50 px-2 py-1 rounded border border-green-100 mt-1">Zaplaceno</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="space-y-2 mb-4 text-sm text-gray-600">
+                                            <div className="flex items-start">
+                                                <MapPin size={16} className={`mr-2 mt-0.5 flex-shrink-0 ${step.error ? 'text-red-500' : 'text-gray-400'}`}/>
+                                                <div>
+                                                    <div className="font-medium text-gray-800">{step.address}</div>
+                                                    {step.error && <div className="text-red-600 text-xs font-bold mt-1 flex items-center"><AlertTriangle size={12} className="mr-1"/> {step.error}</div>}
+                                                </div>
+                                            </div>
+                                            {step.note && <div className="bg-yellow-50 p-2 rounded text-xs text-yellow-800 border border-yellow-100 mt-2">{step.note}</div>}
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button 
+                                                onClick={() => handleNavigation(step.address, step.orderId)} 
+                                                className="flex flex-col items-center justify-center p-2 bg-blue-50 hover:bg-blue-100 rounded-xl text-xs font-bold text-blue-700 transition"
+                                            >
+                                                <Map size={20} className="mb-1"/> Navigovat
+                                            </button>
                                             
-                                            {/* Payment Badge */}
-                                            {!isDelivered && !isFailed && (
-                                                showCod 
-                                                    ? <div className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded text-xs border border-red-100 mt-1">Dobírka: {amountToPay} Kč</div>
-                                                    : <div className="text-green-600 font-bold text-xs bg-green-50 px-2 py-1 rounded border border-green-100 mt-1">Zaplaceno</div>
+                                            {!isDelivered && !isFailed ? (
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <button 
+                                                        onClick={() => setModalState({ type: 'fail', orderId: step.orderId })} 
+                                                        className="flex flex-col items-center justify-center p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition"
+                                                    >
+                                                        <XCircle size={20} className="mb-1"/> Nedoručeno
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => setModalState({ type: 'complete', orderId: step.orderId })} 
+                                                        className="flex flex-col items-center justify-center p-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition"
+                                                    >
+                                                        <Check size={20} className="mb-1"/> Hotovo
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col items-center justify-center p-2 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold">
+                                                    <Check size={20} className="mb-1"/> Uzavřeno
+                                                </div>
                                             )}
                                         </div>
                                     </div>
-                                    <div className="space-y-2 mb-4 text-sm text-gray-600">
-                                        <div className="flex items-start">
-                                            <MapPin size={16} className={`mr-2 mt-0.5 flex-shrink-0 ${step.error ? 'text-red-500' : 'text-gray-400'}`}/>
-                                            <div>
-                                                <div className="font-medium text-gray-800">{step.address}</div>
-                                                {step.error && <div className="text-red-600 text-xs font-bold mt-1 flex items-center"><AlertTriangle size={12} className="mr-1"/> {step.error}</div>}
-                                            </div>
-                                        </div>
-                                        {step.customerPhone && (
-                                            <div className="flex items-center">
-                                                <Phone size={16} className="text-gray-400 mr-2 flex-shrink-0"/>
-                                                <a href={`tel:${step.customerPhone}`} className="font-bold text-blue-600 hover:underline">{step.customerPhone}</a>
-                                            </div>
-                                        )}
-                                        {step.note && <div className="bg-yellow-50 p-2 rounded text-xs text-yellow-800 border border-yellow-100 mt-2">{step.note}</div>}
-                                    </div>
-                                    
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button 
-                                            onClick={() => handleNavigation(step.address, step.orderId)} 
-                                            className="flex flex-col items-center justify-center p-2 bg-blue-50 hover:bg-blue-100 rounded-xl text-xs font-bold text-blue-700 transition"
-                                        >
-                                            <Map size={20} className="mb-1"/> Navigovat
-                                        </button>
-                                        
-                                        {!isDelivered && !isFailed ? (
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <button 
-                                                    onClick={() => setModalState({ type: 'fail', orderId: step.orderId })} 
-                                                    className="flex flex-col items-center justify-center p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition"
-                                                >
-                                                    <XCircle size={20} className="mb-1"/> Nedoručeno
-                                                </button>
-                                                <button 
-                                                    onClick={() => setModalState({ type: 'complete', orderId: step.orderId })} 
-                                                    className="flex flex-col items-center justify-center p-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition"
-                                                >
-                                                    <Check size={20} className="mb-1"/> Hotovo
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <div className="flex flex-col items-center justify-center p-2 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold">
-                                                <Check size={20} className="mb-1"/> Uzavřeno
-                                            </div>
-                                        )}
-                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    );
-                })}
-            </div>
+                        );
+                    })}
+                </div>
+            )}
             
             {/* Modal Injection */}
             {modalState && (
@@ -392,6 +436,9 @@ export const Driver: React.FC = () => {
           <h1 className="text-xl font-bold text-primary flex items-center">
             <Navigation className="mr-2 text-accent" /> {t('driver.title')} - Přehled
           </h1>
+          <div className="flex justify-end mt-2">
+              <button onClick={refreshData} className="text-xs text-blue-600 flex items-center font-bold"><RefreshCw size={12} className={`mr-1 ${isOperationPending ? 'animate-spin' : ''}`}/> Aktualizovat</button>
+          </div>
       </div>
 
       <div className="p-4 space-y-4">
@@ -437,6 +484,9 @@ export const Driver: React.FC = () => {
                                   const totalOrders = ride.orderIds.length;
                                   const deliveredOrders = orders.filter(o => ride.orderIds.includes(o.id) && o.status === OrderStatus.DELIVERED).length;
                                   const progress = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
+                                  
+                                  // Check if pending recalc
+                                  const isPendingRecalc = !ride.steps || ride.steps.length === 0;
 
                                   return (
                                       <div key={ride.id} className="p-4 animate-in slide-in-from-top-2">
@@ -446,6 +496,9 @@ export const Driver: React.FC = () => {
                                                       <span className="text-xs font-bold bg-gray-100 px-2 py-0.5 rounded text-gray-600">Start: {ride.departureTime}</span>
                                                       <span className="text-xs text-gray-400">Trvání: {duration}</span>
                                                   </div>
+                                                  {isPendingRecalc && (
+                                                      <span className="text-[10px] text-orange-500 font-bold flex items-center mt-1"><RefreshCw size={10} className="animate-spin mr-1"/> Přepočítávám trasu...</span>
+                                                  )}
                                               </div>
                                               <button 
                                                   onClick={(e) => handleDownloadPdf(e, ride.id)}
