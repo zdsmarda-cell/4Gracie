@@ -37,10 +37,27 @@ export const PickupTab: React.FC = () => {
     const [editingPickup, setEditingPickup] = useState<Partial<PickupLocation> | null>(null);
     const [newPickupException, setNewPickupException] = useState<Partial<RegionException>>({ date: '', isOpen: false });
     const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+    
+    // Validation State
+    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+    const [exceptionErrors, setExceptionErrors] = useState<Record<string, string>>({});
 
     const savePickup = async (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationErrors({});
         if(!editingPickup) return;
+
+        const errors: Record<string, string> = {};
+        if (!editingPickup.name) errors.name = 'Vyplňte název.';
+        if (!editingPickup.street) errors.street = 'Vyplňte ulici.';
+        if (!editingPickup.city) errors.city = 'Vyplňte město.';
+        if (!editingPickup.zip) errors.zip = 'Vyplňte PSČ.';
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
+
         let newLocations = [...(settings.pickupLocations || [])];
         const loc = { ...editingPickup } as PickupLocation;
         if (!loc.id) { loc.id = 'loc-' + Date.now(); newLocations.push(loc); } 
@@ -58,7 +75,21 @@ export const PickupTab: React.FC = () => {
     };
 
     const addPickupException = () => {
-        if (!newPickupException.date) return;
+        setExceptionErrors({});
+        const errors: Record<string, string> = {};
+
+        if (!newPickupException.date) errors.date = 'Vyberte datum.';
+        
+        if (newPickupException.isOpen) {
+            if (!newPickupException.deliveryTimeStart) errors.start = 'Vyplňte čas od.';
+            if (!newPickupException.deliveryTimeEnd) errors.end = 'Vyplňte čas do.';
+        }
+
+        if (Object.keys(errors).length > 0) {
+            setExceptionErrors(errors);
+            return;
+        }
+
         if (!newPickupException.isOpen) {
             const conflictingOrders = orders.filter(o => {
                 if (o.deliveryDate !== newPickupException.date) return false;
@@ -66,9 +97,17 @@ export const PickupTab: React.FC = () => {
                 if (o.deliveryType !== 'pickup') return false; 
                 return o.pickupLocationId === editingPickup?.id;
             });
-            if (conflictingOrders.length > 0) { alert('Nelze uzavřít tento den, existují objednávky.'); return; }
+            if (conflictingOrders.length > 0) { 
+                alert('Nelze uzavřít tento den, existují aktivní objednávky.'); 
+                return; 
+            }
         }
-        if (editingPickup?.exceptions?.some(e => e.date === newPickupException.date)) { alert('Výjimka existuje.'); return; }
+        
+        if (editingPickup?.exceptions?.some(e => e.date === newPickupException.date)) { 
+            alert('Výjimka pro toto datum již existuje.'); 
+            return; 
+        }
+        
         setEditingPickup(prev => ({ ...prev, exceptions: [...(prev?.exceptions || []), newPickupException as RegionException] }));
         setNewPickupException({ date: '', isOpen: false });
     };
@@ -77,27 +116,36 @@ export const PickupTab: React.FC = () => {
          setEditingPickup(prev => ({ ...prev, exceptions: prev?.exceptions?.filter(e => e.date !== date) }));
     };
 
+    const openModal = (loc?: Partial<PickupLocation>) => {
+        setValidationErrors({});
+        setExceptionErrors({});
+        setNewPickupException({ date: '', isOpen: false });
+        if (loc) {
+            setEditingPickup(JSON.parse(JSON.stringify(loc)));
+        } else {
+            setEditingPickup({ 
+                enabled: true, 
+                exceptions: [], 
+                openingHours: { 
+                    1: { isOpen: true, start: '08:00', end: '18:00' },
+                    2: { isOpen: true, start: '08:00', end: '18:00' },
+                    3: { isOpen: true, start: '08:00', end: '18:00' },
+                    4: { isOpen: true, start: '08:00', end: '18:00' },
+                    5: { isOpen: true, start: '08:00', end: '18:00' },
+                    6: { isOpen: false, start: '09:00', end: '12:00' },
+                    0: { isOpen: false, start: '09:00', end: '12:00' }
+                } 
+            });
+        }
+        setIsPickupModalOpen(true); 
+    };
+
     return (
         <div className="animate-fade-in space-y-6">
             <div className="flex justify-between items-center">
                 <h2 className="text-xl font-bold text-primary flex items-center"><Store className="mr-2 text-accent"/> {t('admin.pickup')}</h2>
                 <button 
-                    onClick={() => { 
-                        setEditingPickup({ 
-                            enabled: true, 
-                            exceptions: [], 
-                            openingHours: { 
-                                1: { isOpen: true, start: '08:00', end: '18:00' },
-                                2: { isOpen: true, start: '08:00', end: '18:00' },
-                                3: { isOpen: true, start: '08:00', end: '18:00' },
-                                4: { isOpen: true, start: '08:00', end: '18:00' },
-                                5: { isOpen: true, start: '08:00', end: '18:00' },
-                                6: { isOpen: false, start: '09:00', end: '12:00' },
-                                0: { isOpen: false, start: '09:00', end: '12:00' }
-                            } 
-                        }); 
-                        setIsPickupModalOpen(true); 
-                    }} 
+                    onClick={() => openModal()} 
                     className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"
                 >
                     <Plus size={16} className="mr-2"/> {t('admin.pickup_new')}
@@ -109,7 +157,7 @@ export const PickupTab: React.FC = () => {
                         <div className="flex justify-between items-start mb-4">
                             <div><h3 className="font-bold text-lg">{loc.name}</h3><div className="text-xs text-gray-500 mt-1">{loc.street}, {loc.city}</div></div>
                             <div className="flex gap-2">
-                                <button onClick={() => { setEditingPickup(loc); setIsPickupModalOpen(true); }} className="p-1 hover:bg-gray-100 rounded"><Edit size={16}/></button>
+                                <button onClick={() => openModal(loc)} className="p-1 hover:bg-gray-100 rounded"><Edit size={16}/></button>
                                 <button onClick={() => setDeleteTargetId(loc.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 size={16}/></button>
                             </div>
                         </div>
@@ -151,10 +199,26 @@ export const PickupTab: React.FC = () => {
                     <form onSubmit={savePickup} className="bg-white rounded-2xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
                         <h3 className="font-bold text-lg">{editingPickup?.id ? 'Upravit odběrné místo' : 'Nové odběrné místo'}</h3>
                         <div className="grid grid-cols-2 gap-4">
-                            <div><label className="text-xs font-bold text-gray-400 block mb-1">Název místa</label><input required className="w-full border rounded p-2" value={editingPickup?.name || ''} onChange={e => setEditingPickup({ ...editingPickup, name: e.target.value })} /></div>
-                            <div><label className="text-xs font-bold text-gray-400 block mb-1">Ulice a č.p.</label><input required className="w-full border rounded p-2" value={editingPickup?.street || ''} onChange={e => setEditingPickup({ ...editingPickup, street: e.target.value })} /></div>
-                            <div><label className="text-xs font-bold text-gray-400 block mb-1">Město</label><input required className="w-full border rounded p-2" value={editingPickup?.city || ''} onChange={e => setEditingPickup({ ...editingPickup, city: e.target.value })} /></div>
-                            <div><label className="text-xs font-bold text-gray-400 block mb-1">PSČ</label><input required className="w-full border rounded p-2" value={editingPickup?.zip || ''} onChange={e => setEditingPickup({ ...editingPickup, zip: e.target.value })} /></div>
+                            <div>
+                                <label className={`text-xs font-bold block mb-1 ${validationErrors.name ? 'text-red-500' : 'text-gray-400'}`}>Název místa</label>
+                                <input className={`w-full border rounded p-2 ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`} value={editingPickup?.name || ''} onChange={e => setEditingPickup({ ...editingPickup, name: e.target.value })} />
+                                {validationErrors.name && <span className="text-[10px] text-red-500">{validationErrors.name}</span>}
+                            </div>
+                            <div>
+                                <label className={`text-xs font-bold block mb-1 ${validationErrors.street ? 'text-red-500' : 'text-gray-400'}`}>Ulice a č.p.</label>
+                                <input className={`w-full border rounded p-2 ${validationErrors.street ? 'border-red-500 bg-red-50' : ''}`} value={editingPickup?.street || ''} onChange={e => setEditingPickup({ ...editingPickup, street: e.target.value })} />
+                                {validationErrors.street && <span className="text-[10px] text-red-500">{validationErrors.street}</span>}
+                            </div>
+                            <div>
+                                <label className={`text-xs font-bold block mb-1 ${validationErrors.city ? 'text-red-500' : 'text-gray-400'}`}>Město</label>
+                                <input className={`w-full border rounded p-2 ${validationErrors.city ? 'border-red-500 bg-red-50' : ''}`} value={editingPickup?.city || ''} onChange={e => setEditingPickup({ ...editingPickup, city: e.target.value })} />
+                                {validationErrors.city && <span className="text-[10px] text-red-500">{validationErrors.city}</span>}
+                            </div>
+                            <div>
+                                <label className={`text-xs font-bold block mb-1 ${validationErrors.zip ? 'text-red-500' : 'text-gray-400'}`}>PSČ</label>
+                                <input className={`w-full border rounded p-2 ${validationErrors.zip ? 'border-red-500 bg-red-50' : ''}`} value={editingPickup?.zip || ''} onChange={e => setEditingPickup({ ...editingPickup, zip: e.target.value })} />
+                                {validationErrors.zip && <span className="text-[10px] text-red-500">{validationErrors.zip}</span>}
+                            </div>
                         </div>
 
                         <div className="border rounded-xl p-4 bg-gray-50">
@@ -193,8 +257,8 @@ export const PickupTab: React.FC = () => {
                             <label className="text-xs font-bold text-gray-400 block mb-2">Výjimky otevírací doby</label>
                             <div className="flex gap-2 mb-2 items-end">
                                 <div className="flex-1">
-                                    <span className="text-[10px] block text-gray-400">Datum</span>
-                                    <input type="date" className="w-full border rounded p-1 text-xs" value={newPickupException.date} onChange={e => setNewPickupException({ ...newPickupException, date: e.target.value })} />
+                                    <span className={`text-[10px] block ${exceptionErrors.date ? 'text-red-500 font-bold' : 'text-gray-400'}`}>Datum {exceptionErrors.date && '*'}</span>
+                                    <input type="date" className={`w-full border rounded p-1 text-xs ${exceptionErrors.date ? 'border-red-500 bg-red-50' : ''}`} value={newPickupException.date} onChange={e => setNewPickupException({ ...newPickupException, date: e.target.value })} />
                                 </div>
                                 <div className="flex items-center gap-1 pb-2">
                                     <input type="checkbox" checked={newPickupException.isOpen} onChange={e => setNewPickupException({ ...newPickupException, isOpen: e.target.checked })} />
@@ -202,8 +266,14 @@ export const PickupTab: React.FC = () => {
                                 </div>
                                 {newPickupException.isOpen && (
                                     <>
-                                        <div className="w-20"><input type="time" className="w-full border rounded p-1 text-xs" value={newPickupException.deliveryTimeStart || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeStart: e.target.value })} /></div>
-                                        <div className="w-20"><input type="time" className="w-full border rounded p-1 text-xs" value={newPickupException.deliveryTimeEnd || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeEnd: e.target.value })} /></div>
+                                        <div className="w-20">
+                                            <span className={`text-[10px] block ${exceptionErrors.start ? 'text-red-500' : 'text-gray-400'}`}>Od</span>
+                                            <input type="time" className={`w-full border rounded p-1 text-xs ${exceptionErrors.start ? 'border-red-500 bg-red-50' : ''}`} value={newPickupException.deliveryTimeStart || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeStart: e.target.value })} />
+                                        </div>
+                                        <div className="w-20">
+                                            <span className={`text-[10px] block ${exceptionErrors.end ? 'text-red-500' : 'text-gray-400'}`}>Do</span>
+                                            <input type="time" className={`w-full border rounded p-1 text-xs ${exceptionErrors.end ? 'border-red-500 bg-red-50' : ''}`} value={newPickupException.deliveryTimeEnd || ''} onChange={e => setNewPickupException({ ...newPickupException, deliveryTimeEnd: e.target.value })} />
+                                        </div>
                                     </>
                                 )}
                                 <button type="button" onClick={addPickupException} className="bg-accent text-white px-3 py-1.5 rounded text-xs font-bold self-end">+</button>
@@ -223,7 +293,7 @@ export const PickupTab: React.FC = () => {
                             <span className="text-sm">Aktivní</span>
                         </label>
                         <div className="flex gap-2 pt-4">
-                            <button type="button" onClick={() => setIsPickupModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
+                            <button type="button" onClick={() => setIsPickupModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>
                             <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('admin.save_changes')}</button>
                         </div>
                     </form>

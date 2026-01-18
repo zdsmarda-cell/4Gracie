@@ -116,6 +116,9 @@ export const CategoriesTab: React.FC = () => {
     const [viewingTranslations, setViewingTranslations] = useState<Category | CapacityCategory | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<{ type: 'cat' | 'sub' | 'cap', parentId?: string, item: any } | null>(null);
     const [warningMessage, setWarningMessage] = useState<string | null>(null);
+    
+    // Validation State
+    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     const capacityCategories = useMemo(() => settings.capacityCategories || [], [settings.capacityCategories]);
@@ -124,8 +127,18 @@ export const CategoriesTab: React.FC = () => {
 
     const saveCategory = async (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationErrors({});
         if (!editingCategory) return;
         
+        const errors: Record<string, string> = {};
+        if (!editingCategory.name) errors.name = 'Vyplňte název.';
+        if (editingCategory.order === undefined || editingCategory.order < 0) errors.order = 'Vyplňte pořadí (min. 0).';
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
+
         setIsTranslating(true);
         const cat = { ...editingCategory } as Category;
         
@@ -157,6 +170,7 @@ export const CategoriesTab: React.FC = () => {
     const openSubModal = (parentId: string, sub?: Subcategory) => {
         const parent = settings.categories.find(c => c.id === parentId);
         const nextOrder = (parent?.subcategories?.length || 0) + 1;
+        setValidationErrors({});
         setEditingSub({
             parentId,
             sub: sub ? { ...sub } : { name: '', order: nextOrder, enabled: true }
@@ -166,18 +180,26 @@ export const CategoriesTab: React.FC = () => {
 
     const saveSubcategory = async (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationErrors({});
         if (!editingSub) return;
+
+        const errors: Record<string, string> = {};
+        if (!editingSub.sub.name) errors.name = 'Vyplňte název.';
+        if (editingSub.sub.order === undefined || editingSub.sub.order < 0) errors.order = 'Vyplňte pořadí (min. 0).';
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
 
         const { parentId, sub } = editingSub;
         const parent = settings.categories.find(c => c.id === parentId);
         if (!parent) return;
 
-        // Ensure sub has ID
         if (!sub.id) {
             sub.id = removeDiacritics(sub.name || '').toLowerCase().replace(/\s+/g, '-');
         }
 
-        // Migrate legacy strings to objects if necessary (Safety check)
         const currentSubs = (parent.subcategories || []).map(s => 
             typeof s === 'string' ? { id: s, name: s, order: 0, enabled: true } : s
         );
@@ -186,10 +208,8 @@ export const CategoriesTab: React.FC = () => {
         const existingIndex = newSubs.findIndex(s => s.id === sub.id);
 
         if (existingIndex > -1) {
-            // Update
             newSubs[existingIndex] = sub as Subcategory;
         } else {
-            // Create - check duplicate ID
             if (newSubs.some(s => s.id === sub.id)) {
                 setWarningMessage('Podkategorie se stejným ID již v této kategorii existuje.');
                 return;
@@ -255,8 +275,17 @@ export const CategoriesTab: React.FC = () => {
 
     const saveCapacityCategory = async (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationErrors({});
         if (!editingCap) return;
         
+        const errors: Record<string, string> = {};
+        if (!editingCap.name) errors.name = 'Vyplňte název.';
+        
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
+
         setIsTranslating(true);
         const cap = { ...editingCap } as CapacityCategory;
         if (!cap.id) cap.id = 'cc-' + Date.now();
@@ -273,6 +302,12 @@ export const CategoriesTab: React.FC = () => {
         await updateSettings({ ...settings, capacityCategories: newCaps });
         setIsTranslating(false);
         setIsCapModalOpen(false);
+    };
+
+    const openCategoryModal = (cat?: Partial<Category>) => {
+        setValidationErrors({});
+        setEditingCategory(cat || { order: sortedCategories.length + 1, enabled: true, subcategories: [] }); 
+        setIsCategoryModalOpen(true);
     };
 
     return (
@@ -299,7 +334,7 @@ export const CategoriesTab: React.FC = () => {
                 <>
                     <div className="flex justify-between items-center mb-4">
                         <h2 className="text-xl font-bold text-primary flex items-center"><LayoutList className="mr-2 text-accent" /> {t('admin.categories')}</h2>
-                        <button onClick={() => { setEditingCategory({ order: sortedCategories.length + 1, enabled: true, subcategories: [] }); setIsCategoryModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.cat_new')}</button>
+                        <button onClick={() => openCategoryModal()} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.cat_new')}</button>
                     </div>
                     <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
                         <table className="min-w-full">
@@ -335,7 +370,7 @@ export const CategoriesTab: React.FC = () => {
                                                     {cat.enabled ? <span className="text-green-500 font-bold">{t('common.active')}</span> : <span className="text-gray-400">Skryto</span>}
                                                 </td>
                                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                                    <button onClick={() => { setEditingCategory(cat); setIsCategoryModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                                    <button onClick={() => openCategoryModal(cat)} className="p-1 hover:text-primary"><Edit size={16}/></button>
                                                     <button onClick={() => requestDelete('cat', cat)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
                                                 </td>
                                             </tr>
@@ -419,7 +454,7 @@ export const CategoriesTab: React.FC = () => {
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                                <button onClick={() => { setEditingCap(cap); setIsCapModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                                <button onClick={() => { setEditingCap(cap); setValidationErrors({}); setIsCapModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
                                                 <button onClick={() => requestDelete('cap', cap)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
                                             </td>
                                         </tr>
@@ -449,8 +484,31 @@ export const CategoriesTab: React.FC = () => {
                     <form onSubmit={saveCategory} className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl animate-in zoom-in-95">
                         <h3 className="font-bold text-lg">{editingCategory?.id ? 'Upravit kategorii' : 'Nová kategorie'}</h3>
                         
-                        <div><label className="text-xs font-bold text-gray-400 block mb-1">Název</label><input required className="w-full border rounded p-2" value={editingCategory?.name || ''} onChange={e => setEditingCategory({ ...editingCategory, name: e.target.value })} /></div>
-                        <div><label className="text-xs font-bold text-gray-400 block mb-1">Pořadí</label><input type="number" required className="w-full border rounded p-2" value={editingCategory?.order || ''} onChange={e => setEditingCategory({ ...editingCategory, order: Number(e.target.value) })} /></div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Název {validationErrors.name && <span className="text-red-500">*</span>}</label>
+                            <input 
+                                className={`w-full border rounded p-2 ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`} 
+                                value={editingCategory?.name || ''} 
+                                onChange={e => {
+                                    setEditingCategory({ ...editingCategory, name: e.target.value });
+                                    setValidationErrors({...validationErrors, name: ''});
+                                }} 
+                            />
+                            {validationErrors.name && <span className="text-[10px] text-red-500">{validationErrors.name}</span>}
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Pořadí {validationErrors.order && <span className="text-red-500">*</span>}</label>
+                            <input 
+                                type="number" 
+                                className={`w-full border rounded p-2 ${validationErrors.order ? 'border-red-500 bg-red-50' : ''}`}
+                                value={editingCategory?.order || ''} 
+                                onChange={e => {
+                                    setEditingCategory({ ...editingCategory, order: Number(e.target.value) });
+                                    setValidationErrors({...validationErrors, order: ''});
+                                }} 
+                            />
+                            {validationErrors.order && <span className="text-[10px] text-red-500">{validationErrors.order}</span>}
+                        </div>
                         
                         <label className="flex items-center gap-2 pt-2"><input type="checkbox" checked={editingCategory?.enabled ?? true} onChange={e => setEditingCategory({ ...editingCategory, enabled: e.target.checked })} /><span className="text-sm">Aktivní</span></label>
                         
@@ -476,13 +534,31 @@ export const CategoriesTab: React.FC = () => {
                         </p>
                         
                         <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">Název</label>
-                            <input autoFocus required className="w-full border rounded p-2" value={editingSub.sub.name || ''} onChange={e => setEditingSub({ ...editingSub, sub: { ...editingSub.sub, name: e.target.value } })} />
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Název {validationErrors.name && <span className="text-red-500">*</span>}</label>
+                            <input 
+                                autoFocus 
+                                className={`w-full border rounded p-2 ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`}
+                                value={editingSub.sub.name || ''} 
+                                onChange={e => {
+                                    setEditingSub({ ...editingSub, sub: { ...editingSub.sub, name: e.target.value } });
+                                    setValidationErrors({...validationErrors, name: ''});
+                                }} 
+                            />
+                            {validationErrors.name && <span className="text-[10px] text-red-500">{validationErrors.name}</span>}
                         </div>
                         
                         <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">Pořadí</label>
-                            <input type="number" required className="w-full border rounded p-2" value={editingSub.sub.order || ''} onChange={e => setEditingSub({ ...editingSub, sub: { ...editingSub.sub, order: Number(e.target.value) } })} />
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Pořadí {validationErrors.order && <span className="text-red-500">*</span>}</label>
+                            <input 
+                                type="number" 
+                                className={`w-full border rounded p-2 ${validationErrors.order ? 'border-red-500 bg-red-50' : ''}`}
+                                value={editingSub.sub.order || ''} 
+                                onChange={e => {
+                                    setEditingSub({ ...editingSub, sub: { ...editingSub.sub, order: Number(e.target.value) } });
+                                    setValidationErrors({...validationErrors, order: ''});
+                                }} 
+                            />
+                            {validationErrors.order && <span className="text-[10px] text-red-500">{validationErrors.order}</span>}
                         </div>
 
                         <label className="flex items-center gap-2 pt-2">
@@ -504,8 +580,16 @@ export const CategoriesTab: React.FC = () => {
                     <form onSubmit={saveCapacityCategory} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl animate-in zoom-in-95">
                         <h3 className="font-bold text-lg">{editingCap?.id ? 'Upravit kapacitní skupinu' : 'Nová kapacitní skupina'}</h3>
                         <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">Název skupiny (např. Fritéza)</label>
-                            <input required className="w-full border rounded p-2" value={editingCap?.name || ''} onChange={e => setEditingCap({ ...editingCap, name: e.target.value })} />
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Název skupiny (např. Fritéza) {validationErrors.name && <span className="text-red-500">*</span>}</label>
+                            <input 
+                                className={`w-full border rounded p-2 ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`}
+                                value={editingCap?.name || ''} 
+                                onChange={e => {
+                                    setEditingCap({ ...editingCap, name: e.target.value });
+                                    setValidationErrors({...validationErrors, name: ''});
+                                }} 
+                            />
+                            {validationErrors.name && <span className="text-[10px] text-red-500">{validationErrors.name}</span>}
                         </div>
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsCapModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>

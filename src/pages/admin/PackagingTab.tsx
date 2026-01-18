@@ -51,6 +51,7 @@ export const PackagingTab: React.FC = () => {
     const [editingPackaging, setEditingPackaging] = useState<Partial<PackagingType> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null);
     const [isTranslating, setIsTranslating] = useState(false);
+    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
     
     // Local state for free limit to prevent immediate DB write
     const [localFreeLimit, setLocalFreeLimit] = useState(settings.packaging.freeFrom);
@@ -63,8 +64,19 @@ export const PackagingTab: React.FC = () => {
 
     const savePackaging = async (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationErrors({});
         if (!editingPackaging) return;
         
+        const errors: Record<string, string> = {};
+        if (!editingPackaging.name) errors.name = 'Vyplňte název.';
+        if (editingPackaging.volume === undefined || editingPackaging.volume < 0) errors.volume = 'Vyplňte objem (min. 0).';
+        if (editingPackaging.price === undefined || editingPackaging.price < 0) errors.price = 'Vyplňte cenu (min. 0).';
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
+
         if (settings.enableAiTranslation) {
             setIsTranslating(true);
         }
@@ -108,6 +120,12 @@ export const PackagingTab: React.FC = () => {
         });
     };
 
+    const openModal = (pkg?: Partial<PackagingType>) => {
+        setValidationErrors({});
+        setEditingPackaging(pkg || {});
+        setIsPackagingModalOpen(true);
+    };
+
     return (
         <div className="animate-fade-in space-y-6">
             <div className="bg-white p-6 rounded-2xl border shadow-sm">
@@ -126,7 +144,7 @@ export const PackagingTab: React.FC = () => {
             <div className="bg-white p-6 rounded-2xl border shadow-sm">
                 <div className="flex justify-between items-center mb-4">
                 <h3 className="font-bold">{t('admin.packaging')}</h3>
-                <button onClick={() => { setEditingPackaging({}); setIsPackagingModalOpen(true); }} className="bg-white border hover:bg-gray-50 px-3 py-1 rounded text-xs font-bold flex items-center"><Plus size={14} className="mr-1"/> {t('admin.pkg_new')}</button>
+                <button onClick={() => openModal()} className="bg-white border hover:bg-gray-50 px-3 py-1 rounded text-xs font-bold flex items-center"><Plus size={14} className="mr-1"/> {t('admin.pkg_new')}</button>
                 </div>
                 <div className="space-y-2">
                 {settings.packaging.types.map(p => (
@@ -151,7 +169,7 @@ export const PackagingTab: React.FC = () => {
                             )}
                         </div>
                     </div>
-                    <div className="flex items-center gap-4"><span className="font-bold text-sm">{p.price} Kč</span><button onClick={() => { setEditingPackaging(p); setIsPackagingModalOpen(true); }} className="text-gray-400 hover:text-primary"><Edit size={16}/></button><button onClick={() => setDeleteTarget({id: p.id, name: p.name})} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button></div>
+                    <div className="flex items-center gap-4"><span className="font-bold text-sm">{p.price} Kč</span><button onClick={() => openModal(p)} className="text-gray-400 hover:text-primary"><Edit size={16}/></button><button onClick={() => setDeleteTarget({id: p.id, name: p.name})} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button></div>
                     </div>
                 ))}
                 </div>
@@ -176,10 +194,47 @@ export const PackagingTab: React.FC = () => {
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
                     <form onSubmit={savePackaging} className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4 shadow-2xl">
                         <h3 className="font-bold text-lg">{editingPackaging?.id ? 'Upravit obal' : 'Nový obal'}</h3>
-                        <div><label className="text-xs font-bold text-gray-400 block mb-1">Název</label><input required className="w-full border rounded p-2" value={editingPackaging?.name || ''} onChange={e => setEditingPackaging({...editingPackaging, name: e.target.value})} /></div>
+                        
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Název {validationErrors.name && <span className="text-red-500">*</span>}</label>
+                            <input 
+                                className={`w-full border rounded p-2 ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`}
+                                value={editingPackaging?.name || ''} 
+                                onChange={e => {
+                                    setEditingPackaging({...editingPackaging, name: e.target.value});
+                                    setValidationErrors({...validationErrors, name: ''});
+                                }} 
+                            />
+                            {validationErrors.name && <span className="text-[10px] text-red-500">{validationErrors.name}</span>}
+                        </div>
+                        
                         <div className="grid grid-cols-2 gap-2">
-                            <div><label className="text-xs font-bold text-gray-400 block mb-1">Objem (ml)</label><input type="number" required className="w-full border rounded p-2" value={editingPackaging?.volume || ''} onChange={e => setEditingPackaging({...editingPackaging, volume: Number(e.target.value)})} /></div>
-                            <div><label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč)</label><input type="number" required className="w-full border rounded p-2" value={editingPackaging?.price || ''} onChange={e => setEditingPackaging({...editingPackaging, price: Number(e.target.value)})} /></div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">Objem (ml) {validationErrors.volume && <span className="text-red-500">*</span>}</label>
+                                <input 
+                                    type="number" 
+                                    className={`w-full border rounded p-2 ${validationErrors.volume ? 'border-red-500 bg-red-50' : ''}`}
+                                    value={editingPackaging?.volume || ''} 
+                                    onChange={e => {
+                                        setEditingPackaging({...editingPackaging, volume: Number(e.target.value)});
+                                        setValidationErrors({...validationErrors, volume: ''});
+                                    }} 
+                                />
+                                {validationErrors.volume && <span className="text-[10px] text-red-500">{validationErrors.volume}</span>}
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč) {validationErrors.price && <span className="text-red-500">*</span>}</label>
+                                <input 
+                                    type="number" 
+                                    className={`w-full border rounded p-2 ${validationErrors.price ? 'border-red-500 bg-red-50' : ''}`}
+                                    value={editingPackaging?.price || ''} 
+                                    onChange={e => {
+                                        setEditingPackaging({...editingPackaging, price: Number(e.target.value)});
+                                        setValidationErrors({...validationErrors, price: ''});
+                                    }} 
+                                />
+                                {validationErrors.price && <span className="text-[10px] text-red-500">{validationErrors.price}</span>}
+                            </div>
                         </div>
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsPackagingModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>

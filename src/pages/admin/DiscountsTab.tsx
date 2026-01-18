@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DiscountCode, DiscountType, OrderStatus } from '../../types';
-import { Plus, Edit, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertTriangle, AlertCircle } from 'lucide-react';
 
 const DeleteConfirmModal: React.FC<{
     isOpen: boolean;
@@ -36,7 +36,7 @@ export const DiscountsTab: React.FC = () => {
     const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
     const [editingDiscount, setEditingDiscount] = useState<Partial<DiscountCode> | null>(null);
     const [confirmDelete, setConfirmDelete] = useState<{ id: string, code: string } | null>(null);
-    const [modalError, setModalError] = useState<string | null>(null);
+    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
     
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
 
@@ -58,43 +58,52 @@ export const DiscountsTab: React.FC = () => {
 
     const saveDiscount = async (e: React.FormEvent) => {
         e.preventDefault();
-        setModalError(null);
+        setValidationErrors({});
         if (!editingDiscount) return;
 
+        const errors: Record<string, string> = {};
         const codeToSave = (editingDiscount.code || '').trim().toUpperCase();
+        
         if (!codeToSave) {
-            setModalError(t('admin.fill_code'));
-            return;
+            errors.code = t('admin.fill_code');
         }
 
         // --- VALIDATION START ---
         const val = Number(editingDiscount.value);
         if (isNaN(val)) {
-             setModalError('Zadejte platnou číselnou hodnotu.');
-             return;
-        }
-
-        if (editingDiscount.type === DiscountType.PERCENTAGE) {
+             errors.value = 'Zadejte platnou číselnou hodnotu.';
+        } else if (editingDiscount.type === DiscountType.PERCENTAGE) {
             if (val < 1 || val > 100) {
-                setModalError('Hodnota procentuální slevy musí být mezi 1 a 100.');
-                return;
+                errors.value = 'Hodnota musí být mezi 1 a 100.';
             }
         } else {
             // Fixed amount check (must be at least 1)
             if (val < 1) {
-                setModalError('Hodnota slevy musí být alespoň 1 Kč.');
-                return;
+                errors.value = 'Hodnota slevy musí být alespoň 1 Kč.';
+            }
+        }
+        
+        if (Number(editingDiscount.minOrderValue) < 0) {
+            errors.minOrderValue = 'Hodnota nesmí být záporná.';
+        }
+        if (Number(editingDiscount.maxUsage) < 0) {
+            errors.maxUsage = 'Hodnota nesmí být záporná.';
+        }
+
+        // Check Duplicates
+        if (codeToSave) {
+            const duplicate = discountCodes.find(d => 
+                d.code.toUpperCase() === codeToSave && 
+                d.id !== editingDiscount.id
+            );
+            if (duplicate) {
+                errors.code = t('admin.code_exists');
             }
         }
         // --- VALIDATION END ---
 
-        const duplicate = discountCodes.find(d => 
-            d.code.toUpperCase() === codeToSave && 
-            d.id !== editingDiscount.id
-        );
-
-        if (duplicate) {
-            setModalError(t('admin.code_exists'));
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
             return;
         }
 
@@ -123,7 +132,7 @@ export const DiscountsTab: React.FC = () => {
     };
 
     const openModal = (discount?: Partial<DiscountCode>) => {
-        setModalError(null);
+        setValidationErrors({});
         setEditingDiscount(discount || { id: Date.now().toString(), enabled: true, type: DiscountType.PERCENTAGE, value: 0 });
         setIsDiscountModalOpen(true);
     };
@@ -186,20 +195,18 @@ export const DiscountsTab: React.FC = () => {
                     <form onSubmit={saveDiscount} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl overflow-y-auto max-h-[90vh]">
                         <h3 className="font-bold text-lg">{editingDiscount?.id ? t('admin.edit_discount') : t('admin.add_discount')}</h3>
                         
-                        {modalError && (
-                            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold flex items-center animate-in zoom-in-95 duration-200">
-                                <AlertTriangle size={16} className="mr-2 flex-shrink-0"/> {modalError}
-                            </div>
-                        )}
-
                         <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">{t('discount.code')}</label>
+                            <label className={`text-xs font-bold block mb-1 ${validationErrors.code ? 'text-red-500' : 'text-gray-400'}`}>{t('discount.code')}</label>
                             <input 
-                                className="w-full border rounded p-2 uppercase focus:ring-accent outline-none" 
+                                className={`w-full border rounded p-2 uppercase focus:ring-accent outline-none ${validationErrors.code ? 'border-red-500 bg-red-50' : ''}`} 
                                 value={editingDiscount?.code || ''} 
-                                onChange={e => setEditingDiscount({...editingDiscount, code: e.target.value.toUpperCase()})}
+                                onChange={e => {
+                                    setEditingDiscount({...editingDiscount, code: e.target.value.toUpperCase()});
+                                    setValidationErrors({...validationErrors, code: ''});
+                                }}
                                 placeholder="např. SLEVA20" 
                             />
+                            {validationErrors.code && <p className="text-[10px] text-red-500 mt-1">{validationErrors.code}</p>}
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
@@ -210,26 +217,38 @@ export const DiscountsTab: React.FC = () => {
                                 </select>
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.value')}</label>
+                                <label className={`text-xs font-bold block mb-1 ${validationErrors.value ? 'text-red-500' : 'text-gray-400'}`}>{t('admin.value')}</label>
                                 <input 
                                     type="number" 
-                                    className="w-full border rounded p-2" 
+                                    className={`w-full border rounded p-2 ${validationErrors.value ? 'border-red-500 bg-red-50' : ''}`} 
                                     value={editingDiscount?.value || ''} 
-                                    onChange={e => setEditingDiscount({...editingDiscount, value: Number(e.target.value)})}
+                                    onChange={e => {
+                                        setEditingDiscount({...editingDiscount, value: Number(e.target.value)});
+                                        setValidationErrors({...validationErrors, value: ''});
+                                    }}
                                     max={editingDiscount?.type === DiscountType.PERCENTAGE ? 100 : undefined} 
                                     min="1"
                                     placeholder={editingDiscount?.type === DiscountType.PERCENTAGE ? '1-100' : 'min. 1'}
                                 />
+                                {validationErrors.value && <p className="text-[10px] text-red-500 mt-1">{validationErrors.value}</p>}
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.min_order_val')} (Kč)</label>
-                                <input type="number" className="w-full border rounded p-2" value={editingDiscount?.minOrderValue || ''} onChange={e => setEditingDiscount({...editingDiscount, minOrderValue: Number(e.target.value)})} />
+                                <label className={`text-xs font-bold block mb-1 ${validationErrors.minOrderValue ? 'text-red-500' : 'text-gray-400'}`}>{t('admin.min_order_val')} (Kč)</label>
+                                <input type="number" className={`w-full border rounded p-2 ${validationErrors.minOrderValue ? 'border-red-500 bg-red-50' : ''}`} value={editingDiscount?.minOrderValue || ''} onChange={e => {
+                                    setEditingDiscount({...editingDiscount, minOrderValue: Number(e.target.value)});
+                                    setValidationErrors({...validationErrors, minOrderValue: ''});
+                                }} />
+                                {validationErrors.minOrderValue && <p className="text-[10px] text-red-500 mt-1">{validationErrors.minOrderValue}</p>}
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.limit_usage')} (ks)</label>
-                                <input type="number" className="w-full border rounded p-2" value={editingDiscount?.maxUsage || ''} onChange={e => setEditingDiscount({...editingDiscount, maxUsage: Number(e.target.value)})} placeholder="0 = neomezeně" />
+                                <label className={`text-xs font-bold block mb-1 ${validationErrors.maxUsage ? 'text-red-500' : 'text-gray-400'}`}>{t('admin.limit_usage')} (ks)</label>
+                                <input type="number" className={`w-full border rounded p-2 ${validationErrors.maxUsage ? 'border-red-500 bg-red-50' : ''}`} value={editingDiscount?.maxUsage || ''} onChange={e => {
+                                    setEditingDiscount({...editingDiscount, maxUsage: Number(e.target.value)});
+                                    setValidationErrors({...validationErrors, maxUsage: ''});
+                                }} placeholder="0 = neomezeně" />
+                                {validationErrors.maxUsage && <p className="text-[10px] text-red-500 mt-1">{validationErrors.maxUsage}</p>}
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-2">

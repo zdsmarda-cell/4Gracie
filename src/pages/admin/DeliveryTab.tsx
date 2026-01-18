@@ -39,13 +39,33 @@ const RegionModal: React.FC<{
     const [formData, setFormData] = useState<Partial<DeliveryRegion>>(region);
     const [newZip, setNewZip] = useState('');
     const [newException, setNewException] = useState<Partial<RegionException>>({ date: '', isOpen: false });
+    
+    // Validation State
+    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+    const [exceptionErrors, setExceptionErrors] = useState<Record<string, string>>({});
 
-    React.useEffect(() => { setFormData(region); }, [region]);
+    React.useEffect(() => { 
+        setFormData(region); 
+        setValidationErrors({});
+        setExceptionErrors({});
+    }, [region]);
 
     if (!isOpen) return null;
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        setValidationErrors({});
+        
+        const errors: Record<string, string> = {};
+        if (!formData.name) errors.name = 'Vyplňte název.';
+        if (formData.price === undefined || formData.price < 0) errors.price = 'Vyplňte cenu (min. 0).';
+        if (formData.freeFrom === undefined || formData.freeFrom < 0) errors.freeFrom = 'Vyplňte limit (min. 0).';
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
+
         onSave(formData as DeliveryRegion);
     };
 
@@ -61,10 +81,22 @@ const RegionModal: React.FC<{
     };
     
     const addException = () => {
-        if(newException.date) {
-            setFormData({ ...formData, exceptions: [...(formData.exceptions || []), newException as RegionException] });
-            setNewException({ date: '', isOpen: false });
+        setExceptionErrors({});
+        const errors: Record<string, string> = {};
+
+        if (!newException.date) errors.date = 'Vyberte datum.';
+        if (newException.isOpen) {
+            if (!newException.deliveryTimeStart) errors.start = 'Vyplňte čas od.';
+            if (!newException.deliveryTimeEnd) errors.end = 'Vyplňte čas do.';
         }
+
+        if (Object.keys(errors).length > 0) {
+            setExceptionErrors(errors);
+            return;
+        }
+
+        setFormData({ ...formData, exceptions: [...(formData.exceptions || []), newException as RegionException] });
+        setNewException({ date: '', isOpen: false });
     };
 
     const removeException = (date: string) => {
@@ -76,10 +108,20 @@ const RegionModal: React.FC<{
              <form onSubmit={handleSubmit} className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
                  <h3 className="font-bold text-lg">{formData.id ? 'Upravit region' : 'Nový region'}</h3>
                  <div className="space-y-3">
-                    <input className="w-full border rounded p-2" placeholder="Název" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} required />
+                    <div>
+                        <input className={`w-full border rounded p-2 ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`} placeholder="Název" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} />
+                        {validationErrors.name && <span className="text-[10px] text-red-500">{validationErrors.name}</span>}
+                    </div>
+                    
                     <div className="grid grid-cols-2 gap-2">
-                        <input type="number" className="border rounded p-2" placeholder="Cena dopravy" value={formData.price || ''} onChange={e => setFormData({...formData, price: Number(e.target.value)})} required />
-                        <input type="number" className="border rounded p-2" placeholder="Zdarma od" value={formData.freeFrom || ''} onChange={e => setFormData({...formData, freeFrom: Number(e.target.value)})} required />
+                        <div>
+                            <input type="number" className={`w-full border rounded p-2 ${validationErrors.price ? 'border-red-500 bg-red-50' : ''}`} placeholder="Cena dopravy" value={formData.price ?? ''} onChange={e => setFormData({...formData, price: Number(e.target.value)})} />
+                            {validationErrors.price && <span className="text-[10px] text-red-500">{validationErrors.price}</span>}
+                        </div>
+                        <div>
+                            <input type="number" className={`w-full border rounded p-2 ${validationErrors.freeFrom ? 'border-red-500 bg-red-50' : ''}`} placeholder="Zdarma od" value={formData.freeFrom ?? ''} onChange={e => setFormData({...formData, freeFrom: Number(e.target.value)})} />
+                            {validationErrors.freeFrom && <span className="text-[10px] text-red-500">{validationErrors.freeFrom}</span>}
+                        </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                          <input type="time" className="border rounded p-2" value={formData.deliveryTimeStart || ''} onChange={e => setFormData({...formData, deliveryTimeStart: e.target.value})} />
@@ -102,16 +144,24 @@ const RegionModal: React.FC<{
                      <div className="bg-gray-50 p-3 rounded">
                         <label className="text-xs font-bold block mb-1">Výjimky</label>
                         <div className="flex gap-2 mb-2 items-end">
-                             <input type="date" className="border rounded p-1" value={newException.date} onChange={e => setNewException({...newException, date: e.target.value})} />
-                             <label className="text-xs flex items-center"><input type="checkbox" checked={newException.isOpen} onChange={e => setNewException({...newException, isOpen: e.target.checked})} /> Otevřeno</label>
-                             <button type="button" onClick={addException} className="bg-gray-200 px-3 rounded">+</button>
-                        </div>
-                        {newException.isOpen && (
-                             <div className="flex gap-2 mb-2">
-                                 <input type="time" className="border rounded p-1 w-20" value={newException.deliveryTimeStart || ''} onChange={e => setNewException({...newException, deliveryTimeStart: e.target.value})} />
-                                 <input type="time" className="border rounded p-1 w-20" value={newException.deliveryTimeEnd || ''} onChange={e => setNewException({...newException, deliveryTimeEnd: e.target.value})} />
+                             <div className="flex-1">
+                                 <span className={`text-[10px] block ${exceptionErrors.date ? 'text-red-500' : 'text-gray-400'}`}>Datum</span>
+                                 <input type="date" className={`w-full border rounded p-1 ${exceptionErrors.date ? 'border-red-500 bg-red-50' : ''}`} value={newException.date} onChange={e => setNewException({...newException, date: e.target.value})} />
                              </div>
-                        )}
+                             <label className="text-xs flex items-center pb-2"><input type="checkbox" checked={newException.isOpen} onChange={e => setNewException({...newException, isOpen: e.target.checked})} /> Otevřeno</label>
+                             
+                             {newException.isOpen && (
+                                 <>
+                                     <div className="w-20">
+                                         <input type="time" className={`w-full border rounded p-1 ${exceptionErrors.start ? 'border-red-500 bg-red-50' : ''}`} value={newException.deliveryTimeStart || ''} onChange={e => setNewException({...newException, deliveryTimeStart: e.target.value})} />
+                                     </div>
+                                     <div className="w-20">
+                                         <input type="time" className={`w-full border rounded p-1 ${exceptionErrors.end ? 'border-red-500 bg-red-50' : ''}`} value={newException.deliveryTimeEnd || ''} onChange={e => setNewException({...newException, deliveryTimeEnd: e.target.value})} />
+                                     </div>
+                                 </>
+                            )}
+                             <button type="button" onClick={addException} className="bg-gray-200 px-3 rounded pb-1 pt-1 font-bold">+</button>
+                        </div>
                         <div className="space-y-1">
                             {formData.exceptions?.map(ex => (
                                 <div key={ex.date} className="flex justify-between text-xs border-b">

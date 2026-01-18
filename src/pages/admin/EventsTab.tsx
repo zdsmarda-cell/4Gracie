@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { EventSlot, OrderStatus } from '../../types';
-import { Plus, Edit, Trash2, Calendar, AlertTriangle, ListFilter, Mail } from 'lucide-react';
+import { Plus, Edit, Trash2, Calendar, AlertTriangle, ListFilter, Mail, AlertCircle } from 'lucide-react';
 
 const WarningModal: React.FC<{
     isOpen: boolean;
@@ -63,6 +63,7 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
     const [editingSlot, setEditingSlot] = useState<Partial<EventSlot> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
     const [warningMessage, setWarningMessage] = useState<string | null>(null);
+    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
     
     // Checkbox for sending notifications
     const [sendNotification, setSendNotification] = useState(false);
@@ -72,6 +73,9 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
     
+    // Helper class to hide spinners
+    const noSpinnerClass = "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
+
     const eventSlots = useMemo(() => {
         const today = new Date().toISOString().split('T')[0];
         const allSlots = [...(settings.eventSlots || [])].sort((a, b) => a.date.localeCompare(b.date));
@@ -95,21 +99,36 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
 
     const saveEventSlot = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!editingSlot || !editingSlot.date) return;
+        setValidationErrors({});
+        if (!editingSlot) return;
+
+        const errors: Record<string, string> = {};
+
+        if (!editingSlot.date) {
+            errors.date = 'Vyberte datum akce.';
+        }
         
         // Ensure capacityOverrides exists
         if (!editingSlot.capacityOverrides) editingSlot.capacityOverrides = {};
         
         // Validation: Check for negative capacities
-        if (Object.values(editingSlot.capacityOverrides).some((val) => (val as number) < 0)) {
-            alert('Kapacita nesmí být záporná (musí být 0 nebo vyšší).');
+        let hasNegative = false;
+        Object.entries(editingSlot.capacityOverrides).forEach(([key, val]) => {
+            if ((val as number) < 0) {
+                errors[`cap_${key}`] = 'Kapacita nesmí být záporná.';
+                hasNegative = true;
+            }
+        });
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
             return;
         }
         
         await updateEventSlot(editingSlot as EventSlot);
         
         if (sendNotification) {
-            await notifyEventSubscribers(editingSlot.date);
+            await notifyEventSubscribers(editingSlot.date!);
         }
 
         setIsModalOpen(false);
@@ -138,6 +157,7 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
     };
 
     const openModal = (slot?: Partial<EventSlot>) => {
+        setValidationErrors({});
         setEditingSlot(slot ? JSON.parse(JSON.stringify(slot)) : { date: '', capacityOverrides: {} });
         setSendNotification(false);
         setIsModalOpen(true);
@@ -237,37 +257,46 @@ export const EventsTab: React.FC<EventsTabProps> = ({ onNavigateToOrders }) => {
 
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-                    <form onSubmit={saveEventSlot} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <form onSubmit={saveEventSlot} className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
                         <h3 className="font-bold text-lg">{t('admin.event_add')}</h3>
                         <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">Datum akce</label>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Datum akce {validationErrors.date && <span className="text-red-500">*</span>}</label>
                             <input 
                                 type="date" 
-                                required 
-                                className="w-full border rounded p-2" 
+                                className={`w-full border rounded p-2 ${validationErrors.date ? 'border-red-500 bg-red-50' : ''}`}
                                 value={editingSlot?.date || ''} 
-                                onChange={e => setEditingSlot({...editingSlot, date: e.target.value})} 
+                                onChange={e => {
+                                    setEditingSlot({...editingSlot, date: e.target.value});
+                                    setValidationErrors({...validationErrors, date: ''});
+                                }} 
                                 disabled={!!editingSlot?.date && settings.eventSlots.some(s => s.date === editingSlot.date && s !== editingSlot)} 
                             />
+                            {validationErrors.date && <p className="text-[10px] text-red-500 mt-1">{validationErrors.date}</p>}
                         </div>
                         
                         <div className="bg-gray-50 p-4 rounded-xl border">
                             <h4 className="text-xs font-bold mb-3 uppercase text-gray-500">{t('admin.event_capacities')}</h4>
                             <div className="space-y-3 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
                                 {sortedCategories.map(cat => (
-                                    <div key={cat.id} className="flex justify-between items-center text-sm">
-                                        <span className="font-bold text-gray-700">{cat.name}</span>
-                                        <input 
-                                            type="number"
-                                            min="0" 
-                                            className="w-24 border rounded p-1 text-right font-mono focus:ring-accent outline-none" 
-                                            placeholder="Limit" 
-                                            value={editingSlot?.capacityOverrides?.[cat.id] ?? ''} 
-                                            onChange={e => setEditingSlot({
-                                                ...editingSlot,
-                                                capacityOverrides: { ...editingSlot?.capacityOverrides, [cat.id]: Number(e.target.value) }
-                                            })} 
-                                        />
+                                    <div key={cat.id}>
+                                        <div className="flex justify-between items-center text-sm mb-1">
+                                            <span className="font-bold text-gray-700">{cat.name}</span>
+                                            <input 
+                                                type="number"
+                                                min="0" 
+                                                className={`w-24 border rounded p-1 text-right font-mono focus:ring-accent outline-none ${noSpinnerClass} ${validationErrors[`cap_${cat.id}`] ? 'border-red-500 bg-red-50' : ''}`}
+                                                placeholder="Limit" 
+                                                value={editingSlot?.capacityOverrides?.[cat.id] ?? ''} 
+                                                onChange={e => {
+                                                    setEditingSlot({
+                                                        ...editingSlot,
+                                                        capacityOverrides: { ...editingSlot?.capacityOverrides, [cat.id]: Number(e.target.value) }
+                                                    });
+                                                    setValidationErrors({...validationErrors, [`cap_${cat.id}`]: ''});
+                                                }} 
+                                            />
+                                        </div>
+                                        {validationErrors[`cap_${cat.id}`] && <p className="text-[10px] text-red-500 text-right">{validationErrors[`cap_${cat.id}`]}</p>}
                                     </div>
                                 ))}
                             </div>
