@@ -91,6 +91,9 @@ export const ProductsTab: React.FC = () => {
     
     const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
 
+    // Helper class to hide spinners
+    const noSpinnerClass = "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
+
     // Derived subcategories for current editing product's category
     const activeSubcategories = useMemo(() => {
         if (!editingProduct?.category) return [];
@@ -427,7 +430,7 @@ export const ProductsTab: React.FC = () => {
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
                                     <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč)</label>
-                                    <input type="number" required className="w-full border rounded p-2" value={editingProduct?.price || ''} onChange={e => setEditingProduct({...editingProduct, price: Number(e.target.value)})} />
+                                    <input type="number" required className={`w-full border rounded p-2 ${noSpinnerClass}`} value={editingProduct?.price || ''} onChange={e => setEditingProduct({...editingProduct, price: Number(e.target.value)})} />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-gray-400 block mb-1">Jednotka</label>
@@ -470,10 +473,22 @@ export const ProductsTab: React.FC = () => {
                         <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
                             <h4 className="font-bold text-sm text-gray-500 uppercase">Logistika a Časování</h4>
                             <div className="grid grid-cols-4 gap-4">
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Objednat předem (dny)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.leadTimeDays || ''} onChange={e => setEditingProduct({...editingProduct, leadTimeDays: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Trvanlivost (dny)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.shelfLifeDays || ''} onChange={e => setEditingProduct({...editingProduct, shelfLifeDays: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.minOrderQuantity || ''} onChange={e => setEditingProduct({...editingProduct, minOrderQuantity: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.volume || ''} onChange={e => setEditingProduct({...editingProduct, volume: Number(e.target.value)})} /></div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Objednat předem (dny)</label>
+                                    <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.leadTimeDays || ''} onChange={e => setEditingProduct({...editingProduct, leadTimeDays: Number(e.target.value)})} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Trvanlivost (dny)</label>
+                                    <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.shelfLifeDays || ''} onChange={e => setEditingProduct({...editingProduct, shelfLifeDays: Number(e.target.value)})} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks)</label>
+                                    <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.minOrderQuantity || ''} onChange={e => setEditingProduct({...editingProduct, minOrderQuantity: Number(e.target.value)})} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml)</label>
+                                    <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.volume || ''} onChange={e => setEditingProduct({...editingProduct, volume: Number(e.target.value)})} />
+                                </div>
                             </div>
                             <div className="flex flex-col gap-2 pt-1">
                                 <label className="flex items-center space-x-2 text-sm"><input type="checkbox" checked={editingProduct?.noPackaging ?? false} onChange={e => setEditingProduct({...editingProduct, noPackaging: e.target.checked})} className="rounded text-accent"/><span>Nebalí se (nezapočítávat do objemu krabic)</span></label>
@@ -485,10 +500,22 @@ export const ProductsTab: React.FC = () => {
                         <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
                             <h4 className="font-bold text-sm text-gray-500 uppercase">Ekonomika a Kapacity</h4>
                             <div className="grid grid-cols-4 gap-4">
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Pracnost (body)</label><input type="number" min="0" className="w-full border rounded p-2 text-sm" value={editingProduct?.workload ?? ''} onChange={e => setEditingProduct({...editingProduct, workload: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">Režie přípravy</label><input type="number" min="0" className="w-full border rounded p-2 text-sm" value={editingProduct?.workloadOverhead ?? ''} onChange={e => setEditingProduct({...editingProduct, workloadOverhead: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">DPH Prodejna (%)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.vatRateInner ?? ''} onChange={e => setEditingProduct({...editingProduct, vatRateInner: Number(e.target.value)})} /></div>
-                                <div><label className="text-[10px] font-bold text-gray-400 block mb-1">DPH S sebou (%)</label><input type="number" className="w-full border rounded p-2 text-sm" value={editingProduct?.vatRateTakeaway ?? ''} onChange={e => setEditingProduct({...editingProduct, vatRateTakeaway: Number(e.target.value)})} /></div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Pracnost (body)</label>
+                                    <input type="number" min="0" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.workload ?? ''} onChange={e => setEditingProduct({...editingProduct, workload: Number(e.target.value)})} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Režie přípravy</label>
+                                    <input type="number" min="0" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.workloadOverhead ?? ''} onChange={e => setEditingProduct({...editingProduct, workloadOverhead: Number(e.target.value)})} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">DPH Prodejna (%)</label>
+                                    <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.vatRateInner ?? ''} onChange={e => setEditingProduct({...editingProduct, vatRateInner: Number(e.target.value)})} />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">DPH S sebou (%)</label>
+                                    <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.vatRateTakeaway ?? ''} onChange={e => setEditingProduct({...editingProduct, vatRateTakeaway: Number(e.target.value)})} />
+                                </div>
                             </div>
                             <div className="pt-2">
                                 <label className="text-xs font-bold text-gray-400 block mb-1">Kapacitní skupina (sdílená režie přípravy)</label>
