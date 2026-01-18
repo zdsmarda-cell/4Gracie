@@ -8,7 +8,6 @@ import {
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
 import { calculateCzIban, formatDate, removeDiacritics } from '../utils/helpers';
 
@@ -219,7 +218,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   const [isLoading, setIsLoading] = useState(true);
   const [isOperationPending, setIsOperationPending] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false); // Prevents overwriting local storage on load
+  const [isInitialized, setIsInitialized] = useState(false);
   const [dbConnectionError, setDbConnectionError] = useState(false);
   const [language, setLanguage] = useState<Language>(Language.CS);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -253,7 +252,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const isPreviewEnvironment = dataSource === 'local';
 
   // Localization Helpers
-  const t = (key: string, params?: Record<string, string>) => {
+  const t = useCallback((key: string, params?: Record<string, string>) => {
     const langKey = language as Language;
     let text = TRANSLATIONS[langKey]?.[key] || TRANSLATIONS[Language.CS]?.[key] || key;
     if (params) {
@@ -262,7 +261,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       });
     }
     return text;
-  };
+  }, [language]);
 
   const tData = (item: any, field: string) => {
     if (!item) return '';
@@ -273,7 +272,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const setDataSource = (mode: DataSourceMode) => {
     localStorage.setItem('app_data_source', mode);
     setDataSourceState(mode);
-    setIsInitialized(false); // Reset init flag to trigger fetch
+    setIsInitialized(false);
   };
 
   const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
@@ -384,7 +383,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setIsLoading(true);
       try {
         if (dataSource === 'api') {
-          // Reset data before fetch
+          // Reset data
           setAllUsers([]);
           setProducts([]);
           setOrders([]);
@@ -409,22 +408,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               
               setDiscountCodes(data.discountCodes || []);
               setDayConfigs(data.dayConfigs || []);
-              setRides(data.rides || []); 
+              setRides(data.rides || []);
               
               if (data.vapidPublicKey) setVapidPublicKey(data.vapidPublicKey);
           }
         } else {
           // Local Mode
           let loadedUsers = loadFromStorage('db_users', [] as User[]);
-          if (loadedUsers.length === 0) loadedUsers = INITIAL_USERS;
+          if (!loadedUsers || loadedUsers.length === 0) loadedUsers = INITIAL_USERS;
           setAllUsers(loadedUsers);
 
-          setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
+          let loadedProducts = loadFromStorage('db_products', [] as Product[]);
+          if (!loadedProducts || loadedProducts.length === 0) loadedProducts = INITIAL_PRODUCTS;
+          setProducts(loadedProducts);
           
-          // Fallback to MOCK_ORDERS if local storage is explicitly empty (which happens after a clear/bug)
-          // To properly restore mocks, user might need to clear storage or we check specific flag.
-          // For now, standard load.
-          setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
+          let loadedOrders = loadFromStorage('db_orders', [] as Order[]);
+          if (!loadedOrders || loadedOrders.length === 0) loadedOrders = MOCK_ORDERS;
+          setOrders(loadedOrders);
           
           const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
           if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
@@ -434,12 +434,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setDiscountCodes(loadFromStorage('db_discounts', []));
           setDayConfigs(loadFromStorage('db_dayconfigs', []));
           setRides(loadFromStorage('db_rides', []));
+          
+          showNotify("Přepnuto na lokální paměť (Mock Data).", 'success');
         }
       } catch (err: any) {
         console.error("Fetch Data Error", err);
       } finally {
         setIsLoading(false);
-        setIsInitialized(true); // Enable persistence after load
+        setIsInitialized(true);
       }
   };
 
@@ -472,7 +474,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
   
   useEffect(() => {
-    // Only save if initialized to prevent overwriting with empty defaults on startup
     if (dataSource === 'local' && isInitialized) {
       localStorage.setItem('db_users', JSON.stringify(allUsers));
       localStorage.setItem('db_orders', JSON.stringify(orders));
@@ -913,11 +914,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
       const doc = new jsPDF();
-      // ... (Implementation detail assumed from previous logic for brevity in this re-assembly)
       doc.text(`Faktura ${o.id}`, 10, 10); 
       doc.save(`${type}_${o.id}.pdf`);
   };
   
+  // FIX: Define generateCzIban explicitly in value object
   const generateCzIban = calculateCzIban;
 
   // --- PWA ---
