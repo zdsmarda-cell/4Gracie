@@ -66,6 +66,8 @@ interface StoreContextType {
   isOperationPending: boolean;
   dbConnectionError: boolean;
   
+  isPreviewEnvironment: boolean; // ADDED: Required by Admin.tsx
+  
   language: Language;
   setLanguage: (lang: Language) => void;
   
@@ -242,6 +244,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
   const [rides, setRides] = useState<Ride[]>([]);
 
+  // Derived state
+  const isPreviewEnvironment = dataSource === 'local';
+
   // Localization Helpers
   const t = (key: string, params?: Record<string, string>) => {
     const langKey = language as Language;
@@ -396,8 +401,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         } else {
           // Local Mode
           let loadedUsers = loadFromStorage('db_users', [] as User[]);
-          if (loadedUsers.length === 0) loadedUsers = INITIAL_USERS;
+          // Seed initial users if empty
+          if (loadedUsers.length === 0) {
+              loadedUsers = INITIAL_USERS;
+          }
           setAllUsers(loadedUsers);
+
           setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
           setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
           
@@ -960,10 +969,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
       const today = new Date(); today.setHours(0,0,0,0);
       const target = new Date(date); target.setHours(0,0,0,0);
+      if (isNaN(target.getTime())) return { allowed: false, reason: 'Invalid Date', status: 'closed' };
+
       if (target.getTime() < today.getTime()) return { allowed: false, reason: t('error.past'), status: 'past' };
       
-      const maxLead = items.length > 0 ? Math.max(...items.map(i => i.leadTimeDays || 0)) : 0;
-      const minDate = new Date(today.getTime()); minDate.setDate(minDate.getDate() + maxLead);
+      const maxLead = items.length > 0 ? Math.max(...items.map(i => Number(i.leadTimeDays) || 0)) : 0;
+      const minDate = new Date(today.getTime()); 
+      minDate.setDate(minDate.getDate() + maxLead);
+      
       if (target.getTime() < minDate.getTime()) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
 
       // Day Config Check
@@ -974,9 +987,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const { load, eventLoad } = getDailyLoad(date, excludeOrderId);
       
       // Simulate adding current items
-      // (Simplified: we add to 'load' or 'eventLoad' depending on item type)
-      // Note: Full logic in calculateDailyLoad is complex, here we do a quick check against limits
-      // For accurate check, we should re-run calculateDailyLoad with simulated orders, but this is okay for now.
+      items.forEach(item => {
+          const productDef = products.find(p => String(p.id) === String(item.id));
+          const workload = Number(productDef?.workload) || Number(item.workload) || 0;
+          const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
+          const quantity = Number(item.quantity) || 0;
+          
+          const cat = item.category || productDef?.category;
+          const isEvent = !!(item.isEventProduct || productDef?.isEventProduct);
+          
+          if (cat) {
+              if (isEvent) {
+                  eventLoad[cat] = (eventLoad[cat] || 0) + (workload * quantity) + overhead;
+              } else {
+                  load[cat] = (load[cat] || 0) + (workload * quantity) + overhead;
+              }
+          }
+      });
       
       // Check limits
       let anyExceeds = false;
@@ -984,7 +1011,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       for(const cat of catsToCheck) {
           const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
-          if (load[cat] > limit) anyExceeds = true; // Already exceeded without new items?
+          if ((load[cat] || 0) > limit) anyExceeds = true; 
       }
       
       if (anyExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
@@ -1032,7 +1059,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // --- MISC ---
   const generateInvoice = (o: Order) => `INV-${o.id}`;
-  const printInvoice = async (o: Order, type = 'proforma') => {
+  const printInvoice = async (o: Order, type = 'proforma' | 'final') => {
       const doc = new jsPDF();
       doc.text(`Faktura ${o.id} (${type})`, 10, 10);
       doc.save(`faktura_${o.id}.pdf`);
@@ -1094,6 +1121,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <StoreContext.Provider value={{
       dataSource, setDataSource, isLoading, isOperationPending, dbConnectionError,
+      isPreviewEnvironment, // Added here
       language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart,
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration: () => ({ valid: true, invalidCodes: [] }), searchOrders,
