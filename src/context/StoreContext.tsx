@@ -66,7 +66,7 @@ interface StoreContextType {
   isOperationPending: boolean;
   dbConnectionError: boolean;
   
-  isPreviewEnvironment: boolean; // ADDED: Required by Admin.tsx
+  isPreviewEnvironment: boolean; // Required by Admin.tsx
   
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -1059,10 +1059,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // --- MISC ---
   const generateInvoice = (o: Order) => `INV-${o.id}`;
-  const printInvoice = async (o: Order, type = 'proforma' | 'final') => {
+
+  const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
       const doc = new jsPDF();
-      doc.text(`Faktura ${o.id} (${type})`, 10, 10);
-      doc.save(`faktura_${o.id}.pdf`);
+      doc.setFontSize(18);
+      doc.text(type === 'proforma' ? 'Zálohový list' : 'Daňový doklad', 10, 20);
+      doc.setFontSize(12);
+      doc.text(`Objednávka: ${o.id}`, 10, 30);
+      doc.text(`Datum: ${formatDate(o.deliveryDate)}`, 10, 40);
+      doc.text(`Cena: ${o.totalPrice} Kč`, 10, 50);
+      doc.save(`${type}_${o.id}.pdf`);
   };
   
   const generateCzIban = calculateCzIban;
