@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
@@ -96,7 +97,7 @@ export const ProductsTab: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [page, limit, sort, filters, searchProducts, allLocalProducts /* depend on local products if in local mode */]);
+    }, [page, limit, sort, filters, searchProducts, allLocalProducts]);
 
     // Initial Load & Refresh
     useEffect(() => {
@@ -116,6 +117,17 @@ export const ProductsTab: React.FC = () => {
 
     const handleFilterChange = (key: string, value: any) => {
         setFilters(prev => ({ ...prev, [key]: value }));
+        setPage(1);
+    };
+
+    const clearFilters = () => {
+        setFilters({
+            name: '',
+            minPrice: '',
+            maxPrice: '',
+            categories: [],
+            visibility: []
+        });
         setPage(1);
     };
 
@@ -156,7 +168,7 @@ export const ProductsTab: React.FC = () => {
         const prod = { ...editingProduct } as Product;
         const errors: Record<string, string> = {};
 
-        // Validations... (Same as before)
+        // Validations...
         if (!prod.name || prod.name.trim().length === 0) errors.name = 'Vyplňte název.';
         if (!prod.description || prod.description.trim().length === 0) errors.description = 'Vyplňte popis.';
         const validateNum = (val: number | undefined, key: string, label: string) => {
@@ -272,50 +284,58 @@ export const ProductsTab: React.FC = () => {
             
             {/* FILTERS PANEL */}
             {showFilters && (
-                <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4 mb-4 animate-in slide-in-from-top-2">
-                    <div>
-                        <label className="text-xs font-bold text-gray-400 block mb-1">Název</label>
-                        <input 
-                            className="w-full border rounded p-2 text-xs" 
-                            placeholder="Hledat..." 
-                            value={filters.name}
-                            onChange={e => handleFilterChange('name', e.target.value)} 
-                        />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Od - Do)</label>
-                        <div className="flex gap-2">
+                <div className="bg-white p-4 rounded-xl border shadow-sm mb-4 animate-in slide-in-from-top-2">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Název</label>
                             <input 
-                                type="number" 
                                 className="w-full border rounded p-2 text-xs" 
-                                placeholder="0" 
-                                value={filters.minPrice}
-                                onChange={e => handleFilterChange('minPrice', e.target.value)} 
+                                placeholder="Hledat..." 
+                                value={filters.name}
+                                onChange={e => handleFilterChange('name', e.target.value)} 
                             />
-                            <input 
-                                type="number" 
-                                className="w-full border rounded p-2 text-xs" 
-                                placeholder="Max" 
-                                value={filters.maxPrice}
-                                onChange={e => handleFilterChange('maxPrice', e.target.value)} 
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Od - Do)</label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="number" 
+                                    className="w-full border rounded p-2 text-xs" 
+                                    placeholder="0" 
+                                    value={filters.minPrice}
+                                    onChange={e => handleFilterChange('minPrice', e.target.value)} 
+                                />
+                                <input 
+                                    type="number" 
+                                    className="w-full border rounded p-2 text-xs" 
+                                    placeholder="Max" 
+                                    value={filters.maxPrice}
+                                    onChange={e => handleFilterChange('maxPrice', e.target.value)} 
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <MultiSelect 
+                                label="Kategorie"
+                                options={categoryOptions}
+                                selectedValues={filters.categories}
+                                onChange={(vals) => handleFilterChange('categories', vals)}
+                            />
+                        </div>
+                        <div>
+                            <MultiSelect 
+                                label="Viditelnost"
+                                options={visibilityOptions}
+                                selectedValues={filters.visibility}
+                                onChange={(vals) => handleFilterChange('visibility', vals)}
                             />
                         </div>
                     </div>
-                    <div>
-                        <MultiSelect 
-                            label="Kategorie"
-                            options={categoryOptions}
-                            selectedValues={filters.categories}
-                            onChange={(vals) => handleFilterChange('categories', vals)}
-                        />
-                    </div>
-                    <div>
-                        <MultiSelect 
-                            label="Viditelnost"
-                            options={visibilityOptions}
-                            selectedValues={filters.visibility}
-                            onChange={(vals) => handleFilterChange('visibility', vals)}
-                        />
+                    {/* Clear Filters Button */}
+                    <div className="flex justify-end mt-4 pt-2 border-t border-gray-100">
+                        <button onClick={clearFilters} className="text-red-500 hover:text-red-700 text-xs font-bold flex items-center transition">
+                            <X size={14} className="mr-1"/> Zrušit filtry
+                        </button>
                     </div>
                 </div>
             )}
