@@ -1,15 +1,25 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DeliveryType, OrderStatus, Ride, User } from '../../types';
-import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, Navigation, AlertTriangle, Loader2 } from 'lucide-react';
+import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, Navigation, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 
 const RideDetail: React.FC<{
     date: string;
     onClose: () => void;
 }> = ({ date, onClose }) => {
-    const { orders, rides, allUsers, updateRide, t, formatDate, isOperationPending } = useStore();
+    const { orders, rides, allUsers, updateRide, t, formatDate, isOperationPending, refreshData } = useStore();
+    const [isRefreshing, setIsRefreshing] = useState(true);
     
+    // Refresh data on mount to ensure fresh drivers and orders list
+    useEffect(() => {
+        const sync = async () => {
+            await refreshData();
+            setIsRefreshing(false);
+        };
+        sync();
+    }, []);
+
     // Filter active drivers
     const drivers = useMemo(() => allUsers.filter(u => u.role === 'driver' && !u.isBlocked), [allUsers]);
     
@@ -77,22 +87,19 @@ const RideDetail: React.FC<{
 
     const handleRemoveOrderFromRide = async (ride: Ride, orderId: string) => {
         const updatedRide = { ...ride, orderIds: ride.orderIds.filter(id => id !== orderId) };
-        if (updatedRide.orderIds.length === 0) {
-            // If empty, logically it stays empty (we don't delete rides yet in this flow)
-            await updateRide(updatedRide);
-        } else {
-            await updateRide(updatedRide);
-        }
+        await updateRide(updatedRide);
     };
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4">
             <div className="bg-white w-full max-w-6xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 relative">
                 
-                {isOperationPending && (
+                {(isOperationPending || isRefreshing) && (
                     <div className="absolute inset-0 bg-white/80 z-50 flex flex-col items-center justify-center backdrop-blur-sm">
                         <Loader2 className="animate-spin text-accent mb-2" size={48} />
-                        <span className="text-gray-600 font-bold">Optimalizuji trasu pomocí AI...</span>
+                        <span className="text-gray-600 font-bold">
+                            {isRefreshing ? 'Aktualizuji data z DB...' : 'Ukládám změny...'}
+                        </span>
                     </div>
                 )}
 
@@ -163,6 +170,7 @@ const RideDetail: React.FC<{
                         </div>
                         <div className="flex-grow overflow-y-auto p-6 space-y-6">
                             {dayRides.map(ride => {
+                                // FIX: Use d.id instead of d.driverId
                                 const driver = drivers.find(d => d.id === ride.driverId) || allUsers.find(u => u.id === ride.driverId);
                                 const rideOrders = orders.filter(o => ride.orderIds.includes(o.id));
                                 
@@ -190,44 +198,48 @@ const RideDetail: React.FC<{
                                         </div>
                                         
                                         <div className="p-0">
-                                            <table className="w-full text-left text-xs">
-                                                <thead className="bg-gray-50/50 text-gray-400">
-                                                    <tr>
-                                                        <th className="p-3 font-medium">Čas</th>
-                                                        <th className="p-3 font-medium">Adresa</th>
-                                                        <th className="p-3 font-medium">Zákazník</th>
-                                                        <th className="p-3 font-medium text-right">Akce</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y">
-                                                    {ride.steps?.filter(s => s.type === 'delivery').map((step, idx) => (
-                                                        <tr key={idx} className={`hover:bg-gray-50 ${step.error ? 'bg-red-50' : ''}`}>
-                                                            <td className="p-3 font-mono text-gray-500">{step.arrivalTime}</td>
-                                                            <td className="p-3 font-medium text-gray-700 max-w-xs truncate" title={step.address}>
-                                                                {step.error && (
-                                                                    <div className="flex items-center text-red-600 mb-1 font-bold">
-                                                                        <AlertTriangle size={12} className="mr-1"/> Chyba adresy: {step.error}
-                                                                    </div>
-                                                                )}
-                                                                {step.address}
-                                                            </td>
-                                                            <td className="p-3 text-gray-600">{step.customerName}</td>
-                                                            <td className="p-3 text-right">
-                                                                <button 
-                                                                    onClick={() => handleRemoveOrderFromRide(ride, step.orderId)}
-                                                                    className="text-red-400 hover:text-red-600 p-1"
-                                                                    title="Odebrat z jízdy"
-                                                                >
-                                                                    <X size={14}/>
-                                                                </button>
-                                                            </td>
+                                            {(!ride.steps || ride.steps.length === 0) ? (
+                                                <div className="p-4 text-center text-gray-400 text-xs flex flex-col items-center">
+                                                    <RefreshCw size={16} className="mb-1 animate-spin-slow"/>
+                                                    Optimalizuji trasu... (čekám na worker)
+                                                </div>
+                                            ) : (
+                                                <table className="w-full text-left text-xs">
+                                                    <thead className="bg-gray-50/50 text-gray-400">
+                                                        <tr>
+                                                            <th className="p-3 font-medium">Čas</th>
+                                                            <th className="p-3 font-medium">Adresa</th>
+                                                            <th className="p-3 font-medium">Zákazník</th>
+                                                            <th className="p-3 font-medium text-right">Akce</th>
                                                         </tr>
-                                                    ))}
-                                                    {!ride.steps && (
-                                                        <tr><td colSpan={4} className="p-4 text-center text-gray-400">Trasa se vypočítá automaticky.</td></tr>
-                                                    )}
-                                                </tbody>
-                                            </table>
+                                                    </thead>
+                                                    <tbody className="divide-y">
+                                                        {ride.steps?.filter(s => s.type === 'delivery').map((step, idx) => (
+                                                            <tr key={idx} className={`hover:bg-gray-50 ${step.error ? 'bg-red-50' : ''}`}>
+                                                                <td className="p-3 font-mono text-gray-500">{step.arrivalTime}</td>
+                                                                <td className="p-3 font-medium text-gray-700 max-w-xs truncate" title={step.address}>
+                                                                    {step.error && (
+                                                                        <div className="flex items-center text-red-600 mb-1 font-bold">
+                                                                            <AlertTriangle size={12} className="mr-1"/> Chyba: {step.error}
+                                                                        </div>
+                                                                    )}
+                                                                    {step.address}
+                                                                </td>
+                                                                <td className="p-3 text-gray-600">{step.customerName}</td>
+                                                                <td className="p-3 text-right">
+                                                                    <button 
+                                                                        onClick={() => handleRemoveOrderFromRide(ride, step.orderId)}
+                                                                        className="text-red-400 hover:text-red-600 p-1"
+                                                                        title="Odebrat z jízdy"
+                                                                    >
+                                                                        <X size={14}/>
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            )}
                                         </div>
                                     </div>
                                 );

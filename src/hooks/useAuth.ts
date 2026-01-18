@@ -1,30 +1,20 @@
-
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { User, DataSourceMode } from '../types';
 
 const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
-
-const INITIAL_USERS: User[] = [
-  { id: 'admin1', name: 'Admin User', email: 'info@4gracie.cz', phone: '+420123456789', role: 'admin', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') },
-  { id: 'user1', name: 'Jan Novák', email: 'jan.novak@example.com', phone: '+420987654321', role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: true },
-  { id: 'driver1', name: 'Petr Řidič', email: 'ridic@4gracie.cz', phone: '+420777888999', role: 'driver', billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234') }
-];
 
 export const useAuth = (
     dataSource: DataSourceMode,
     apiCall: (endpoint: string, method: string, body?: any) => Promise<any>,
     showNotify: (msg: string, type?: 'success'|'error', autoClose?: boolean) => void,
     fetchDataTrigger: () => Promise<void>,
-    isPwa: boolean = false
+    isPwa: boolean = false,
+    allUsers: User[],
+    setAllUsers: React.Dispatch<React.SetStateAction<User[]>>,
+    user: User | null,
+    setUser: React.Dispatch<React.SetStateAction<User | null>>
 ) => {
-    const [allUsers, setAllUsers] = useState<User[]>([]);
-    const [user, setUser] = useState<User | null>(() => {
-        try {
-            const item = localStorage.getItem('session_user');
-            return item ? JSON.parse(item) : null;
-        } catch { return null; }
-    });
-
+    
     const login = async (email: string, password?: string) => {
         if (dataSource === 'api') {
             // Pass isPwa flag to server to request long-lived token
@@ -182,10 +172,6 @@ export const useAuth = (
     };
 
     return {
-        user,
-        setUser,
-        allUsers,
-        setAllUsers,
         login,
         register,
         logout,
@@ -195,7 +181,6 @@ export const useAuth = (
         toggleUserBlock,
         sendPasswordReset,
         resetPasswordByToken,
-        changePassword,
-        INITIAL_USERS
+        changePassword
     };
 };

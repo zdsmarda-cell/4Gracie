@@ -13,8 +13,13 @@ export const AuthModal: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [successMsg, setSuccessMsg] = useState(''); // New state for success message
+  
+  // Specific field errors
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [generalError, setGeneralError] = useState('');
+  
+  const [successMsg, setSuccessMsg] = useState('');
 
   if (!isAuthModalOpen) return null;
 
@@ -23,37 +28,53 @@ export const AuthModal: React.FC = () => {
   const validatePhone = (phone: string) => /^[+]?[0-9]{9,}$/.test(phone.replace(/\s/g, ''));
   const validateName = (name: string) => name.trim().length >= 3;
 
+  const clearErrors = () => {
+      setEmailError('');
+      setPasswordError('');
+      setGeneralError('');
+      setSuccessMsg('');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setSuccessMsg('');
+    clearErrors();
 
     if (mode === 'login') {
       const result = await login(email, password);
       if (result.success) {
         closeAuthModal();
       } else {
-        setError(result.message || 'Chyba přihlášení');
+        const msg = result.message || 'Login failed';
+        // Map common errors to fields
+        if (msg.includes('Nenalezen') || msg.toLowerCase().includes('not found')) {
+            setEmailError('Uživatel s tímto emailem neexistuje.');
+        } else if (msg.includes('heslo') || msg.toLowerCase().includes('password')) {
+            setPasswordError('Zadané heslo není správné.');
+        } else if (msg.includes('blokován') || msg.toLowerCase().includes('blocked')) {
+            setGeneralError('Váš účet je zablokován. Kontaktujte podporu.');
+        } else {
+            setGeneralError(msg);
+        }
       }
     } else if (mode === 'register') {
       if (!name || !email || !password || !phone) {
-        setError(t('validation.required'));
+        setGeneralError(t('validation.required'));
         return;
       }
       if (!validateName(name)) {
-        setError(t('validation.name_length'));
+        setGeneralError(t('validation.name_length'));
         return;
       }
       if (!validateEmail(email)) {
-        setError(t('validation.email_format'));
+        setEmailError(t('validation.email_format'));
         return;
       }
       if (!validatePhone(phone)) {
-        setError(t('validation.phone_format'));
+        setGeneralError(t('validation.phone_format'));
         return;
       }
       if (password.length < 4) {
-        setError(t('validation.password_length'));
+        setPasswordError(t('validation.password_length'));
         return;
       }
 
@@ -61,36 +82,38 @@ export const AuthModal: React.FC = () => {
       closeAuthModal();
     } else if (mode === 'forgot') {
       if (!email) {
-        setError(t('validation.required'));
+        setGeneralError(t('validation.required'));
         return;
       }
       if (!validateEmail(email)) {
-        setError(t('validation.email_format'));
+        setEmailError(t('validation.email_format'));
         return;
       }
       
       const result = await sendPasswordReset(email);
       if (result.success) {
-          setSuccessMsg(result.message);
+          setSuccessMsg(result.message || 'Email odeslán.');
       } else {
-          setError(result.message);
+          setGeneralError(result.message || 'Chyba při odesílání.');
       }
     }
   };
 
   const handleBack = () => {
     setMode('login');
-    setError('');
-    setSuccessMsg('');
+    clearErrors();
   };
 
   const handleClose = () => {
       closeAuthModal();
-      // Reset state after closing
+      // Reset state after closing animation
       setTimeout(() => {
           setMode('login');
-          setError('');
-          setSuccessMsg('');
+          clearErrors();
+          setName('');
+          setEmail('');
+          setPhone('');
+          setPassword('');
       }, 300);
   };
 
@@ -155,33 +178,37 @@ export const AuthModal: React.FC = () => {
             )}
 
             <div className="relative">
-                <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
+                <Mail className={`absolute left-3 top-3 ${emailError ? 'text-red-500' : 'text-gray-400'}`} size={18} />
                 <input 
                 type="email" 
                 placeholder={t('common.email')}
-                className="w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none"
+                className={`w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 outline-none ${emailError ? 'border-red-500 ring-red-200' : 'focus:ring-accent focus:border-accent'}`}
                 value={email}
-                onChange={e => setEmail(e.target.value)}
+                onChange={e => { setEmail(e.target.value); setEmailError(''); }}
                 />
             </div>
+            {emailError && <p className="text-xs text-red-500 ml-2 font-bold">{emailError}</p>}
 
             {mode !== 'forgot' && (
-                <div className="relative">
-                <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-                <input 
-                    type="password" 
-                    placeholder="Heslo" 
-                    className="w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 focus:ring-accent focus:border-accent outline-none"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                />
-                </div>
+                <>
+                    <div className="relative">
+                    <Lock className={`absolute left-3 top-3 ${passwordError ? 'text-red-500' : 'text-gray-400'}`} size={18} />
+                    <input 
+                        type="password" 
+                        placeholder="Heslo" 
+                        className={`w-full border rounded-xl pl-10 p-3 text-sm focus:ring-2 outline-none ${passwordError ? 'border-red-500 ring-red-200' : 'focus:ring-accent focus:border-accent'}`}
+                        value={password}
+                        onChange={e => { setPassword(e.target.value); setPasswordError(''); }}
+                    />
+                    </div>
+                    {passwordError && <p className="text-xs text-red-500 ml-2 font-bold">{passwordError}</p>}
+                </>
             )}
 
-            {error && (
-                <div className="flex items-center text-red-500 text-xs bg-red-50 p-3 rounded-lg">
+            {generalError && (
+                <div className="flex items-center text-red-500 text-xs bg-red-50 p-3 rounded-lg border border-red-100">
                 <AlertCircle size={14} className="mr-2 flex-shrink-0" />
-                {error}
+                {generalError}
                 </div>
             )}
 

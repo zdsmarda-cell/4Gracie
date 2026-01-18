@@ -1,19 +1,12 @@
-
-import { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { CartItem, Product } from '../types';
 
-export const useCart = (showNotify: (msg: string) => void) => {
-    const [cart, setCart] = useState<CartItem[]>(() => {
-        try {
-            const item = localStorage.getItem('cart');
-            return item ? JSON.parse(item) : [];
-        } catch { return []; }
-    });
+export const useCart = (
+    cart: CartItem[],
+    setCart: React.Dispatch<React.SetStateAction<CartItem[]>>,
+    showNotify: (msg: string) => void
+) => {
     const [cartBump, setCartBump] = useState(false);
-
-    useEffect(() => {
-        localStorage.setItem('cart', JSON.stringify(cart));
-    }, [cart]);
 
     const addToCart = (product: Product, quantity = 1) => {
         setCart(prev => {
@@ -25,8 +18,6 @@ export const useCart = (showNotify: (msg: string) => void) => {
         });
         setCartBump(true);
         setTimeout(() => setCartBump(false), 300);
-        // Positive notification removed as per request
-        // if (showNotify) showNotify(`Produkt "${product.name}" přidán do košíku`);
     };
 
     const removeFromCart = (id: string) => {
