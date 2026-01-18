@@ -8,6 +8,7 @@ import {
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
 import { generateRoutePdf } from '../utils/pdfGenerator';
 import { calculateCzIban, formatDate, removeDiacritics } from '../utils/helpers';
@@ -1062,12 +1063,273 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
       const doc = new jsPDF();
-      doc.setFontSize(18);
-      doc.text(type === 'proforma' ? 'Zálohový list' : 'Daňový doklad', 10, 20);
-      doc.setFontSize(12);
-      doc.text(`Objednávka: ${o.id}`, 10, 30);
-      doc.text(`Datum: ${formatDate(o.deliveryDate)}`, 10, 40);
-      doc.text(`Cena: ${o.totalPrice} Kč`, 10, 50);
+      
+      // Helper to fetch font as base64
+      const fetchFont = async (url: string) => {
+          try {
+              const res = await fetch(url);
+              const blob = await res.blob();
+              return new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => {
+                      if (typeof reader.result === 'string') {
+                          resolve(reader.result.split(',')[1]);
+                      } else {
+                          reject('Failed to convert to base64');
+                      }
+                  };
+                  reader.onerror = reject;
+                  reader.readAsDataURL(blob);
+              });
+          } catch (e) {
+              console.error('Font fetch error:', e);
+              return null;
+          }
+      };
+
+      try {
+          const fontUrlReg = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf';
+          const fontUrlBold = 'https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf';
+          
+          const [base64Reg, base64Bold] = await Promise.all([
+              fetchFont(fontUrlReg),
+              fetchFont(fontUrlBold)
+          ]);
+
+          if (base64Reg && base64Bold) {
+              doc.addFileToVFS("Roboto-Regular.ttf", base64Reg);
+              doc.addFont("Roboto-Regular.ttf", "Roboto", "normal");
+              doc.addFileToVFS("Roboto-Medium.ttf", base64Bold);
+              doc.addFont("Roboto-Medium.ttf", "Roboto", "bold");
+              doc.setFont("Roboto");
+          }
+      } catch (e) {
+          console.warn("Fonts not loaded", e);
+      }
+
+      // --- SNAPSHOT SELECTION ---
+      let comp: CompanyDetails = settings.companyDetails;
+      if (type === 'final') {
+          comp = o.deliveryCompanyDetailsSnapshot || o.companyDetailsSnapshot || settings.companyDetails;
+      } else {
+          comp = o.companyDetailsSnapshot || settings.companyDetails;
+      }
+
+      const isVatPayer = !!comp.dic && comp.dic.trim().length > 0;
+      const headerTitle = type === 'proforma' 
+          ? "ZÁLOHOVÝ DAŇOVÝ DOKLAD" 
+          : (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA");
+      
+      const dateToUse = type === 'final' 
+          ? (o.finalInvoiceDate || new Date().toISOString()) 
+          : o.createdAt;
+
+      const brandColor = [147, 51, 234]; // Purple #9333ea
+
+      // --- HEADER ---
+      doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
+      doc.setFont("Roboto", "bold");
+      doc.setFontSize(20);
+      doc.text(headerTitle, 105, 20, { align: "center" });
+      
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(10);
+      doc.text(`Číslo obj: ${o.id}`, 105, 28, { align: "center" });
+      doc.text(`Datum vystavení: ${formatDate(dateToUse)}`, 105, 34, { align: "center" });
+      
+      if (isVatPayer && type === 'final') {
+          doc.text(`Datum zdan. plnění: ${formatDate(dateToUse)}`, 105, 40, { align: "center" });
+      }
+
+      // --- SUPPLIER / CUSTOMER ---
+      doc.setFontSize(11);
+      doc.setFont("Roboto", "bold");
+      doc.text("DODAVATEL:", 14, 55);
+      doc.text("ODBĚRATEL:", 110, 55);
+      
+      doc.setFont("Roboto", "normal");
+      doc.setFontSize(10);
+      
+      let yPos = 61;
+      doc.text(comp.name || '', 14, yPos); yPos += 5;
+      doc.text(comp.street || '', 14, yPos); yPos += 5;
+      doc.text(`${comp.zip || ''} ${comp.city || ''}`, 14, yPos); yPos += 5;
+      doc.text(`IČ: ${comp.ic || ''}`, 14, yPos); yPos += 5;
+      if(comp.dic) { doc.text(`DIČ: ${comp.dic}`, 14, yPos); yPos += 5; }
+      if(comp.bankAccount) { doc.text(`Účet: ${comp.bankAccount}`, 14, yPos); yPos += 5; }
+      const vs = o.id.replace(/\D/g, '');
+      if(vs) { doc.text(`Var. symbol: ${vs}`, 14, yPos); yPos += 5; }
+
+      yPos = 61;
+      doc.text(o.billingName || o.userName || 'Zákazník', 110, yPos); yPos += 5;
+      doc.text(o.billingStreet || '', 110, yPos); yPos += 5;
+      doc.text(`${o.billingZip || ''} ${o.billingCity || ''}`, 110, yPos); yPos += 5;
+      if (o.billingIc) { doc.text(`IČ: ${o.billingIc}`, 110, yPos); yPos += 5; }
+      if (o.billingDic) { doc.text(`DIČ: ${o.billingDic}`, 110, yPos); yPos += 5; }
+
+      // --- CALCULATIONS ---
+      const getBase = (priceWithVat: number, rate: number) => priceWithVat / (1 + rate / 100);
+      const getVat = (priceWithVat: number, rate: number) => priceWithVat - getBase(priceWithVat, rate);
+
+      const grossTotalsByRate: Record<number, number> = {};
+      
+      o.items.forEach(item => {
+          const rate = Number(item.vatRateTakeaway || 0);
+          grossTotalsByRate[rate] = (grossTotalsByRate[rate] || 0) + (item.price * item.quantity);
+      });
+
+      let maxVatRate = 0;
+      Object.keys(grossTotalsByRate).forEach(k => { if(Number(k) > maxVatRate) maxVatRate = Number(k); });
+      const feeVatRate = maxVatRate > 0 ? maxVatRate : 21;
+
+      if (o.packagingFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + o.packagingFee;
+      if (o.deliveryFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + o.deliveryFee;
+
+      const grandGrossTotal = Object.values(grossTotalsByRate).reduce((a, b) => a + b, 0);
+      const totalDiscount = o.appliedDiscounts?.reduce((a, b) => a + b.amount, 0) || 0;
+      const discountRatio = grandGrossTotal > 0 ? (totalDiscount / grandGrossTotal) : 0;
+
+      const tableBody: any[] = [];
+      const taxSummary: Record<number, { total: number, base: number, vat: number }> = {};
+
+      // Tax Summary Calculation
+      Object.keys(grossTotalsByRate).forEach(k => {
+          const r = Number(k);
+          const gross = grossTotalsByRate[r];
+          const netAtRate = gross * (1 - discountRatio);
+          
+          taxSummary[r] = {
+              total: netAtRate,
+              base: getBase(netAtRate, r),
+              vat: netAtRate - getBase(netAtRate, r)
+          };
+      });
+
+      // Table Rows
+      o.items.forEach(item => {
+          const lineTotal = item.price * item.quantity;
+          const rate = Number(item.vatRateTakeaway || 0);
+          const row = [
+              item.name,
+              item.quantity,
+              isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)
+          ];
+          if (isVatPayer) { row.push(`${rate}%`); row.push(getVat(lineTotal, rate).toFixed(2)); }
+          row.push(lineTotal.toFixed(2));
+          tableBody.push(row);
+      });
+
+      if (o.packagingFee > 0) {
+          const row = ['Balné', '1', isVatPayer ? getBase(o.packagingFee, feeVatRate).toFixed(2) : o.packagingFee.toFixed(2)];
+          if (isVatPayer) { row.push(`${feeVatRate}%`); row.push(getVat(o.packagingFee, feeVatRate).toFixed(2)); }
+          row.push(o.packagingFee.toFixed(2));
+          tableBody.push(row);
+      }
+
+      if (o.deliveryFee > 0) {
+          const row = ['Doprava', '1', isVatPayer ? getBase(o.deliveryFee, feeVatRate).toFixed(2) : o.deliveryFee.toFixed(2)];
+          if (isVatPayer) { row.push(`${feeVatRate}%`); row.push(getVat(o.deliveryFee, feeVatRate).toFixed(2)); }
+          row.push(o.deliveryFee.toFixed(2));
+          tableBody.push(row);
+      }
+
+      o.appliedDiscounts?.forEach(d => {
+          const row = [`Sleva ${d.code}`, '1', `-${d.amount.toFixed(2)}`];
+          if (isVatPayer) { row.push(''); row.push(''); }
+          row.push(`-${d.amount.toFixed(2)}`);
+          tableBody.push(row);
+      });
+
+      const head = isVatPayer 
+          ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem s DPH']]
+          : [['Položka', 'Ks', 'Cena/ks', 'Celkem']];
+
+      // Generate Main Table
+      autoTable(doc, {
+          startY: 100,
+          head: head,
+          body: tableBody,
+          theme: 'grid',
+          styles: { font: 'Roboto', fontSize: 9, lineColor: [200, 200, 200] },
+          headStyles: { fillColor: brandColor, textColor: [255, 255, 255], fontStyle: 'bold' },
+          columnStyles: isVatPayer ? {
+              0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' },
+              3: { halign: 'center' }, 4: { halign: 'right' }, 5: { halign: 'right', fontStyle: 'bold' }
+          } : {
+              0: { cellWidth: 'auto' }, 1: { halign: 'center' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' }
+          }
+      });
+
+      let finalY = (doc as any).lastAutoTable.finalY + 10;
+
+      // --- VAT RECAP TABLE ---
+      if (isVatPayer) {
+          doc.setFontSize(10);
+          doc.setFont("Roboto", "bold");
+          doc.text("Rekapitulace DPH", 14, finalY);
+          const summaryBody = Object.keys(taxSummary).map(rate => {
+              const r = Number(rate);
+              const s = taxSummary[r];
+              if (Math.abs(s.total) < 0.01) return null;
+              return [`${r} %`, s.base.toFixed(2), s.vat.toFixed(2), s.total.toFixed(2)];
+          }).filter(Boolean);
+
+          if (summaryBody.length > 0) {
+              autoTable(doc, {
+                  startY: finalY + 2,
+                  head: [['Sazba', 'Základ daně', 'Výše daně', 'Celkem s DPH']],
+                  body: summaryBody as any[],
+                  theme: 'striped',
+                  styles: { font: 'Roboto', fontSize: 8 },
+                  headStyles: { fillColor: [100, 100, 100] },
+                  columnStyles: { 0: { halign: 'center', fontStyle: 'bold' }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } },
+                  margin: { left: 14, right: 100 }
+              });
+              finalY = (doc as any).lastAutoTable.finalY + 10;
+          } else { finalY += 5; }
+      }
+
+      // --- TOTALS & FOOTER ---
+      const grandTotal = Math.max(0, grandGrossTotal - totalDiscount);
+      doc.setFont("Roboto", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
+      doc.text(`CELKEM K ÚHRADĚ: ${grandTotal.toFixed(2)} Kč`, 196, finalY, { align: "right" });
+      
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(10);
+      
+      if (type === 'final') {
+          doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 196, finalY + 8, { align: "right" });
+      } else {
+          // QR Code
+          try {
+              if (comp.bankAccount) {
+                const vs = o.id.replace(/\D/g, '');
+                const iban = calculateCzIban(comp.bankAccount);
+                const bic = comp.bic ? `+${comp.bic}` : '';
+                const qrString = `SPD*1.0*ACC:${iban}${bic}*AM:${grandTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:OBJ${o.id}`;
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrString)}`;
+                
+                const qrResp = await fetch(qrUrl);
+                const qrBuf = await qrResp.arrayBuffer();
+                const toBase64 = (buffer: ArrayBuffer) => {
+                    let binary = '';
+                    const bytes = new Uint8Array(buffer);
+                    const len = bytes.byteLength;
+                    for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
+                    return window.btoa(binary);
+                };
+                
+                const qrBase64 = toBase64(qrBuf);
+                doc.addImage(qrBase64, "PNG", 150, finalY + 10, 40, 40);
+                doc.setFontSize(8);
+                doc.text("QR Platba", 170, finalY + 53, { align: "center" });
+              }
+          } catch (e) { console.error("QR Code generation failed:", e); }
+      }
+      
       doc.save(`${type}_${o.id}.pdf`);
   };
   
