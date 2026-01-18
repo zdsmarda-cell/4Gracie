@@ -9,6 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
 import { initEmail, startEmailWorker } from './services/email.js';
+import { startRideWorker } from './services/rideWorker.js'; // NEW IMPORT
 
 // ROUTES IMPORTS
 import authRoutes from './routes/users.js'; 
@@ -20,7 +21,7 @@ import settingsRoutes from './routes/settings.js';
 import aiRoutes from './routes/ai.js';
 import statsRoutes from './routes/stats.js';
 import notificationRoutes from './routes/notifications.js';
-import ridesRoutes from './routes/rides.js'; // NEW IMPORT
+import ridesRoutes from './routes/rides.js';
 
 // --- POLYFILLS FOR NODE.JS ENVIRONMENT (Required for jsPDF) ---
 if (typeof global.btoa === 'undefined') {
@@ -60,28 +61,26 @@ app.use('/api/uploads', express.static(UPLOAD_ROOT));
 app.use('/uploads', express.static(UPLOAD_ROOT));
 
 // --- MOUNT ROUTES ---
-app.use('/api/bootstrap', bootstrapRoutes); // New endpoint for initial data loading
+app.use('/api/bootstrap', bootstrapRoutes);
 app.use('/api/users', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
-app.use('/api/admin', adminRoutes); // Upload & Import & Emails
-app.use('/api/admin', aiRoutes); // Translation (/translate)
-app.use('/api/admin/rides', ridesRoutes); // NEW RIDES ROUTE
-app.use('/api/admin/stats', statsRoutes); // Stats (/load)
-app.use('/api', settingsRoutes); // Settings, Discounts, Calendar
-app.use('/api/notifications', notificationRoutes); // NEW Push Notifications
+app.use('/api/admin', adminRoutes);
+app.use('/api/admin', aiRoutes);
+app.use('/api/admin/rides', ridesRoutes);
+app.use('/api/admin/stats', statsRoutes);
+app.use('/api', settingsRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // --- ERROR HANDLING MIDDLEWARE ---
-// Catches "request aborted" and other client-connection errors gracefully
 app.use((err, req, res, next) => {
     if (err.type === 'entity.parse.failed') {
         return res.status(400).json({ error: 'Invalid JSON body' });
     }
-    // Handle request aborted (ECONNABORTED or explicit BadRequestError)
     if (err.code === 'ECONNABORTED' || (err.message && err.message.includes('aborted'))) {
         console.warn(`⚠️ Request aborted by client: ${req.method} ${req.originalUrl}`);
-        return; // Do not send response, connection is closed
+        return;
     }
     
     console.error("❌ Unhandled Server Error:", err);
@@ -105,7 +104,6 @@ const initDb = async () => {
         await db.query(`CREATE TABLE IF NOT EXISTS discounts (id VARCHAR(50) PRIMARY KEY, code VARCHAR(50), data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         await db.query(`CREATE TABLE IF NOT EXISTS calendar_exceptions (date VARCHAR(20) PRIMARY KEY, data JSON) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
         
-        // RIDES TABLE (NEW)
         await db.query(`CREATE TABLE IF NOT EXISTS rides (
             id VARCHAR(50) PRIMARY KEY,
             date DATE,
@@ -117,7 +115,6 @@ const initDb = async () => {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-        // EMAIL QUEUE TABLE
         await db.query(`CREATE TABLE IF NOT EXISTS email_queue (
             id INT AUTO_INCREMENT PRIMARY KEY,
             type VARCHAR(50),
@@ -130,7 +127,6 @@ const initDb = async () => {
             processed_at TIMESTAMP NULL
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-        // PUSH SUBSCRIPTIONS TABLE
         await db.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id VARCHAR(50),
@@ -142,7 +138,6 @@ const initDb = async () => {
             UNIQUE KEY unique_endpoint (endpoint(255))
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-        // NOTIFICATION HISTORY TABLE (Aggregated campaigns)
         await db.query(`CREATE TABLE IF NOT EXISTS notification_history (
             id INT AUTO_INCREMENT PRIMARY KEY,
             subject VARCHAR(255),
@@ -152,7 +147,6 @@ const initDb = async () => {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-        // PUSH LOGS TABLE (Granular history per user)
         await db.query(`CREATE TABLE IF NOT EXISTS push_logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id VARCHAR(50),
@@ -179,7 +173,8 @@ const initDb = async () => {
 const startServer = async () => {
   await initDb();
   await initEmail();
-  startEmailWorker(); // START THE WORKER
+  startEmailWorker();
+  startRideWorker(); // START THE RIDE WORKER
 
   const sslKey = process.env.SSL_KEY_PATH;
   const sslCert = process.env.SSL_CERT_PATH; 
