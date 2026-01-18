@@ -3,7 +3,7 @@ import { Language } from './types';
 
 export const TRANSLATIONS: Record<Language, Record<string, string>> = {
   [Language.CS]: {
-    'nav.menu': 'Menu',
+    'nav.menu': 'Eshop',
     'nav.cart': 'Košík',
     'nav.login': 'Přihlásit',
     'nav.admin': 'Admin',
@@ -320,7 +320,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'cookie.settings': 'Nastavení'
   },
   [Language.EN]: {
-    'nav.menu': 'Menu',
+    'nav.menu': 'E-shop',
     'nav.cart': 'Cart',
     'nav.login': 'Login',
     'nav.admin': 'Admin',
@@ -374,7 +374,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'cart.no_saved_addresses': 'You have no saved addresses.',
     'cart.delivery_unavailable': 'We do not deliver to this address',
     'cart.date_selection': 'Delivery / Pickup Date',
-    'cart.date_modified_time': 'Modified {type} for selected day ({date}).',
+    'cart.date_modified_time': 'Modified {type} for the selected day ({date}).',
     'cart.date_closed_region': 'No delivery to this region on this day.',
     'cart.date_closed_pickup': 'Pickup location is closed on this day.',
     'cart.capacity_exceeded': 'Your order exceeds remaining capacity for this day. Try another date or adjust cart.',
@@ -634,7 +634,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'cookie.settings': 'Settings'
   },
   [Language.DE]: {
-    'nav.menu': 'Menü',
+    'nav.menu': 'E-Shop',
     'nav.cart': 'Warenkorb',
     'nav.login': 'Anmelden',
     'nav.admin': 'Admin',

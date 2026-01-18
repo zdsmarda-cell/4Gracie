@@ -80,12 +80,11 @@ router.get('/', withDb(async (req, res, db) => {
         const validCols = ['name', 'price', 'category'];
         if (validCols.includes(sort)) {
             query += ` ORDER BY ${sort} ${order === 'desc' ? 'DESC' : 'ASC'}`;
+        } else {
+            query += ' ORDER BY name ASC';
         }
     } else {
-        query += ' ORDER BY created_at DESC'; // Default sort if created_at exists, otherwise name or id. Schema implies no created_at, using ID logic? 
-        // Actually product doesn't have created_at in basic schema, maybe add one or sort by ID/Name.
-        // Fallback to name
-        if (!sort) query += ' ORDER BY name ASC';
+        query += ' ORDER BY name ASC';
     }
 
     // Pagination
