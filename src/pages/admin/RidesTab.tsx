@@ -2,8 +2,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DeliveryType, OrderStatus, Ride, User } from '../../types';
-import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, Navigation, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, Navigation, AlertTriangle, Loader2, RefreshCw, List, History, Zap } from 'lucide-react';
 
+// ... RideDetail component (unchanged logic, kept for context) ...
 const RideDetail: React.FC<{
     date: string;
     onClose: () => void;
@@ -11,7 +12,6 @@ const RideDetail: React.FC<{
     const { orders, rides, allUsers, updateRide, t, formatDate, isOperationPending, refreshData } = useStore();
     const [isRefreshing, setIsRefreshing] = useState(true);
     
-    // Refresh data on mount to ensure fresh drivers and orders list
     useEffect(() => {
         const sync = async () => {
             await refreshData();
@@ -20,13 +20,8 @@ const RideDetail: React.FC<{
         sync();
     }, []);
 
-    // Filter active drivers
     const drivers = useMemo(() => allUsers.filter(u => u.role === 'driver' && !u.isBlocked), [allUsers]);
-    
-    // Get existing rides for this date
     const dayRides = useMemo(() => rides.filter(r => r.date === date), [rides, date]);
-    
-    // Get all delivery orders for this date
     const dayOrders = useMemo(() => orders.filter(o => 
         o.deliveryDate === date && 
         o.deliveryType === DeliveryType.DELIVERY && 
@@ -34,17 +29,14 @@ const RideDetail: React.FC<{
         o.status !== OrderStatus.DELIVERED
     ), [orders, date]);
 
-    // Assigned Order IDs across all rides today
     const assignedOrderIds = useMemo(() => {
         const set = new Set<string>();
         dayRides.forEach(r => r.orderIds.forEach(id => set.add(id)));
         return set;
     }, [dayRides]);
 
-    // Unassigned Orders
     const unassignedOrders = useMemo(() => dayOrders.filter(o => !assignedOrderIds.has(o.id)), [dayOrders, assignedOrderIds]);
 
-    // State for creating/editing rides
     const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
     const [selectedDriverId, setSelectedDriverId] = useState<string>('');
 
@@ -58,25 +50,24 @@ const RideDetail: React.FC<{
     const handleCreateRide = async () => {
         if (!selectedDriverId || selectedOrderIds.size === 0) return;
         
-        // Check if driver already has a ride today
         const existingRide = dayRides.find(r => r.driverId === selectedDriverId);
         
         if (existingRide) {
-            // Update existing ride
             const updatedRide: Ride = {
                 ...existingRide,
-                orderIds: [...existingRide.orderIds, ...Array.from(selectedOrderIds)]
+                orderIds: [...existingRide.orderIds, ...Array.from(selectedOrderIds)],
+                steps: [] // Reset steps to trigger re-calculation by worker
             };
             await updateRide(updatedRide);
         } else {
-            // Create new ride
             const newRide: Ride = {
                 id: `ride-${Date.now()}`,
                 date,
                 driverId: selectedDriverId,
                 orderIds: Array.from(selectedOrderIds),
                 status: 'planned',
-                departureTime: '08:00' // Default start
+                departureTime: '08:00',
+                steps: [] // Empty steps -> Worker will pick it up
             };
             await updateRide(newRide);
         }
@@ -86,7 +77,12 @@ const RideDetail: React.FC<{
     };
 
     const handleRemoveOrderFromRide = async (ride: Ride, orderId: string) => {
-        const updatedRide = { ...ride, orderIds: ride.orderIds.filter(id => id !== orderId) };
+        // Removing order resets route calculation
+        const updatedRide = { 
+            ...ride, 
+            orderIds: ride.orderIds.filter(id => id !== orderId),
+            steps: [] 
+        };
         await updateRide(updatedRide);
     };
 
@@ -170,9 +166,9 @@ const RideDetail: React.FC<{
                         </div>
                         <div className="flex-grow overflow-y-auto p-6 space-y-6">
                             {dayRides.map(ride => {
-                                // FIX: Use d.id instead of d.driverId
                                 const driver = drivers.find(d => d.id === ride.driverId) || allUsers.find(u => u.id === ride.driverId);
                                 const rideOrders = orders.filter(o => ride.orderIds.includes(o.id));
+                                const pendingCalc = !ride.steps || ride.steps.length === 0;
                                 
                                 return (
                                     <div key={ride.id} className="border rounded-xl overflow-hidden shadow-sm">
@@ -198,10 +194,10 @@ const RideDetail: React.FC<{
                                         </div>
                                         
                                         <div className="p-0">
-                                            {(!ride.steps || ride.steps.length === 0) ? (
-                                                <div className="p-4 text-center text-gray-400 text-xs flex flex-col items-center">
+                                            {pendingCalc ? (
+                                                <div className="p-4 text-center text-gray-400 text-xs flex flex-col items-center animate-pulse">
                                                     <RefreshCw size={16} className="mb-1 animate-spin-slow"/>
-                                                    Optimalizuji trasu... (čekám na worker)
+                                                    Jízda vytvořena. Čekám na automatický výpočet trasy (Worker)...
                                                 </div>
                                             ) : (
                                                 <table className="w-full text-left text-xs">
@@ -259,88 +255,201 @@ const RideDetail: React.FC<{
 };
 
 export const RidesTab: React.FC = () => {
-    const { orders, rides, t, formatDate } = useStore();
+    const { orders, rides, t, formatDate, allUsers, refreshData } = useStore();
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [activeSubTab, setActiveSubTab] = useState<'current' | 'history' | 'generation'>('current');
+    const [historyMonth, setHistoryMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
 
-    // Get unique dates with delivery orders
-    const deliveryDates = useMemo(() => {
+    // Auto-refresh when checking Generation tab
+    useEffect(() => {
+        let interval: any;
+        if (activeSubTab === 'generation') {
+            refreshData(); // Immediate load
+            interval = setInterval(refreshData, 10000); // Polling every 10s for status updates
+        }
+        return () => clearInterval(interval);
+    }, [activeSubTab]);
+
+    const filteredDates = useMemo(() => {
         const dates = new Set<string>();
         orders.forEach(o => {
             if (o.deliveryType === DeliveryType.DELIVERY && o.status !== OrderStatus.CANCELLED) {
                 dates.add(o.deliveryDate);
             }
         });
-        return Array.from(dates).sort().reverse();
-    }, [orders]);
+        
+        const dateArray = Array.from(dates);
+        const today = new Date().toISOString().split('T')[0];
+
+        if (activeSubTab === 'current') {
+            // Future & Today, Ascending
+            return dateArray.filter(d => d >= today).sort();
+        } else if (activeSubTab === 'history') {
+            // Selected Month, Descending
+            return dateArray.filter(d => d.startsWith(historyMonth)).sort().reverse();
+        }
+        return [];
+    }, [orders, activeSubTab, historyMonth]);
+
+    // Rides pending generation (Planned status + No steps)
+    const pendingRides = useMemo(() => {
+        return rides.filter(r => r.status === 'planned' && (!r.steps || r.steps.length === 0));
+    }, [rides]);
 
     return (
         <div className="animate-fade-in space-y-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <h2 className="text-xl font-bold text-primary flex items-center">
                     <Map className="mr-2 text-accent" /> {t('admin.rides')}
                 </h2>
+                
+                {/* SUBTABS */}
+                <div className="flex bg-gray-100 p-1 rounded-xl">
+                    <button 
+                        onClick={() => setActiveSubTab('current')} 
+                        className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition ${activeSubTab === 'current' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                    >
+                        <List size={14}/> Aktuální
+                    </button>
+                    <button 
+                        onClick={() => setActiveSubTab('history')} 
+                        className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition ${activeSubTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                    >
+                        <History size={14}/> Historie
+                    </button>
+                    <button 
+                        onClick={() => setActiveSubTab('generation')} 
+                        className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition ${activeSubTab === 'generation' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                    >
+                        <Zap size={14}/> Generace jízd
+                        {pendingRides.length > 0 && <span className="bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px] ml-1">{pendingRides.length}</span>}
+                    </button>
+                </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {deliveryDates.map(date => {
-                    const dayOrders = orders.filter(o => o.deliveryDate === date && o.deliveryType === DeliveryType.DELIVERY && o.status !== OrderStatus.CANCELLED);
-                    const dayRides = rides.filter(r => r.date === date);
-                    const assignedCount = dayRides.reduce((acc, r) => acc + r.orderIds.length, 0);
-                    const unassignedCount = dayOrders.length - assignedCount;
-                    
-                    return (
-                        <div 
-                            key={date} 
-                            onClick={() => setSelectedDate(date)}
-                            className="bg-white p-6 rounded-2xl border shadow-sm hover:shadow-md transition cursor-pointer group"
-                        >
-                            <div className="flex justify-between items-start mb-4">
-                                <div>
-                                    <h3 className="font-mono font-bold text-lg text-primary group-hover:text-accent transition">{formatDate(date)}</h3>
-                                    <div className="text-xs text-gray-500 mt-1">{dayOrders.length} rozvozů celkem</div>
-                                </div>
-                                <div className="bg-gray-50 p-2 rounded-lg">
-                                    <Truck size={20} className="text-gray-400"/>
-                                </div>
-                            </div>
-                            
-                            <div className="space-y-2">
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-gray-600">Naplánováno:</span>
-                                    <span className="font-bold text-green-600">{assignedCount}</span>
-                                </div>
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-gray-600">Nepřiřazeno:</span>
-                                    <span className={`font-bold ${unassignedCount > 0 ? 'text-red-500' : 'text-gray-400'}`}>{unassignedCount}</span>
-                                </div>
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-gray-600">Jízd:</span>
-                                    <span className="font-bold text-primary">{dayRides.length}</span>
-                                </div>
-                            </div>
-                            
-                            <div className="mt-4 pt-3 border-t">
-                                <div className="text-xs text-gray-400 font-bold uppercase mb-1">Řidiči</div>
-                                <div className="flex -space-x-2">
-                                    {dayRides.length > 0 ? dayRides.map(r => (
-                                        <div key={r.id} className="w-6 h-6 rounded-full bg-accent text-white flex items-center justify-center text-[10px] border-2 border-white" title={r.driverId}>
-                                            <UserIcon size={12}/>
-                                        </div>
-                                    )) : (
-                                        <span className="text-xs text-gray-300 italic">Zatím nikdo</span>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })}
-                
-                {deliveryDates.length === 0 && (
-                    <div className="col-span-full p-12 text-center text-gray-400">
-                        Zatím žádné objednávky k rozvozu.
+            {/* HISTORY FILTER */}
+            {activeSubTab === 'history' && (
+                <div className="bg-white p-4 rounded-xl border shadow-sm flex items-center gap-4 animate-in slide-in-from-top-2">
+                    <label className="text-sm font-bold text-gray-600">Vyberte měsíc:</label>
+                    <input 
+                        type="month" 
+                        className="border rounded-lg p-2 text-sm" 
+                        value={historyMonth} 
+                        onChange={e => setHistoryMonth(e.target.value)} 
+                    />
+                </div>
+            )}
+
+            {/* GENERATION VIEW */}
+            {activeSubTab === 'generation' && (
+                <div className="bg-white rounded-2xl border shadow-sm overflow-hidden animate-in fade-in">
+                    <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
+                        <h3 className="font-bold text-gray-700 text-sm uppercase">Fronta generování tras (Worker)</h3>
+                        <button onClick={refreshData} className="text-xs text-blue-600 font-bold hover:underline flex items-center gap-1"><RefreshCw size={12}/> Obnovit</button>
                     </div>
-                )}
-            </div>
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                            <tr>
+                                <th className="px-6 py-3 text-left">ID Jízdy</th>
+                                <th className="px-6 py-3 text-left">Datum</th>
+                                <th className="px-6 py-3 text-left">Řidič</th>
+                                <th className="px-6 py-3 text-center">Objednávek</th>
+                                <th className="px-6 py-3 text-left">Stav</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y text-xs">
+                            {pendingRides.map(ride => {
+                                const driver = allUsers.find(u => u.id === ride.driverId);
+                                return (
+                                    <tr key={ride.id} className="hover:bg-gray-50">
+                                        <td className="px-6 py-4 font-mono">{ride.id}</td>
+                                        <td className="px-6 py-4 font-bold">{formatDate(ride.date)}</td>
+                                        <td className="px-6 py-4">{driver?.name || ride.driverId}</td>
+                                        <td className="px-6 py-4 text-center">{ride.orderIds.length}</td>
+                                        <td className="px-6 py-4">
+                                            <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-[10px] font-bold flex items-center w-fit">
+                                                <Loader2 size={10} className="animate-spin mr-1"/> Čeká na výpočet
+                                            </span>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                            {pendingRides.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="p-8 text-center text-gray-400">
+                                        <Check size={32} className="mx-auto mb-2 text-green-500 opacity-50"/>
+                                        Všechny jízdy mají vypočítané trasy.
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* RIDES GRID (Current & History) */}
+            {activeSubTab !== 'generation' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredDates.map(date => {
+                        const dayOrders = orders.filter(o => o.deliveryDate === date && o.deliveryType === DeliveryType.DELIVERY && o.status !== OrderStatus.CANCELLED);
+                        const dayRides = rides.filter(r => r.date === date);
+                        const assignedCount = dayRides.reduce((acc, r) => acc + r.orderIds.length, 0);
+                        const unassignedCount = Math.max(0, dayOrders.length - assignedCount);
+                        
+                        return (
+                            <div 
+                                key={date} 
+                                onClick={() => setSelectedDate(date)}
+                                className="bg-white p-6 rounded-2xl border shadow-sm hover:shadow-md transition cursor-pointer group animate-in zoom-in-95 duration-200"
+                            >
+                                <div className="flex justify-between items-start mb-4">
+                                    <div>
+                                        <h3 className="font-mono font-bold text-lg text-primary group-hover:text-accent transition">{formatDate(date)}</h3>
+                                        <div className="text-xs text-gray-500 mt-1">{dayOrders.length} rozvozů celkem</div>
+                                    </div>
+                                    <div className="bg-gray-50 p-2 rounded-lg">
+                                        <Truck size={20} className="text-gray-400"/>
+                                    </div>
+                                </div>
+                                
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-gray-600">Naplánováno:</span>
+                                        <span className="font-bold text-green-600">{assignedCount}</span>
+                                    </div>
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-gray-600">Nepřiřazeno:</span>
+                                        <span className={`font-bold ${unassignedCount > 0 ? 'text-red-500' : 'text-gray-400'}`}>{unassignedCount}</span>
+                                    </div>
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-gray-600">Jízd:</span>
+                                        <span className="font-bold text-primary">{dayRides.length}</span>
+                                    </div>
+                                </div>
+                                
+                                <div className="mt-4 pt-3 border-t">
+                                    <div className="text-xs text-gray-400 font-bold uppercase mb-1">Řidiči</div>
+                                    <div className="flex -space-x-2 overflow-hidden py-1">
+                                        {dayRides.length > 0 ? dayRides.map(r => (
+                                            <div key={r.id} className="w-6 h-6 rounded-full bg-accent text-white flex items-center justify-center text-[10px] border-2 border-white relative group/driver">
+                                                <UserIcon size={12}/>
+                                            </div>
+                                        )) : (
+                                            <span className="text-xs text-gray-300 italic">Zatím nikdo</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                    
+                    {filteredDates.length === 0 && (
+                        <div className="col-span-full p-12 text-center text-gray-400">
+                            {activeSubTab === 'history' ? 'V tomto měsíci neproběhly žádné rozvozy.' : 'Zatím žádné nadcházející rozvozy.'}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {selectedDate && (
                 <RideDetail date={selectedDate} onClose={() => setSelectedDate(null)} />
