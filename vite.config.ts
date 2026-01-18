@@ -44,20 +44,19 @@ export default defineConfig({
     exclude: ['node_modules', 'tests/e2e/**'], // Exclude Playwright tests
   },
   build: {
-    chunkSizeWarningLimit: 1000, 
+    chunkSizeWarningLimit: 1500, 
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('jspdf') || id.includes('pdfmake')) {
-              return 'pdf-libs';
+            // Simplify chunks to avoid circular dependencies (vendor <-> pdf-libs)
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
+              return 'react-vendor';
             }
             if (id.includes('lucide-react')) {
               return 'ui-icons';
             }
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
-              return 'react-vendor';
-            }
+            // All other libs (including jspdf) go to vendor to prevent cycles
             return 'vendor';
           }
         }
