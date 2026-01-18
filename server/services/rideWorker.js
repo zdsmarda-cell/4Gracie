@@ -63,9 +63,17 @@ export const startRideWorker = () => {
                         
                         const ordersPayload = orderRows.map(row => {
                             const o = parseJsonCol(row, 'full_json');
+                            
+                            // FIX: Prioritize structured fields (Street + City) because Admin Edit updates these.
+                            // Fallback to o.deliveryAddress (blob string) only if structured data is missing.
+                            let addressToUse = o.deliveryAddress;
+                            if (o.deliveryStreet && o.deliveryCity) {
+                                addressToUse = `${o.deliveryStreet}, ${o.deliveryCity} ${o.deliveryZip || ''}`;
+                            }
+
                             return {
                                 id: o.id,
-                                address: o.deliveryAddress || `${o.deliveryStreet}, ${o.deliveryCity}`,
+                                address: addressToUse,
                                 isPaid: o.isPaid,
                                 itemsCount: o.items ? o.items.reduce((s, i) => s + i.quantity, 0) : 0,
                                 customerName: o.deliveryName || o.userName,

@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DeliveryType, OrderStatus, Ride, User, Order, PaymentMethod, Language } from '../../types';
-import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, Navigation, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle } from 'lucide-react';
+import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, Navigation, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle, Download } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
 // --- EDIT ORDER MODAL (Internal Component for RidesTab) ---
@@ -99,7 +99,7 @@ const RideDetail: React.FC<{
     onClose: () => void;
     onEditOrder: (orderId: string) => void;
 }> = ({ date, onClose, onEditOrder }) => {
-    const { orders, rides, allUsers, updateRide, t, formatDate, isOperationPending, refreshData } = useStore();
+    const { orders, rides, allUsers, updateRide, t, formatDate, isOperationPending, refreshData, printRouteSheet } = useStore();
     const [isRefreshing, setIsRefreshing] = useState(true);
     
     useEffect(() => {
@@ -257,6 +257,7 @@ const RideDetail: React.FC<{
                         <div className="flex-grow overflow-y-auto p-6 space-y-6">
                             {dayRides.map(ride => {
                                 const driver = drivers.find(d => d.id === ride.driverId) || allUsers.find(u => u.id === ride.driverId);
+                                const driverName = driver?.name || 'Neznámý řidič';
                                 const rideOrders = orders.filter(o => ride.orderIds.includes(o.id));
                                 const pendingCalc = !ride.steps || ride.steps.length === 0;
                                 const hasErrors = ride.steps?.some(s => s.error);
@@ -269,7 +270,7 @@ const RideDetail: React.FC<{
                                                     <UserIcon size={20}/>
                                                 </div>
                                                 <div>
-                                                    <h3 className="font-bold text-gray-900">{driver?.name || 'Neznámý řidič'}</h3>
+                                                    <h3 className="font-bold text-gray-900">{driverName}</h3>
                                                     <div className="text-xs text-gray-500 flex items-center gap-2">
                                                         <span>{rideOrders.length} objednávek</span>
                                                         <span>•</span>
@@ -277,7 +278,14 @@ const RideDetail: React.FC<{
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div className="text-right">
+                                            <div className="text-right flex items-center gap-2">
+                                                <button 
+                                                    onClick={() => printRouteSheet(ride, driverName)}
+                                                    className="p-1.5 bg-white border border-gray-200 rounded hover:bg-gray-100 text-gray-600 transition flex items-center justify-center"
+                                                    title="Stáhnout PDF (Rozvozový list)"
+                                                >
+                                                    <Download size={14} />
+                                                </button>
                                                 <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${ride.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
                                                     {ride.status === 'planned' ? 'Naplánováno' : ride.status === 'active' ? 'Na trase' : 'Dokončeno'}
                                                 </span>
@@ -418,7 +426,18 @@ export const RidesTab: React.FC = () => {
     const handleSaveOrder = async (updatedOrder: Order) => {
         await updateOrder(updatedOrder, false, true);
         setIsEditModalOpen(false);
-        // Refresh data to reflect changes in rides immediately (e.g. error clear)
+        
+        // AUTOMATIC RECALCULATION TRIGGER
+        // If this order belongs to a pending/planned ride, reset steps so worker picks up new address
+        const rideToReset = rides.find(r => 
+            r.status === 'planned' && 
+            r.orderIds.includes(updatedOrder.id)
+        );
+
+        if (rideToReset) {
+            await updateRide({ ...rideToReset, steps: [] }); 
+        }
+
         await refreshData();
     };
 
