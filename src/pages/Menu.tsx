@@ -320,9 +320,16 @@ export const Menu: React.FC = () => {
 
   return (
     <div className="bg-gray-50 min-h-screen pb-12">
-      {/* Hero Section */}
-      <div className="bg-primary text-white py-12 px-4 text-center border-b-4 border-accent">
-        <div className="flex justify-center">
+      {/* Hero Section - UPDATED WITH PATTERN */}
+      <div 
+        className="relative text-white py-12 px-4 text-center border-b-4 border-accent bg-[#2e1065] shadow-inner"
+        style={{
+            backgroundImage: "url('/header-bg.jpg')",
+            backgroundRepeat: 'repeat',
+            backgroundSize: '400px'
+        }}
+      >
+        <div className="flex justify-center relative z-10">
            <img 
              src="/logo.png" 
              alt="4Gracie Catering" 
@@ -334,7 +341,7 @@ export const Menu: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-8">
         
         {/* Filters Panel */}
-        <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-8 relative z-20">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0">
             
             {/* Categories */}
