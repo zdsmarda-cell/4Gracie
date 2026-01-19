@@ -243,6 +243,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // Alias helper
     const generateCzIban = calculateCzIban;
 
+    // --- ENVIRONMENT DETECTION ---
+    // @ts-ignore
+    const isProd = import.meta?.env?.PROD;
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    // Determine default mode: If Prod/Not-Localhost -> API, else Local (unless overridden by storage)
+    const storedMode = localStorage.getItem('app_data_source') as DataSourceMode;
+    const initialDataSource = storedMode || ((isProd && !isLocalhost) ? 'api' : 'local');
+
     // --- HOOKS INTEGRATION ---
     
     // CRITICAL FIX: Stabilize handleAuthError to prevent infinite loop in useApi -> StoreContext re-renders
@@ -257,7 +266,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         dataSource, setDataSource, isLoading, setIsLoading, 
         isOperationPending, dbConnectionError, setDbConnectionError, apiCall 
     } = useApi(
-        (localStorage.getItem('app_data_source') as DataSourceMode) || 'local',
+        initialDataSource,
         getFullApiUrl,
         handleAuthError, // Pass stable callback
         showNotify
@@ -286,9 +295,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         notifyEventSubscribers, addDiscountCode, updateDiscountCode, deleteDiscountCode
     } = useSettingsLogic({ dataSource, apiCall, showNotify, t });
 
+    // PASSED orders TO useOrderLogic to allow local search filtering
     const { 
         addOrder, updateOrder, updateOrderStatus, searchOrders 
-    } = useOrderLogic({ dataSource, apiCall, setOrders, setRides, rides, language, settings, showNotify, t });
+    } = useOrderLogic({ dataSource, apiCall, setOrders, setRides, rides, orders, language, settings, showNotify, t });
 
     const { 
         updateRide, deleteRide, printRouteSheet 
@@ -453,10 +463,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 
                 if (data.settings) {
                    // Merge DB settings over Defaults. 
-                   // Ensure objects like defaultCapacities are taken from DB if present.
                    const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
                    
-                   // Ensure arrays are arrays
                    if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
                    if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
                    
@@ -484,7 +492,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             // @ts-ignore
             const isProd = import.meta?.env?.PROD;
             const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-            if (isProd && !isLocalhost) { setDbConnectionError(true); return; }
+
+            // Auto-switch to API if we find ourselves in Prod but mode is Local (Self-healing)
+            if (isProd && !isLocalhost) { 
+                console.log("Environment mismatch: Switching to API mode.");
+                setDataSource('api'); 
+                return; // useEffect will re-trigger fetchData with 'api'
+            }
+
+            if (isProd && !isLocalhost) { 
+                 // Fallback safety (should be unreachable due to above, but kept for logic structure)
+                 setDbConnectionError(true); 
+                 return; 
+            }
   
             // LOCAL MODE
             const storedUsers = loadFromStorage<User[]>('db_users', []);

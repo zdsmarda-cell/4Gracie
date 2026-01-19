@@ -8,13 +8,14 @@ interface UseOrderLogicProps {
     setOrders: React.Dispatch<React.SetStateAction<Order[]>>;
     setRides: React.Dispatch<React.SetStateAction<Ride[]>>;
     rides: Ride[];
+    orders?: Order[]; // Added optional prop for local access
     language: Language;
     settings: GlobalSettings;
     showNotify: (msg: string) => void;
     t: (key: string) => string;
 }
 
-export const useOrderLogic = ({ dataSource, apiCall, setOrders, setRides, rides, language, settings, showNotify, t }: UseOrderLogicProps) => {
+export const useOrderLogic = ({ dataSource, apiCall, setOrders, setRides, rides, orders = [], language, settings, showNotify, t }: UseOrderLogicProps) => {
 
     const addOrder = useCallback(async (order: Order): Promise<boolean> => {
         const orderWithHistory: Order = {
@@ -49,8 +50,6 @@ export const useOrderLogic = ({ dataSource, apiCall, setOrders, setRides, rides,
             }
         }
 
-        // Access current rides from props/state within callback or rely on ref if critical.
-        // Since 'rides' is in dependency, this function updates when rides change.
         const affectedRide = rides.find(r => r.orderIds.includes(order.id));
         if (affectedRide && affectedRide.status === 'planned') {
             const newRide = { ...affectedRide, steps: [] }; 
@@ -107,13 +106,69 @@ export const useOrderLogic = ({ dataSource, apiCall, setOrders, setRides, rides,
             if (res && res.success) return res;
             return { orders: [], total: 0, page: 1, pages: 1 };
         } else {
-            // Local fallback logic mainly used for testing/dev
-            // Accessing state via closure if updated (this hook needs orders prop if we wanted full local search)
-            // Assuming this is handled via parent component logic for filtering `orders` in local mode.
-            // But we can simulate filter structure for consistency.
-            return { orders: [], total: 0, page: 1, pages: 1 };
+            // Local fallback logic for filtering orders array
+            let filtered = [...orders];
+
+            if (filters.id) {
+                filtered = filtered.filter(o => o.id.toLowerCase().includes(filters.id.toLowerCase()));
+            }
+            if (filters.userId) {
+                filtered = filtered.filter(o => o.userId === filters.userId);
+            }
+            if (filters.dateFrom) {
+                filtered = filtered.filter(o => o.deliveryDate >= filters.dateFrom);
+            }
+            if (filters.dateTo) {
+                filtered = filtered.filter(o => o.deliveryDate <= filters.dateTo);
+            }
+            if (filters.createdFrom) {
+                filtered = filtered.filter(o => o.createdAt >= filters.createdFrom);
+            }
+            if (filters.createdTo) {
+                filtered = filtered.filter(o => o.createdAt <= filters.createdTo);
+            }
+            if (filters.status) {
+                const statuses = filters.status.split(',').filter((s: string) => s.trim() !== '');
+                if (statuses.length > 0) {
+                    filtered = filtered.filter(o => statuses.includes(o.status));
+                }
+            }
+            if (filters.customer) {
+                filtered = filtered.filter(o => o.userName?.toLowerCase().includes(filters.customer.toLowerCase()));
+            }
+            if (filters.deliveryType) {
+                filtered = filtered.filter(o => o.deliveryType === filters.deliveryType);
+            }
+            if (filters.isPaid === 'yes') filtered = filtered.filter(o => o.isPaid);
+            if (filters.isPaid === 'no') filtered = filtered.filter(o => !o.isPaid);
+            
+            // Sorting (Default: deliveryDate DESC)
+            if (filters.sort) {
+                 const key = filters.sort;
+                 const dir = filters.order === 'asc' ? 1 : -1;
+                 filtered.sort((a: any, b: any) => {
+                     if (a[key] < b[key]) return -1 * dir;
+                     if (a[key] > b[key]) return 1 * dir;
+                     return 0;
+                 });
+            } else {
+                 // Default sort
+                 filtered.sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime());
+            }
+
+            const page = Number(filters.page) || 1;
+            const limit = Number(filters.limit) || 50;
+            const startIndex = (page - 1) * limit;
+            const paginated = filtered.slice(startIndex, startIndex + limit);
+
+            return { 
+                orders: paginated, 
+                total: filtered.length, 
+                page: page, 
+                pages: Math.ceil(filtered.length / limit) 
+            };
         }
-    }, [dataSource, apiCall]);
+    }, [dataSource, apiCall, orders]);
 
     return {
         addOrder,
