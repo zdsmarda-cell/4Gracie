@@ -2,12 +2,12 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Order, OrderStatus, Product, Ride } from '../types';
-import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye, ArrowLeft, RefreshCw, Calendar, ChevronRight } from 'lucide-react';
+import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye, ArrowLeft, RefreshCw, Calendar, ChevronRight, Play, Flag, Download } from 'lucide-react';
 import { calculatePackageCountLogic } from '../utils/orderLogic';
 
 export const Driver: React.FC = () => {
-    const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment, refreshData } = useStore();
-    const [modalState, setModalState] = useState<{ type: 'complete' | 'fail', orderId: string } | null>(null);
+    const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment, refreshData, updateRide, printRouteSheet } = useStore();
+    const [modalState, setModalState] = useState<{ type: 'complete' | 'fail' | 'start' | 'finish', orderId?: string } | null>(null);
     const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const wakeLockRef = useRef<any>(null);
@@ -19,11 +19,7 @@ export const Driver: React.FC = () => {
                 try {
                     const lock = await (navigator as any).wakeLock.request('screen');
                     wakeLockRef.current = lock;
-                    // console.log('💡 Wake Lock active');
-                    
-                    lock.addEventListener('release', () => {
-                        // console.log('💡 Wake Lock released');
-                    });
+                    lock.addEventListener('release', () => {});
                 } catch (err: any) {
                     console.error(`❌ Wake Lock error: ${err.name}, ${err.message}`);
                 }
@@ -51,18 +47,11 @@ export const Driver: React.FC = () => {
     // Get all rides relevant for this driver
     const myRides = useMemo(() => {
         if (!user) return [];
-        
-        // Filter rides for current driver
         let relevantRides = rides.filter(r => r.driverId === user.id);
-
-        // Sort: Active first, then by Date ascending (oldest first for history, or upcoming?)
-        // Usually drivers want upcoming.
-        // Let's sort by date ASC.
         return relevantRides.sort((a, b) => a.date.localeCompare(b.date));
     }, [rides, user]);
 
-    // Auto-select ONLY if a ride is currently ACTIVE (started)
-    // This prevents the user from being "stuck" in a planned ride detail, but keeps them focused if they are driving.
+    // Auto-select active ride
     useEffect(() => {
         const activeRide = myRides.find(r => r.status === 'active');
         if (activeRide && !selectedRideId) {
@@ -76,13 +65,21 @@ export const Driver: React.FC = () => {
         setIsRefreshing(false);
     };
 
-    // --- VIEW LOGIC ---
+    const currentRide = useMemo(() => myRides.find(r => r.id === selectedRideId), [myRides, selectedRideId]);
+    
+    // Check if another ride is active
+    const hasOtherActiveRide = useMemo(() => myRides.some(r => r.status === 'active' && r.id !== selectedRideId), [myRides, selectedRideId]);
 
-    const currentRide = useMemo(() => 
-        myRides.find(r => r.id === selectedRideId), 
-    [myRides, selectedRideId]);
+    // Check if current ride can be finished (all orders resolved)
+    const canFinishRide = useMemo(() => {
+        if (!currentRide) return false;
+        return currentRide.orderIds.every(id => {
+            const o = orders.find(ord => ord.id === id);
+            if (!o) return true; // Missing order considered done to unblock
+            return o.status === OrderStatus.DELIVERED || o.status === OrderStatus.NOT_PICKED_UP || o.status === OrderStatus.CANCELLED;
+        });
+    }, [currentRide, orders]);
 
-    // Determine Active Stop for the current ride view
     const activeStopId = useMemo(() => {
         if (!currentRide || !currentRide.steps) return null;
         for (const step of currentRide.steps) {
@@ -112,82 +109,89 @@ export const Driver: React.FC = () => {
         return Math.max(0, order.totalPrice - discount) + order.packagingFee + (order.deliveryFee || 0);
     };
 
+    // --- ACTIONS ---
+
     const handleNavigation = (address: string, orderId: string) => {
+        // Trigger Notification "Blížím se" (Approaching)
+        // We use updateOrderStatus with current status to trigger notification logic if supported, 
+        // or dedicated endpoint. Here we assume updateStatus handles it via side-effect if we had 'approaching' status.
+        // Since we don't have 'approaching' status, we just open map.
+        // Feature Request: Notify user. We will trigger update with 'on_way' again with notify=true.
+        updateOrderStatus([orderId], OrderStatus.ON_WAY, true, true);
+        
         const encoded = encodeURIComponent(address);
         window.open(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`, '_blank');
     };
 
+    const handleStartRide = async () => {
+        if (!currentRide) return;
+        // 1. Update Ride Status
+        const updatedRide = { ...currentRide, status: 'active' as const };
+        await updateRide(updatedRide);
+        
+        // 2. Update All Orders to ON_WAY and Notify
+        if (currentRide.orderIds.length > 0) {
+            await updateOrderStatus(currentRide.orderIds, OrderStatus.ON_WAY, true, true);
+        }
+        setModalState(null);
+    };
+
+    const handleFinishRide = async () => {
+        if (!currentRide) return;
+        const updatedRide = { ...currentRide, status: 'completed' as const };
+        await updateRide(updatedRide);
+        setModalState(null);
+        setSelectedRideId(null);
+    };
+
     const handleStatusUpdate = async () => {
-        if (!modalState) return;
+        if (!modalState || !modalState.orderId) return;
         const newStatus = modalState.type === 'complete' ? OrderStatus.DELIVERED : OrderStatus.NOT_PICKED_UP;
         await updateOrderStatus([modalState.orderId], newStatus, true, true);
         setModalState(null);
+    };
+
+    const updateDepartureTime = async (newTime: string) => {
+        if (!currentRide) return;
+        // Update ride with new time - backend worker will pick it up and recalculate if planned
+        // If active, it might not recalculate automatically depending on worker logic.
+        // For now, just save it.
+        const updated = { ...currentRide, departureTime: newTime, steps: [] }; // Reset steps to force recalc
+        await updateRide(updated);
     };
 
     if (!user || user.role !== 'driver') {
         return <div className="p-8 text-center text-gray-500">Přístup pouze pro řidiče.</div>;
     }
 
-    // --- RENDER LIST VIEW ---
+    // --- LIST VIEW ---
     if (!selectedRideId) {
         return (
             <div className="max-w-2xl mx-auto p-4 animate-fade-in">
                 <div className="flex justify-between items-center mb-6">
                     <h1 className="text-2xl font-serif font-bold text-primary">Moje jízdy</h1>
-                    <button 
-                        onClick={handleRefresh} 
-                        disabled={isRefreshing}
-                        className="bg-white p-2 rounded-full shadow-sm border border-gray-200 text-gray-600 hover:text-accent disabled:opacity-50 transition"
-                    >
-                        <RefreshCw size={20} className={isRefreshing ? 'animate-spin' : ''} />
-                    </button>
+                    <button onClick={handleRefresh} disabled={isRefreshing} className="bg-white p-2 rounded-full shadow-sm border border-gray-200 text-gray-600 hover:text-accent disabled:opacity-50 transition"><RefreshCw size={20} className={isRefreshing ? 'animate-spin' : ''} /></button>
                 </div>
-
                 <div className="space-y-3">
                     {myRides.length === 0 ? (
-                        <div className="p-8 text-center flex flex-col items-center bg-white rounded-2xl border border-dashed border-gray-200">
-                            <div className="bg-gray-50 p-4 rounded-full mb-4">
-                                <Map size={32} className="text-gray-400" />
-                            </div>
-                            <h2 className="text-lg font-bold text-gray-600">Žádné jízdy</h2>
-                            <p className="text-sm text-gray-400 mt-1">Momentálně nemáte přiřazené žádné trasy.</p>
-                        </div>
+                        <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-gray-200"><Map size={32} className="text-gray-400 mx-auto mb-2"/><h2 className="text-lg font-bold text-gray-600">Žádné jízdy</h2></div>
                     ) : (
                         myRides.map(ride => {
                             const stopCount = ride.steps?.filter(s => s.type === 'delivery').length || 0;
-                            const isToday = ride.date === new Date().toISOString().split('T')[0];
-                            const isFuture = ride.date > new Date().toISOString().split('T')[0];
-                            
                             return (
-                                <div 
-                                    key={ride.id}
-                                    onClick={() => setSelectedRideId(ride.id)}
-                                    className={`bg-white p-5 rounded-2xl border shadow-sm cursor-pointer hover:shadow-md transition active:scale-[0.98] ${ride.status === 'active' ? 'border-l-4 border-l-green-500 ring-1 ring-green-100' : 'border-l-4 border-l-blue-500'}`}
-                                >
+                                <div key={ride.id} onClick={() => setSelectedRideId(ride.id)} className={`bg-white p-5 rounded-2xl border shadow-sm cursor-pointer hover:shadow-md transition active:scale-[0.98] ${ride.status === 'active' ? 'border-l-4 border-l-green-500 ring-1 ring-green-100' : 'border-l-4 border-l-blue-500'}`}>
                                     <div className="flex justify-between items-center">
                                         <div className="flex items-center gap-3">
-                                            <div className={`p-3 rounded-xl ${ride.status === 'active' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
-                                                <Calendar size={20} />
-                                            </div>
+                                            <div className={`p-3 rounded-xl ${ride.status === 'active' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}><Calendar size={20} /></div>
                                             <div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="font-bold text-lg text-gray-900">{formatDate(ride.date)}</span>
-                                                    {isToday && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Dnes</span>}
-                                                </div>
-                                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                                                    <span>{stopCount} zastávek</span>
-                                                    <span>•</span>
-                                                    <span>Start: {ride.departureTime}</span>
-                                                </div>
+                                                <div className="flex items-center gap-2"><span className="font-bold text-lg text-gray-900">{formatDate(ride.date)}</span></div>
+                                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5"><span>{stopCount} zastávek</span><span>•</span><span>Start: {ride.departureTime}</span></div>
                                             </div>
                                         </div>
                                         <ChevronRight size={20} className="text-gray-300" />
                                     </div>
                                     <div className="mt-3 pt-3 border-t flex justify-between items-center">
-                                        <span className={`text-xs font-bold uppercase ${ride.status === 'active' ? 'text-green-600' : ride.status === 'completed' ? 'text-gray-400' : 'text-blue-600'}`}>
-                                            {ride.status === 'active' ? '● Probíhá' : ride.status === 'completed' ? 'Dokončeno' : 'Naplánováno'}
-                                        </span>
-                                        <span className="text-[10px] text-gray-400 font-mono">#{ride.id.slice(-6)}</span>
+                                        <span className={`text-xs font-bold uppercase ${ride.status === 'active' ? 'text-green-600' : ride.status === 'completed' ? 'text-gray-400' : 'text-blue-600'}`}>{ride.status === 'active' ? '● Probíhá' : ride.status === 'completed' ? 'Dokončeno' : 'Naplánováno'}</span>
                                     </div>
                                 </div>
                             );
@@ -198,29 +202,34 @@ export const Driver: React.FC = () => {
         );
     }
 
-    // --- RENDER DETAIL VIEW ---
-    if (!currentRide) return null; // Should not happen
+    // --- DETAIL VIEW ---
+    if (!currentRide) return null;
 
     return (
-        <div className="max-w-2xl mx-auto pb-24 animate-in slide-in-from-right-8 duration-300">
+        <div className="max-w-2xl mx-auto pb-32 animate-in slide-in-from-right-8 duration-300">
             <div className="bg-white p-4 sticky top-16 md:top-20 z-40 border-b shadow-sm flex justify-between items-center">
                 <div className="flex items-center gap-3">
-                    <button 
-                        onClick={() => setSelectedRideId(null)}
-                        className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition"
-                    >
-                        <ArrowLeft size={24} />
-                    </button>
+                    <button onClick={() => setSelectedRideId(null)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition"><ArrowLeft size={24} /></button>
                     <div>
-                        <div className="flex items-center gap-2">
-                            <h1 className="text-lg font-bold text-primary">{formatDate(currentRide.date)}</h1>
-                            {wakeLockRef.current && <span className="flex h-2 w-2 relative" title="Obrazovka je aktivní"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>}
+                        <h1 className="text-lg font-bold text-primary">{formatDate(currentRide.date)}</h1>
+                        {/* Time Edit */}
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <span>Výjezd:</span>
+                            <input 
+                                type="time" 
+                                className="border rounded px-1 py-0.5 bg-gray-50 font-mono"
+                                value={currentRide.departureTime}
+                                onChange={e => updateDepartureTime(e.target.value)}
+                                disabled={currentRide.status !== 'planned'}
+                            />
                         </div>
-                        <div className="text-xs text-gray-500">{currentRide.steps?.filter(s => s.type === 'delivery').length || 0} zastávek • Odjezd {currentRide.departureTime}</div>
                     </div>
                 </div>
-                <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${currentRide.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
-                    {currentRide.status === 'active' ? 'Na trase' : 'Plán'}
+                <div className="flex gap-2">
+                    <button onClick={() => printRouteSheet(currentRide, user.name)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 text-gray-600"><Download size={20}/></button>
+                    <div className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase flex items-center ${currentRide.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                        {currentRide.status === 'active' ? 'Na trase' : 'Plán'}
+                    </div>
                 </div>
             </div>
 
@@ -228,122 +237,49 @@ export const Driver: React.FC = () => {
                 {currentRide.steps?.map((step, idx) => {
                         const isDepot = step.type === 'pickup';
                         if (isDepot) return null; 
-
                         const order = orders.find(o => o.id === step.orderId);
                         if (!order) return null;
-
-                        const isDelivered = order.status === OrderStatus.DELIVERED;
-                        const isCancelled = order.status === OrderStatus.CANCELLED;
-                        const isFailed = order.status === OrderStatus.NOT_PICKED_UP;
-                        const isClosed = isDelivered || isFailed || isCancelled;
-                        
+                        const isClosed = ['delivered', 'cancelled', 'not_picked_up'].includes(order.status);
                         const isLast = idx === (currentRide.steps?.length || 0) - 1;
                         const isActive = activeStopId === step.orderId;
-                        
                         const isLate = isDeliveryLate(step.arrivalTime, order);
-                        const hasError = !!step.error;
-
-                        const enrichedItems = order.items.map(i => {
-                            const p = products.find(prod => prod.id === i.id);
-                            return { ...i, volume: p?.volume || i.volume || 0 };
-                        });
+                        const enrichedItems = order.items.map(i => { const p = products.find(prod => prod.id === i.id); return { ...i, volume: p?.volume || i.volume || 0 }; });
                         const pkgCount = calculatePackageCountLogic(enrichedItems, settings.packaging.types);
-
                         const showCod = !order.isPaid && !isClosed;
                         const amountToPay = showCod ? getOrderAmountToPay(order) : 0;
 
                         return (
                             <div key={idx} className={`relative pl-10 ${isClosed ? 'opacity-50 grayscale' : ''}`}>
-                                <div className={`absolute left-2.5 top-6 w-3 h-3 rounded-full border-2 border-white z-10 transform -translate-x-1/2 ${isDelivered ? 'bg-green-500' : (isFailed || isCancelled) ? 'bg-red-500' : 'bg-accent'}`}></div>
+                                <div className={`absolute left-2.5 top-6 w-3 h-3 rounded-full border-2 border-white z-10 transform -translate-x-1/2 ${order.status === 'delivered' ? 'bg-green-500' : (order.status === 'not_picked_up' || order.status === 'cancelled') ? 'bg-red-500' : 'bg-accent'}`}></div>
                                 {!isLast && <div className="absolute left-4 top-6 bottom-[-24px] w-0.5 bg-gray-200 z-0"></div>}
-                                
-                                <div className={`absolute left-0 top-0 text-[10px] font-mono font-bold px-1 border rounded shadow-sm z-10 ${isLate && !isClosed ? 'bg-red-600 text-white border-red-600 animate-pulse' : 'bg-white text-gray-500'}`}>
-                                    {step.arrivalTime}
-                                </div>
+                                <div className={`absolute left-0 top-0 text-[10px] font-mono font-bold px-1 border rounded shadow-sm z-10 ${isLate && !isClosed ? 'bg-red-600 text-white border-red-600 animate-pulse' : 'bg-white text-gray-500'}`}>{step.arrivalTime}</div>
 
-                                <div className={`bg-white rounded-2xl shadow-sm border overflow-hidden mt-3 transition-all duration-300 ${isActive ? 'ring-2 ring-blue-400 border-blue-400 transform scale-[1.02]' : ''} ${(hasError || (isLate && !isClosed)) ? 'border-red-500 ring-2 ring-red-100' : ''}`}>
+                                <div className={`bg-white rounded-2xl shadow-sm border overflow-hidden mt-3 transition-all duration-300 ${isActive ? 'ring-2 ring-blue-400 border-blue-400 transform scale-[1.02]' : ''}`}>
                                     <div className="p-4">
                                         <div className="flex justify-between items-start mb-2">
                                             <div>
                                                 <div className="text-[10px] text-gray-400 font-mono mb-0.5">#{order.id}</div>
-                                                <div className="font-bold text-lg">
-                                                    {isCancelled && <span className="text-red-600 mr-2">[STORNO]</span>}
-                                                    {step.customerName}
-                                                </div>
-                                                {step.customerPhone && (
-                                                    <a href={`tel:${step.customerPhone}`} className={`text-sm font-bold flex items-center mt-1 ${isClosed ? 'text-gray-500 pointer-events-none' : 'text-blue-600 hover:underline'}`}>
-                                                        <Phone size={14} className="mr-1"/> {step.customerPhone}
-                                                    </a>
-                                                )}
+                                                <div className="font-bold text-lg">{step.customerName}</div>
+                                                {step.customerPhone && <a href={`tel:${step.customerPhone}`} className="inline-block mt-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-bold flex items-center hover:bg-blue-100 transition"><Phone size={14} className="mr-2"/> {step.customerPhone}</a>}
                                             </div>
                                             <div className="text-right flex flex-col items-end">
-                                                <div className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center mb-1">
-                                                    <Package size={10} className="mr-1"/> {pkgCount} {pkgCount === 1 ? 'balík' : pkgCount < 5 ? 'balíky' : 'balíků'}
-                                                </div>
-
-                                                {isDelivered && <div className="text-green-600 font-bold text-xs flex items-center justify-end"><CheckCircle size={12} className="mr-1"/> Doručeno</div>}
-                                                {isFailed && <div className="text-red-600 font-bold text-xs flex items-center justify-end"><XCircle size={12} className="mr-1"/> Nedoručeno</div>}
-                                                {isCancelled && <div className="text-red-600 font-bold text-xs flex items-center justify-end"><Ban size={12} className="mr-1"/> Zrušeno</div>}
-                                                
-                                                {isLate && !isClosed && !hasError && (
-                                                    <div className="text-red-600 font-black text-xs bg-red-50 px-2 py-1 rounded border border-red-100 mb-1 flex items-center">
-                                                        <AlertTriangle size={10} className="mr-1"/> POZOR: ZPOŽDĚNÍ
-                                                    </div>
-                                                )}
-
-                                                {hasError && (
-                                                    <div className="text-red-600 font-black text-xs bg-red-50 px-2 py-1 rounded border border-red-100 mb-1 flex items-center animate-pulse">
-                                                        <AlertTriangle size={10} className="mr-1"/> CHYBA ADRESY
-                                                    </div>
-                                                )}
-                                                
-                                                {!isClosed && (
-                                                    showCod 
-                                                        ? <div className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded text-xs border border-red-100 mt-1">Dobírka: {amountToPay} Kč</div>
-                                                        : <div className="text-green-600 font-bold text-xs bg-green-50 px-2 py-1 rounded border border-green-100 mt-1">Zaplaceno</div>
-                                                )}
+                                                <div className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center mb-1"><Package size={10} className="mr-1"/> {pkgCount} {pkgCount === 1 ? 'balík' : 'balíků'}</div>
+                                                {!isClosed && (showCod ? <div className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded text-xs border border-red-100 mt-1">Dobírka: {amountToPay} Kč</div> : <div className="text-green-600 font-bold text-xs bg-green-50 px-2 py-1 rounded border border-green-100 mt-1">Zaplaceno</div>)}
                                             </div>
                                         </div>
                                         <div className="space-y-2 mb-4 text-sm text-gray-600">
-                                            <div className="flex items-start">
-                                                <MapPin size={16} className={`mr-2 mt-0.5 flex-shrink-0 ${hasError ? 'text-red-500' : 'text-gray-400'}`}/>
-                                                <div>
-                                                    <div className={`font-medium ${hasError ? 'text-red-700 font-bold' : 'text-gray-800'}`}>{step.address}</div>
-                                                    {hasError && <div className="text-red-600 text-xs font-bold mt-1 flex items-center bg-red-50 p-1 rounded"><AlertTriangle size={12} className="mr-1"/> {step.error}</div>}
-                                                </div>
-                                            </div>
+                                            <div className="flex items-start"><MapPin size={16} className={`mr-2 mt-0.5 flex-shrink-0 ${step.error ? 'text-red-500' : 'text-gray-400'}`}/><div><div className={`font-medium ${step.error ? 'text-red-700 font-bold' : 'text-gray-800'}`}>{step.address}</div>{step.error && <div className="text-red-600 text-xs font-bold mt-1 bg-red-50 p-1 rounded">CHYBA: {step.error}</div>}</div></div>
                                             {step.note && <div className="bg-yellow-50 p-2 rounded text-xs text-yellow-800 border border-yellow-100 mt-2">{step.note}</div>}
                                         </div>
                                         
                                         <div className="grid grid-cols-2 gap-2">
-                                            <button 
-                                                onClick={() => handleNavigation(step.address, step.orderId)} 
-                                                className={`flex flex-col items-center justify-center p-2 rounded-xl text-xs font-bold transition ${isClosed ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-blue-50 hover:bg-blue-100 text-blue-700'}`}
-                                                disabled={isClosed}
-                                            >
-                                                <Map size={20} className="mb-1"/> Navigovat
-                                            </button>
-                                            
+                                            <button onClick={() => handleNavigation(step.address, step.orderId)} disabled={isClosed || currentRide.status !== 'active'} className={`flex flex-col items-center justify-center p-2 rounded-xl text-xs font-bold transition ${isClosed ? 'bg-gray-100 text-gray-400' : 'bg-blue-50 hover:bg-blue-100 text-blue-700'}`}><Map size={20} className="mb-1"/> Navigovat</button>
                                             {!isClosed ? (
                                                 <div className="grid grid-cols-2 gap-2">
-                                                    <button 
-                                                        onClick={() => setModalState({ type: 'fail', orderId: step.orderId })} 
-                                                        className="flex flex-col items-center justify-center p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition"
-                                                    >
-                                                        <XCircle size={20} className="mb-1"/> Nedoručeno
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => setModalState({ type: 'complete', orderId: step.orderId })} 
-                                                        className="flex flex-col items-center justify-center p-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition"
-                                                    >
-                                                        <Check size={20} className="mb-1"/> Hotovo
-                                                    </button>
+                                                    <button onClick={() => setModalState({ type: 'fail', orderId: step.orderId })} disabled={currentRide.status !== 'active'} className="flex flex-col items-center justify-center p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition disabled:opacity-50"><XCircle size={20} className="mb-1"/> Nedoručeno</button>
+                                                    <button onClick={() => setModalState({ type: 'complete', orderId: step.orderId })} disabled={currentRide.status !== 'active'} className="flex flex-col items-center justify-center p-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition disabled:opacity-50"><Check size={20} className="mb-1"/> Hotovo</button>
                                                 </div>
-                                            ) : (
-                                                <div className="flex flex-col items-center justify-center p-2 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold">
-                                                    <Check size={20} className="mb-1"/> {isCancelled ? 'Zrušeno' : 'Uzavřeno'}
-                                                </div>
-                                            )}
+                                            ) : <div className="flex flex-col items-center justify-center p-2 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold"><Check size={20} className="mb-1"/> Hotovo</div>}
                                         </div>
                                     </div>
                                 </div>
@@ -352,28 +288,49 @@ export const Driver: React.FC = () => {
                     })}
             </div>
 
-            {/* Confirmation Modal */}
+            {/* FLOATING ACTION BUTTONS */}
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t shadow-lg z-50 flex gap-4 justify-center">
+                {currentRide.status === 'planned' && (
+                    <button 
+                        onClick={() => setModalState({ type: 'start' })}
+                        disabled={hasOtherActiveRide}
+                        className="bg-primary text-white w-full max-w-md py-4 rounded-xl font-bold text-lg shadow-xl flex items-center justify-center gap-2 disabled:bg-gray-400"
+                    >
+                        {hasOtherActiveRide ? 'Jiná jízda je aktivní' : <><Play size={24}/> Zahájit jízdu</>}
+                    </button>
+                )}
+                {currentRide.status === 'active' && (
+                    <button 
+                        onClick={() => setModalState({ type: 'finish' })}
+                        disabled={!canFinishRide}
+                        className="bg-green-600 text-white w-full max-w-md py-4 rounded-xl font-bold text-lg shadow-xl flex items-center justify-center gap-2 disabled:bg-gray-300 disabled:text-gray-500"
+                    >
+                        <Flag size={24}/> Ukončit jízdu
+                    </button>
+                )}
+            </div>
+
+            {/* MODAL */}
             {modalState && (
                 <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-                        <h3 className="text-xl font-bold mb-4 text-center">
-                            {modalState.type === 'complete' ? 'Potvrdit doručení?' : 'Nahlásit nedoručení?'}
+                    <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center">
+                        <h3 className="text-xl font-bold mb-4">
+                            {modalState.type === 'start' ? 'Zahájit jízdu?' : modalState.type === 'finish' ? 'Ukončit jízdu?' : 'Potvrzení'}
                         </h3>
-                        <p className="text-center text-gray-500 mb-6">
-                            {modalState.type === 'complete' 
-                                ? 'Opravdu chcete označit tuto objednávku jako úspěšně doručenou?' 
-                                : 'Opravdu chcete označit tuto objednávku jako nedoručenou?'}
+                        <p className="text-gray-500 mb-6">
+                            {modalState.type === 'start' && 'Objednávky se přepnou do stavu "Na cestě" a odešlou se notifikace.'}
+                            {modalState.type === 'finish' && 'Jízda bude uzavřena. Ujistěte se, že jsou všechny zastávky vyřešeny.'}
+                            {(modalState.type === 'complete' || modalState.type === 'fail') && 'Opravdu chcete změnit stav objednávky?'}
                         </p>
                         <div className="flex gap-3">
+                            <button onClick={() => setModalState(null)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-gray-600">Zrušit</button>
                             <button 
-                                onClick={() => setModalState(null)} 
-                                className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-gray-600"
-                            >
-                                Zrušit
-                            </button>
-                            <button 
-                                onClick={handleStatusUpdate} 
-                                className={`flex-1 py-3 rounded-xl font-bold text-white ${modalState.type === 'complete' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+                                onClick={() => {
+                                    if (modalState.type === 'start') handleStartRide();
+                                    else if (modalState.type === 'finish') handleFinishRide();
+                                    else handleStatusUpdate();
+                                }} 
+                                className="flex-1 py-3 bg-primary text-white rounded-xl font-bold"
                             >
                                 Potvrdit
                             </button>
