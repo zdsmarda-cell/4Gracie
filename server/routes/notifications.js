@@ -98,11 +98,33 @@ router.post('/subscribe', withDb(async (req, res, db) => {
 // UNSUBSCRIBE
 router.post('/unsubscribe', withDb(async (req, res, db) => {
     const { endpoint } = req.body;
+    let userId = null;
+
+    // 1. Authenticate to get User ID (Same logic as subscribe)
+    const authHeader = req.headers['authorization'];
+    if (authHeader) {
+        const token = authHeader.split(' ')[1];
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, SECRET_KEY);
+                userId = decoded.id;
+            } catch (err) {
+                // Invalid token, proceed as anonymous
+            }
+        }
+    }
+
     if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
 
     try {
-        // Use LIMIT 1 to ensure we never accidentally mass delete, though WHERE endpoint=? should be specific.
-        await db.query('DELETE FROM push_subscriptions WHERE endpoint = ? LIMIT 1', [endpoint]);
+        if (userId) {
+            // CASE A: Logged in user - Only delete THEIR record for this endpoint.
+            // This prevents deleting records of other users if endpoints collide or if the DB has duplicates.
+            await db.query('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?', [userId, endpoint]);
+        } else {
+            // CASE B: Guest/Anonymous - Fallback to endpoint match only
+            await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [endpoint]);
+        }
         res.json({ success: true });
     } catch (e) {
         console.error("Unsubscribe Error:", e);
