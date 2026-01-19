@@ -100,7 +100,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         status: '', 
         customer: '',
         isEvent: initialEventOnly ? 'yes' : 'all', 
-        isPaid: 'all'
+        isPaid: 'all',
+        hasIc: 'all' // Added IC filter
     });
 
     // Sorting State: key + direction
@@ -216,7 +217,59 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         }
     };
 
-    const exportToAccounting = () => { alert("Export feature placeholder"); };
+    const exportToAccounting = () => { 
+        // 1. Determine which orders to export
+        let dataToExport = displayOrders;
+        
+        if (selectedOrders.length > 0) {
+            // Priority: Selected orders
+            // Try to find them in displayOrders first (fastest)
+            // If not found (e.g. cross-page selection if implemented later), fall back to global 'orders' cache
+            // Note: 'orders' from context might contain more history or be used as cache.
+            dataToExport = selectedOrders.map(id => 
+                displayOrders.find(o => o.id === id) || orders.find(o => o.id === id)
+            ).filter(Boolean) as Order[];
+        }
+
+        if (dataToExport.length === 0) {
+            alert("Žádná data k exportu.");
+            return;
+        }
+
+        // 2. Prepare Headers
+        const headers = ["ID", "Vytvořeno", "Datum dodání", "Zákazník", "Cena celkem (s DPH)", "Stav", "Zaplaceno", "Poznámka", "Doprava (Typ)", "Telefon"];
+        
+        // 3. Prepare Rows
+        const rows = dataToExport.map(o => {
+            const total = o.totalPrice + o.packagingFee + (o.deliveryFee || 0);
+            
+            // Safe string handling for CSV (escape quotes)
+            const safeName = (o.userName || o.deliveryName || '').replace(/"/g, '""');
+            const safeNote = (o.note || '').replace(/"/g, '""');
+            const created = o.createdAt ? new Date(o.createdAt).toLocaleDateString('cs-CZ') : '';
+            const delivDate = formatDate(o.deliveryDate);
+            const status = t(`status.${o.status}`);
+            const paid = o.isPaid ? 'ANO' : 'NE';
+            const deliveryType = o.deliveryType === 'delivery' ? 'Rozvoz' : 'Osobní odběr';
+            const phone = (o.deliveryPhone || '').replace(/"/g, '""');
+
+            return `"${o.id}","${created}","${delivDate}","${safeName}",${total},"${status}","${paid}","${safeNote}","${deliveryType}","${phone}"`;
+        });
+
+        // 4. Construct CSV Content with BOM for Excel compatibility
+        const csvContent = "data:text/csv;charset=utf-8,\uFEFF" 
+            + headers.join(",") + "\n"
+            + rows.join("\n");
+
+        // 5. Trigger Download
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `export_objednavek_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
 
     const getQRDataString = (order: Order) => {
         const iban = generateCzIban(settings.companyDetails.bankAccount).replace(/\s/g,'');
@@ -395,9 +448,22 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                         onChange={(values) => handleFilterChange('status', values.join(','))}
                     />
                 </div>
-                <div className="flex items-end gap-2 md:col-span-4 justify-end">
+                {/* IC Filter Added */}
+                <div>
+                    <label className="text-xs font-bold text-gray-400 block mb-1">Typ zákazníka</label>
+                    <select 
+                        className="w-full border rounded p-2 text-xs"
+                        value={filters.hasIc}
+                        onChange={e => handleFilterChange('hasIc', e.target.value)}
+                    >
+                        <option value="all">Vše</option>
+                        <option value="yes">Firemní (s IČ)</option>
+                        <option value="no">Koncový (bez IČ)</option>
+                    </select>
+                </div>
+                <div className="flex items-end gap-2 md:col-span-3 justify-end">
                     <button onClick={() => {
-                        setFilters({ id: '', dateFrom: '', dateTo: '', createdFrom: '', createdTo: '', status: '', customer: '', isEvent: 'all', isPaid: 'all' });
+                        setFilters({ id: '', dateFrom: '', dateTo: '', createdFrom: '', createdTo: '', status: '', customer: '', isEvent: 'all', isPaid: 'all', hasIc: 'all' });
                         setCurrentPage(1);
                         setSort(null);
                         if(onClearFilters) onClearFilters();
@@ -429,6 +495,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                 {t('filter.customer')} {getSortIcon('customer')}
                             </th>
                             
+                            {/* IC Column Added */}
+                            <th className="px-6 py-4 text-left">
+                                Firma / IČ
+                            </th>
+
                             <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('price')}>
                                 {t('common.price')} (Kč) {getSortIcon('price')}
                             </th>
@@ -444,7 +515,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                     </thead>
                     <tbody className="divide-y text-[11px]">
                         {isLoadingOrders ? (
-                            <tr><td colSpan={9} className="p-8 text-center text-gray-400">Načítám data...</td></tr>
+                            <tr><td colSpan={10} className="p-8 text-center text-gray-400">Načítám data...</td></tr>
                         ) : (
                             displayOrders.map(order => (
                                 <tr key={order.id} className="hover:bg-gray-50 transition">
@@ -453,6 +524,19 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                     <td className="px-6 py-4 text-gray-500">{new Date(order.createdAt).toLocaleDateString('cs-CZ')}</td>
                                     <td className="px-6 py-4 font-mono">{formatDate(order.deliveryDate)}</td>
                                     <td className="px-6 py-4">{order.userName}</td>
+                                    
+                                    {/* IC Column Data */}
+                                    <td className="px-6 py-4">
+                                        {order.billingIc ? (
+                                            <div>
+                                                <div className="font-bold text-xs">{order.billingName}</div>
+                                                <div className="text-[10px] text-gray-500">IČ: {order.billingIc}</div>
+                                            </div>
+                                        ) : (
+                                            <span className="text-gray-400">-</span>
+                                        )}
+                                    </td>
+
                                     <td className="px-6 py-4 font-bold">{order.totalPrice + order.packagingFee + (order.deliveryFee || 0)} Kč</td>
                                     <td className="px-6 py-4">{order.isPaid ? <span className="text-green-600 font-bold">{t('common.paid')}</span> : <span className="text-red-600 font-bold">{t('common.unpaid')}</span>}</td>
                                     <td className="px-6 py-4"><span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${order.status === OrderStatus.CANCELLED ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-700'}`}>{t(`status.${order.status}`)}</span></td>
@@ -467,7 +551,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                             ))
                         )}
                         {!isLoadingOrders && displayOrders.length === 0 && (
-                            <tr><td colSpan={9} className="p-8 text-center text-gray-400">Žádné objednávky</td></tr>
+                            <tr><td colSpan={10} className="p-8 text-center text-gray-400">Žádné objednávky</td></tr>
                         )}
                     </tbody>
                 </table>
