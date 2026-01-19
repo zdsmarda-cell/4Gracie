@@ -312,8 +312,14 @@ export const Driver: React.FC = () => {
                 {!isPendingCalculation && currentRide.steps?.map((step, idx) => {
                         const isDepot = step.type === 'pickup';
                         if (isDepot) return null; 
+                        
                         const order = orders.find(o => o.id === step.orderId);
                         if (!order) return null;
+                        
+                        // Prioritize live order data over snapshot step data
+                        const customerName = order.deliveryName || order.userName || step.customerName || 'Neznámý zákazník';
+                        const customerPhone = order.deliveryPhone || step.customerPhone;
+                        
                         const isClosed = ['delivered', 'cancelled', 'not_picked_up'].includes(order.status);
                         const isLast = idx === (currentRide.steps?.length || 0) - 1;
                         const isActive = activeStopId === step.orderId;
@@ -355,8 +361,12 @@ export const Driver: React.FC = () => {
                                         <div className="flex justify-between items-start mb-2">
                                             <div>
                                                 <div className="text-[10px] text-gray-400 font-mono mb-0.5">#{order.id}</div>
-                                                <div className="font-bold text-lg">{step.customerName}</div>
-                                                {step.customerPhone && <a href={`tel:${step.customerPhone}`} className="inline-block mt-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-bold flex items-center hover:bg-blue-100 transition"><Phone size={14} className="mr-2"/> {step.customerPhone}</a>}
+                                                <div className="font-bold text-lg">{customerName}</div>
+                                                {customerPhone && (
+                                                    <a href={`tel:${customerPhone.replace(/\s/g, '')}`} className="inline-block mt-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-bold flex items-center hover:bg-blue-100 transition border border-blue-100">
+                                                        <Phone size={14} className="mr-2"/> {customerPhone}
+                                                    </a>
+                                                )}
                                             </div>
                                             <div className="text-right flex flex-col items-end">
                                                 <div className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center mb-1"><Package size={10} className="mr-1"/> {pkgCount} {pkgCount === 1 ? 'balík' : 'balíků'}</div>

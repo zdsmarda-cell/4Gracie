@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DeliveryType, OrderStatus, Ride, Order, RideStep } from '../../types';
-import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle, Download, Package, Info, ArrowDown } from 'lucide-react';
+import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle, Download, Package, Info, ArrowDown, Phone } from 'lucide-react';
 
 // --- TIME ANALYSIS TOOLTIP COMPONENT ---
 const TimeAnalysisTooltip: React.FC<{
@@ -445,6 +445,9 @@ const RideDetail: React.FC<{
                                                             const isFinished = orderInfo && (orderInfo.status === OrderStatus.DELIVERED || orderInfo.status === OrderStatus.CANCELLED || orderInfo.status === OrderStatus.NOT_PICKED_UP);
                                                             const finishedStyle = isFinished ? 'opacity-50 grayscale' : '';
                                                             
+                                                            const customerName = orderInfo?.deliveryName || orderInfo?.userName || step.customerName || 'Neznámý';
+                                                            const customerPhone = orderInfo?.deliveryPhone || step.customerPhone;
+                                                            
                                                             // Determine previous departure
                                                             // If idx is 0 (in filtered array, we need index in REAL array)
                                                             // Steps includes pickups (depot). Typically depot is first step.
@@ -484,7 +487,14 @@ const RideDetail: React.FC<{
                                                                         )}
                                                                         {step.address}
                                                                     </td>
-                                                                    <td className="p-3 text-gray-600">{step.customerName}</td>
+                                                                    <td className="p-3 text-gray-600">
+                                                                        <div className="font-bold">{customerName}</div>
+                                                                        {customerPhone && (
+                                                                            <a href={`tel:${customerPhone.replace(/\s/g, '')}`} className="flex items-center text-[10px] text-blue-600 hover:underline mt-0.5" onClick={e => e.stopPropagation()}>
+                                                                                <Phone size={10} className="mr-1"/> {customerPhone}
+                                                                            </a>
+                                                                        )}
+                                                                    </td>
                                                                     <td className="p-3 text-right">
                                                                         <button 
                                                                             onClick={(e) => { e.stopPropagation(); handleRemoveOrderFromRide(ride.id, step.orderId); }}
