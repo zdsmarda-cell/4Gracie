@@ -245,13 +245,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     // --- HOOKS INTEGRATION ---
     
+    // CRITICAL FIX: Stabilize handleAuthError to prevent infinite loop in useApi -> StoreContext re-renders
+    const handleAuthError = useCallback(() => {
+        setUser(null);
+        localStorage.removeItem('session_user');
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('refresh_token');
+    }, [setUser]);
+
     const { 
         dataSource, setDataSource, isLoading, setIsLoading, 
         isOperationPending, dbConnectionError, setDbConnectionError, apiCall 
     } = useApi(
         (localStorage.getItem('app_data_source') as DataSourceMode) || 'local',
         getFullApiUrl,
-        () => setUser(null),
+        handleAuthError, // Pass stable callback
         showNotify
     );
 
@@ -474,7 +482,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             setAllUsers(mergedUsers);
 
             setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
-            setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
+            
+            // FIX: Ensure mock orders are restored if storage is empty
+            let loadedOrders = loadFromStorage<Order[]>('db_orders', MOCK_ORDERS);
+            if (!loadedOrders || loadedOrders.length === 0) {
+                loadedOrders = MOCK_ORDERS;
+            }
+            setOrders(loadedOrders);
+            
             setSettings(loadFromStorage('db_settings', DEFAULT_SETTINGS));
             setDiscountCodes(loadFromStorage('db_discounts', []));
             setDayConfigs(loadFromStorage('db_dayconfigs', []));
