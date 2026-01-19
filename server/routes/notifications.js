@@ -60,31 +60,34 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     }
 
     try {
-        if (userId) {
-            // CASE 1: Valid User ID - Claim ownership or update existing
+        // FIX: Check for existence explicitly using the full endpoint string to avoid Prefix Index collisions (endpoint(255))
+        // Some push services have very long endpoints where the uniqueness is at the end.
+        const [existing] = await db.query('SELECT id, user_id FROM push_subscriptions WHERE endpoint = ?', [subscription.endpoint]);
+        
+        if (existing.length > 0) {
+            // Update Existing
+            // If we have a userId now, update it. If we don't (logout/guest), keep the old user_id (don't overwrite with null unless intentional logic requires it, here we prefer keeping it linked if possible or strictly following session)
+            // Logic update: If authenticated, claim the subscription.
+            if (userId) {
+                await db.query(
+                    `UPDATE push_subscriptions SET user_id = ?, p256dh = ?, auth = ?, updated_at = NOW() WHERE endpoint = ?`,
+                    [userId, subscription.keys.p256dh, subscription.keys.auth, subscription.endpoint]
+                );
+            } else {
+                // Just update keys/time, keep user_id as is (or should we null it? Usually keeping it is safer for "forgot to login" scenarios, but for strict privacy, maybe null. Let's update keys only.)
+                await db.query(
+                    `UPDATE push_subscriptions SET p256dh = ?, auth = ?, updated_at = NOW() WHERE endpoint = ?`,
+                    [subscription.keys.p256dh, subscription.keys.auth, subscription.endpoint]
+                );
+            }
+        } else {
+            // Insert New
             await db.query(
-                `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) 
-                 VALUES (?, ?, ?, ?) 
-                 ON DUPLICATE KEY UPDATE 
-                    user_id = VALUES(user_id), 
-                    p256dh = VALUES(p256dh), 
-                    auth = VALUES(auth), 
-                    updated_at = NOW()`,
+                `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`,
                 [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
             );
-        } else {
-            // CASE 2: No User ID (Guest or Expired Token) 
-            // Insert as NULL user, BUT if exists, DO NOT overwrite existing user_id with NULL
-            await db.query(
-                `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) 
-                 VALUES (NULL, ?, ?, ?) 
-                 ON DUPLICATE KEY UPDATE 
-                    p256dh = VALUES(p256dh), 
-                    auth = VALUES(auth), 
-                    updated_at = NOW()`,
-                [subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
-            );
         }
+        
         res.json({ success: true });
     } catch (e) {
         console.error("Subscription Error:", e);
@@ -98,7 +101,8 @@ router.post('/unsubscribe', withDb(async (req, res, db) => {
     if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
 
     try {
-        await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [endpoint]);
+        // Use LIMIT 1 to ensure we never accidentally mass delete, though WHERE endpoint=? should be specific.
+        await db.query('DELETE FROM push_subscriptions WHERE endpoint = ? LIMIT 1', [endpoint]);
         res.json({ success: true });
     } catch (e) {
         console.error("Unsubscribe Error:", e);
