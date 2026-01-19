@@ -1,3 +1,4 @@
+
 export interface RideStep {
   orderId: string;
   type: 'pickup' | 'delivery';
@@ -11,6 +12,17 @@ export interface RideStep {
   customerName?: string;
   customerPhone?: string;
   error?: string; // NEW: Error message for invalid address
+  
+  // Frontend calculated breakdown for debugging
+  breakdown?: {
+    prevDeparture: string;
+    travelTimeMinutes: number;
+    baseStopMinutes: number;
+    itemsMinutes: number;
+    paymentMinutes: number;
+    totalServiceMinutes: number;
+    calcDeparture: string;
+  };
 }
 
 export interface Ride {

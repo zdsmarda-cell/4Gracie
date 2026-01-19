@@ -1,9 +1,52 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Smartphone, Send, RotateCcw, Filter, Users, Loader2, CheckSquare, Square, CheckCircle, AlertCircle, Clock, Redo } from 'lucide-react';
+import { Smartphone, Send, RotateCcw, Filter, Users, Loader2, CheckSquare, Square, CheckCircle, AlertCircle, Clock, Redo, X } from 'lucide-react';
 import { Pagination } from '../../components/Pagination';
 import { User } from '../../types';
+
+// New Retry Modal Component
+const RetryConfirmModal: React.FC<{
+    isOpen: boolean;
+    log: any;
+    onConfirm: () => void;
+    onClose: () => void;
+    isLoading: boolean;
+}> = ({ isOpen, log, onConfirm, onClose, isLoading }) => {
+    if (!isOpen || !log) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                <div className="flex justify-between items-start mb-4">
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                        <Redo size={20} className="mr-2 text-blue-600"/> Opakovat odeslání
+                    </h3>
+                    <button onClick={onClose} disabled={isLoading} className="p-1 hover:bg-gray-100 rounded-full"><X size={18}/></button>
+                </div>
+                
+                <div className="bg-gray-50 p-3 rounded-lg text-sm mb-4 border border-gray-100">
+                    <p className="font-bold text-gray-700 mb-1">{log.title}</p>
+                    <p className="text-gray-500 mb-2">{log.body}</p>
+                    <div className="text-xs text-gray-400 border-t pt-2 mt-2">
+                        Příjemce: <strong>{log.user_name || 'Neznámý'}</strong> ({log.user_email})
+                    </div>
+                </div>
+
+                <p className="text-xs text-gray-500 mb-6">
+                    Notifikace bude odeslána znovu na všechna aktivní zařízení tohoto uživatele. Stav záznamu v historii bude aktualizován.
+                </p>
+
+                <div className="flex gap-3">
+                    <button onClick={onClose} disabled={isLoading} className="flex-1 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-sm hover:bg-gray-200 transition">Zrušit</button>
+                    <button onClick={onConfirm} disabled={isLoading} className="flex-1 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 transition flex justify-center items-center">
+                        {isLoading ? <Loader2 size={16} className="animate-spin"/> : 'Odeslat znovu'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 export const MobileNotificationsTab: React.FC = () => {
     const { getFullApiUrl, dataSource, searchUsers, t } = useStore();
@@ -13,6 +56,10 @@ export const MobileNotificationsTab: React.FC = () => {
     const [isHistoryLoading, setIsHistoryLoading] = useState(false);
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
+    
+    // --- RETRY STATE ---
+    const [retryLog, setRetryLog] = useState<any>(null);
+    const [isRetrying, setIsRetrying] = useState(false);
 
     // --- FORM STATE ---
     const [subject, setSubject] = useState('');
@@ -161,20 +208,35 @@ export const MobileNotificationsTab: React.FC = () => {
         }
     };
 
-    const handleResend = async (notificationLog: any) => {
-        if (!confirm('Opravdu znovu odeslat tomuto uživateli?')) return;
+    const handleRetry = async () => {
+        if (!retryLog) return;
+        setIsRetrying(true);
         
-        // Populate form with content
-        setSubject(notificationLog.title);
-        setBody(notificationLog.body);
-        
-        // Select just this user if user_id exists
-        if (notificationLog.user_id) {
-            setSelectedUserIds(new Set([notificationLog.user_id]));
-            // Also ensure we are scrolled to top to see the form
-            window.scrollTo(0,0);
-        } else {
-            alert('Nelze automaticky vybrat uživatele (chybí ID). Prosím vyberte uživatele ručně.');
+        try {
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(getFullApiUrl('/api/notifications/retry'), {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}` 
+                },
+                body: JSON.stringify({ logId: retryLog.id })
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                setRetryLog(null);
+                loadHistory(); // Refresh table to show new status
+            } else {
+                alert('Chyba: ' + (data.error || 'Nepodařilo se odeslat.'));
+                // Refresh anyway to show error status if updated in DB
+                loadHistory();
+            }
+        } catch (e: any) {
+            console.error(e);
+            alert('Chyba při komunikaci se serverem.');
+        } finally {
+            setIsRetrying(false);
         }
     };
 
@@ -341,15 +403,16 @@ export const MobileNotificationsTab: React.FC = () => {
                                                 <CheckCircle size={12} className="mr-1"/> Odesláno
                                             </span>
                                         ) : (
-                                            <span className="flex items-center justify-center text-red-600 font-bold bg-red-50 px-2 py-1 rounded" title={h.error_message}>
+                                            <span className="flex items-center justify-center text-red-600 font-bold bg-red-50 px-2 py-1 rounded cursor-help" title={h.error_message}>
                                                 <AlertCircle size={12} className="mr-1"/> Chyba
                                             </span>
                                         )}
                                     </td>
                                     <td className="px-6 py-4 text-right">
                                         <button 
-                                            onClick={() => handleResend(h)} 
+                                            onClick={() => setRetryLog(h)} 
                                             className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded font-bold transition flex items-center ml-auto"
+                                            title="Opakovat odeslání tomuto uživateli"
                                         >
                                             <Redo size={12} className="mr-1"/> Znovu
                                         </button>
@@ -371,6 +434,14 @@ export const MobileNotificationsTab: React.FC = () => {
                     totalItems={totalPages*20} 
                 />
             </div>
+
+            <RetryConfirmModal 
+                isOpen={!!retryLog} 
+                log={retryLog} 
+                onConfirm={handleRetry} 
+                onClose={() => setRetryLog(null)} 
+                isLoading={isRetrying}
+            />
         </div>
     );
 };

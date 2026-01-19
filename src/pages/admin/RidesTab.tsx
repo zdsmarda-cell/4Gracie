@@ -1,8 +1,102 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { DeliveryType, OrderStatus, Ride, Order } from '../../types';
-import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle, Download, Package } from 'lucide-react';
+import { DeliveryType, OrderStatus, Ride, Order, RideStep } from '../../types';
+import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle, Download, Package, Info, ArrowDown } from 'lucide-react';
+
+// --- TIME ANALYSIS TOOLTIP COMPONENT ---
+const TimeAnalysisTooltip: React.FC<{
+    step: RideStep;
+    prevDepartureTime: string;
+    settings: any;
+    onClose: () => void;
+}> = ({ step, prevDepartureTime, settings, onClose }) => {
+    
+    // Calculate breakdown on the fly if not present
+    const logistics = settings.logistics || { stopTimeMinutes: 5, loadingSecondsPerItem: 30, unloadingPaidSeconds: 120, unloadingUnpaidSeconds: 300 };
+    
+    // Helper to parse HH:MM to minutes
+    const toMin = (t: string) => {
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + m;
+    };
+    // Helper to minutes to HH:MM
+    const toTime = (m: number) => {
+        const h = Math.floor(m / 60) % 24;
+        const min = Math.round(m % 60);
+        return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    };
+
+    const arrivalMin = toMin(step.arrivalTime);
+    const prevDepMin = toMin(prevDepartureTime);
+    
+    // Travel Time
+    let travelTime = arrivalMin - prevDepMin;
+    if (travelTime < 0) travelTime += 24 * 60; // Handle midnight cross
+
+    // Service Time Calcs
+    const itemsCount = step.itemsCount || 0;
+    const baseStop = logistics.stopTimeMinutes;
+    const itemsTime = (itemsCount * logistics.loadingSecondsPerItem) / 60;
+    const paymentTime = (step.isPaid ? logistics.unloadingPaidSeconds : logistics.unloadingUnpaidSeconds) / 60;
+    
+    const totalService = baseStop + itemsTime + paymentTime;
+    const calcDeparture = toTime(arrivalMin + totalService);
+
+    return (
+        <div className="absolute z-50 bg-white rounded-xl shadow-xl border border-gray-200 p-4 w-72 text-xs text-gray-700 top-8 left-0 animate-in fade-in zoom-in-95" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-2 border-b pb-2">
+                <h4 className="font-bold text-primary flex items-center"><Clock size={12} className="mr-1"/> Analýza času</h4>
+                <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="hover:bg-gray-100 p-1 rounded"><X size={12}/></button>
+            </div>
+            
+            <div className="space-y-1.5">
+                <div className="flex justify-between">
+                    <span className="text-gray-500">Odjezd (předchozí):</span>
+                    <span className="font-mono">{prevDepartureTime}</span>
+                </div>
+                <div className="flex justify-between items-center text-blue-600">
+                    <span className="flex items-center"><ArrowDown size={10} className="mr-1"/> Cesta:</span>
+                    <span className="font-bold">{Math.round(travelTime)} min</span>
+                </div>
+                <div className="flex justify-between border-t border-dashed pt-1 mt-1">
+                    <span className="font-bold">Příjezd:</span>
+                    <span className="font-bold font-mono text-sm">{step.arrivalTime}</span>
+                </div>
+                
+                <div className="bg-gray-50 p-2 rounded mt-2 border border-gray-100 space-y-1">
+                    <div className="text-[10px] font-bold uppercase text-gray-400 mb-1">Servis na místě</div>
+                    <div className="flex justify-between">
+                        <span>Stop (Základ):</span>
+                        <span>{baseStop} min</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span>Balíky ({itemsCount} ks):</span>
+                        <span>{itemsTime.toFixed(1)} min</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span>Platba ({step.isPaid ? 'Hotovo' : 'Dobírka'}):</span>
+                        <span>{paymentTime.toFixed(1)} min</span>
+                    </div>
+                    <div className="flex justify-between border-t border-gray-200 pt-1 font-bold text-primary">
+                        <span>Celkem servis:</span>
+                        <span>{Math.round(totalService)} min</span>
+                    </div>
+                </div>
+
+                <div className="flex justify-between border-t pt-2 mt-2">
+                    <span className="font-bold text-gray-500">Odjezd:</span>
+                    <span className="font-mono font-bold">{step.departureTime}</span>
+                </div>
+                {step.departureTime !== calcDeparture && (
+                    <div className="text-[10px] text-red-500 mt-1 flex items-center">
+                        <AlertTriangle size={10} className="mr-1"/> Neshoda s vypočteným ({calcDeparture})
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
 
 // --- EDIT ORDER MODAL (Internal Component for RidesTab) ---
 const QuickEditOrderModal: React.FC<{
@@ -98,8 +192,9 @@ const RideDetail: React.FC<{
     onClose: () => void;
     onEditOrder: (orderId: string) => void;
 }> = ({ date, onClose, onEditOrder }) => {
-    const { orders, rides, allUsers, updateRide, deleteRide, t, formatDate, isOperationPending, refreshData, printRouteSheet } = useStore();
+    const { orders, rides, allUsers, updateRide, deleteRide, t, formatDate, isOperationPending, refreshData, printRouteSheet, settings } = useStore();
     const [isRefreshing, setIsRefreshing] = useState(false); // Initially false, managed by parent or demand
+    const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
     
     // Refresh data when modal opens to ensure we have latest ride structure
     useEffect(() => {
@@ -127,7 +222,6 @@ const RideDetail: React.FC<{
         return set;
     }, [dayRides]);
 
-    // Unassigned orders should NOT show finished orders (delivered/cancelled), they are done.
     const unassignedOrders = useMemo(() => dayOrders.filter(o => !assignedOrderIds.has(o.id)), [dayOrders, assignedOrderIds]);
 
     const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
@@ -198,7 +292,7 @@ const RideDetail: React.FC<{
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-6xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 relative">
+            <div className="bg-white w-full max-w-6xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 relative" onClick={() => setActiveTooltip(null)}>
                 
                 {(isOperationPending || isRefreshing) && (
                     <div className="absolute inset-0 bg-white/80 z-50 flex flex-col items-center justify-center backdrop-blur-sm">
@@ -346,20 +440,43 @@ const RideDetail: React.FC<{
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y">
-                                                        {ride.steps?.filter(s => s.type === 'delivery').map((step, idx) => {
+                                                        {ride.steps?.filter(s => s.type === 'delivery').map((step, idx, arr) => {
                                                             const orderInfo = orders.find(o => o.id === step.orderId);
                                                             const isFinished = orderInfo && (orderInfo.status === OrderStatus.DELIVERED || orderInfo.status === OrderStatus.CANCELLED || orderInfo.status === OrderStatus.NOT_PICKED_UP);
                                                             const finishedStyle = isFinished ? 'opacity-50 grayscale' : '';
                                                             
+                                                            // Determine previous departure
+                                                            // If idx is 0 (in filtered array, we need index in REAL array)
+                                                            // Steps includes pickups (depot). Typically depot is first step.
+                                                            // Let's assume step array is ordered.
+                                                            const stepIndex = ride.steps!.indexOf(step);
+                                                            const prevStep = stepIndex > 0 ? ride.steps![stepIndex - 1] : null;
+                                                            const prevDeparture = prevStep ? prevStep.departureTime : ride.departureTime;
+
                                                             return (
                                                                 <tr 
                                                                     key={idx} 
-                                                                    className={`hover:bg-gray-50 transition ${step.error ? 'bg-red-50 hover:bg-red-100 cursor-pointer' : ''} ${finishedStyle}`}
+                                                                    className={`hover:bg-gray-50 transition relative ${step.error ? 'bg-red-50 hover:bg-red-100 cursor-pointer' : ''} ${finishedStyle}`}
                                                                     onClick={() => step.error && onEditOrder(step.orderId)}
-                                                                    title={step.error ? 'Klikněte pro opravu adresy' : ''}
                                                                 >
-                                                                    <td className="p-3 font-mono text-gray-500">{step.arrivalTime}</td>
-                                                                    <td className="p-3 font-medium text-gray-700 max-w-xs truncate">
+                                                                    <td className="p-3 font-mono text-gray-500 relative">
+                                                                        <button 
+                                                                            onClick={(e) => { e.stopPropagation(); setActiveTooltip(activeTooltip === step.orderId ? null : step.orderId); }}
+                                                                            className="hover:text-blue-600 hover:underline cursor-pointer flex items-center"
+                                                                        >
+                                                                            {step.arrivalTime}
+                                                                        </button>
+                                                                        
+                                                                        {activeTooltip === step.orderId && (
+                                                                            <TimeAnalysisTooltip 
+                                                                                step={step} 
+                                                                                prevDepartureTime={prevDeparture} 
+                                                                                settings={settings}
+                                                                                onClose={() => setActiveTooltip(null)}
+                                                                            />
+                                                                        )}
+                                                                    </td>
+                                                                    <td className="p-3 font-medium text-gray-700 max-w-xs truncate" title={step.error ? 'Klikněte pro opravu adresy' : ''}>
                                                                         {step.error && (
                                                                             <div className="flex items-center text-red-600 mb-1 font-bold">
                                                                                 <AlertTriangle size={12} className="mr-1"/> Chyba: {step.error}

@@ -1,15 +1,65 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../context/StoreContext';
-import { Order, OrderStatus, Product, Ride } from '../types';
-import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye, ArrowLeft, RefreshCw, Calendar, ChevronRight, Play, Flag, Download, Loader2 } from 'lucide-react';
+import { Order, OrderStatus, Product, Ride, RideStep } from '../types';
+import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye, ArrowLeft, RefreshCw, Calendar, ChevronRight, Play, Flag, Download, Loader2, Info, ArrowDown, X, Clock } from 'lucide-react';
 import { calculatePackageCountLogic } from '../utils/orderLogic';
+
+// Reused Component from RidesTab (Ideally move to components folder, but kept here for instruction scope)
+const TimeAnalysisTooltip: React.FC<{
+    step: RideStep;
+    prevDepartureTime: string;
+    settings: any;
+    onClose: () => void;
+}> = ({ step, prevDepartureTime, settings, onClose }) => {
+    const logistics = settings.logistics || { stopTimeMinutes: 5, loadingSecondsPerItem: 30, unloadingPaidSeconds: 120, unloadingUnpaidSeconds: 300 };
+    const toMin = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const toTime = (m: number) => { const h = Math.floor(m / 60) % 24; const min = Math.round(m % 60); return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`; };
+
+    const arrivalMin = toMin(step.arrivalTime);
+    const prevDepMin = toMin(prevDepartureTime);
+    let travelTime = arrivalMin - prevDepMin;
+    if (travelTime < 0) travelTime += 24 * 60;
+
+    const itemsCount = step.itemsCount || 0;
+    const baseStop = logistics.stopTimeMinutes;
+    const itemsTime = (itemsCount * logistics.loadingSecondsPerItem) / 60;
+    const paymentTime = (step.isPaid ? logistics.unloadingPaidSeconds : logistics.unloadingUnpaidSeconds) / 60;
+    const totalService = baseStop + itemsTime + paymentTime;
+    const calcDeparture = toTime(arrivalMin + totalService);
+
+    return (
+        <div className="absolute z-50 bg-white rounded-xl shadow-xl border border-gray-200 p-4 w-64 text-xs text-gray-700 top-8 left-0 animate-in fade-in zoom-in-95" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-2 border-b pb-2">
+                <h4 className="font-bold text-primary flex items-center"><Clock size={12} className="mr-1"/> Analýza času</h4>
+                <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="hover:bg-gray-100 p-1 rounded"><X size={12}/></button>
+            </div>
+            
+            <div className="space-y-1.5">
+                <div className="flex justify-between text-gray-500"><span>Odjezd (předchozí):</span><span className="font-mono">{prevDepartureTime}</span></div>
+                <div className="flex justify-between items-center text-blue-600"><span className="flex items-center"><ArrowDown size={10} className="mr-1"/> Cesta:</span><span className="font-bold">{Math.round(travelTime)} min</span></div>
+                <div className="flex justify-between border-t border-dashed pt-1 mt-1"><span className="font-bold">Příjezd:</span><span className="font-bold font-mono text-sm">{step.arrivalTime}</span></div>
+                
+                <div className="bg-gray-50 p-2 rounded mt-2 border border-gray-100 space-y-1">
+                    <div className="text-[10px] font-bold uppercase text-gray-400 mb-1">Servis na místě</div>
+                    <div className="flex justify-between"><span>Stop:</span><span>{baseStop} min</span></div>
+                    <div className="flex justify-between"><span>Balíky ({itemsCount} ks):</span><span>{itemsTime.toFixed(1)} min</span></div>
+                    <div className="flex justify-between"><span>Platba:</span><span>{paymentTime.toFixed(1)} min</span></div>
+                    <div className="flex justify-between border-t border-gray-200 pt-1 font-bold text-primary"><span>Celkem:</span><span>{Math.round(totalService)} min</span></div>
+                </div>
+
+                <div className="flex justify-between border-t pt-2 mt-2"><span className="font-bold text-gray-500">Odjezd:</span><span className="font-mono font-bold">{step.departureTime}</span></div>
+            </div>
+        </div>
+    );
+};
 
 export const Driver: React.FC = () => {
     const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment, refreshData, updateRide, printRouteSheet, t } = useStore();
     const [modalState, setModalState] = useState<{ type: 'complete' | 'fail' | 'start' | 'finish', orderId?: string } | null>(null);
     const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [activeTooltipOrder, setActiveTooltipOrder] = useState<string | null>(null);
     const wakeLockRef = useRef<any>(null);
 
     // --- AUTO REFRESH ON MOUNT ---
@@ -222,7 +272,7 @@ export const Driver: React.FC = () => {
     const isPendingCalculation = currentRide.status === 'planned' && (!currentRide.steps || currentRide.steps.length === 0);
 
     return (
-        <div className="max-w-2xl mx-auto pb-32 animate-in slide-in-from-right-8 duration-300">
+        <div className="max-w-2xl mx-auto pb-32 animate-in slide-in-from-right-8 duration-300" onClick={() => setActiveTooltipOrder(null)}>
             <div className="bg-white p-4 sticky top-16 md:top-20 z-40 border-b shadow-sm flex justify-between items-center">
                 <div className="flex items-center gap-3">
                     <button onClick={() => setSelectedRideId(null)} className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition"><ArrowLeft size={24} /></button>
@@ -272,12 +322,33 @@ export const Driver: React.FC = () => {
                         const pkgCount = calculatePackageCountLogic(enrichedItems, settings.packaging.types);
                         const showCod = !order.isPaid && !isClosed;
                         const amountToPay = showCod ? getOrderAmountToPay(order) : 0;
+                        
+                        // Previous Departure
+                        const stepIndex = currentRide.steps!.indexOf(step);
+                        const prevStep = stepIndex > 0 ? currentRide.steps![stepIndex - 1] : null;
+                        const prevDeparture = prevStep ? prevStep.departureTime : currentRide.departureTime;
 
                         return (
                             <div key={idx} className={`relative pl-10 ${isClosed ? 'opacity-50 grayscale' : ''}`}>
                                 <div className={`absolute left-2.5 top-6 w-3 h-3 rounded-full border-2 border-white z-10 transform -translate-x-1/2 ${order.status === 'delivered' ? 'bg-green-500' : (order.status === 'not_picked_up' || order.status === 'cancelled') ? 'bg-red-500' : 'bg-accent'}`}></div>
                                 {!isLast && <div className="absolute left-4 top-6 bottom-[-24px] w-0.5 bg-gray-200 z-0"></div>}
-                                <div className={`absolute left-0 top-0 text-[10px] font-mono font-bold px-1 border rounded shadow-sm z-10 ${isLate && !isClosed ? 'bg-red-600 text-white border-red-600 animate-pulse' : 'bg-white text-gray-500'}`}>{step.arrivalTime}</div>
+                                
+                                {/* Time Badge with Clickable Tooltip */}
+                                <div 
+                                    className={`absolute left-0 top-0 text-[10px] font-mono font-bold px-1 border rounded shadow-sm z-10 cursor-pointer transition active:scale-95 ${isLate && !isClosed ? 'bg-red-600 text-white border-red-600 animate-pulse' : 'bg-white text-gray-500 hover:text-blue-600 hover:border-blue-400'}`}
+                                    onClick={(e) => { e.stopPropagation(); setActiveTooltipOrder(activeTooltipOrder === order.id ? null : order.id); }}
+                                >
+                                    {step.arrivalTime}
+                                </div>
+                                
+                                {activeTooltipOrder === order.id && (
+                                    <TimeAnalysisTooltip 
+                                        step={step} 
+                                        prevDepartureTime={prevDeparture} 
+                                        settings={settings}
+                                        onClose={() => setActiveTooltipOrder(null)}
+                                    />
+                                )}
 
                                 <div className={`bg-white rounded-2xl shadow-sm border overflow-hidden mt-3 transition-all duration-300 ${isActive ? 'ring-2 ring-blue-400 border-blue-400 transform scale-[1.02]' : ''}`}>
                                     <div className="p-4">

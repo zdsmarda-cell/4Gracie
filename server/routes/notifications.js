@@ -12,8 +12,7 @@ let isWebPushConfigured = false;
 
 // Configure Web Push Function
 const configureWebPush = () => {
-    if (isWebPushConfigured) return true;
-    
+    // Always re-check in case env vars changed or first run failed
     if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
         try {
             webpush.setVapidDetails(
@@ -21,7 +20,6 @@ const configureWebPush = () => {
                 process.env.VAPID_PUBLIC_KEY,
                 process.env.VAPID_PRIVATE_KEY
             );
-            console.log("✅ VAPID Keys configured for Push Notifications");
             isWebPushConfigured = true;
             return true;
         } catch (e) {
@@ -113,6 +111,67 @@ router.get('/history', requireAdmin, withDb(async (req, res, db) => {
         page: Number(page),
         pages: Math.ceil(count[0].t / Number(limit))
     });
+}));
+
+// RETRY SENDING (Admin)
+router.post('/retry', requireAdmin, withDb(async (req, res, db) => {
+    if (!configureWebPush()) {
+        return res.status(500).json({ error: 'Server VAPID keys not configured' });
+    }
+
+    const { logId } = req.body;
+    if (!logId) return res.status(400).json({ error: 'Missing logId' });
+
+    // 1. Get original log to fetch message content and target user
+    const [logs] = await db.query('SELECT * FROM push_logs WHERE id = ?', [logId]);
+    if (logs.length === 0) return res.status(404).json({ error: 'Log entry not found' });
+    const originalLog = logs[0];
+
+    // 2. Find ACTIVE subscriptions for this user
+    // We cannot reuse the old endpoint from the log because logs don't store endpoints, and even if they did, the sub might be dead.
+    // We must send to current active devices.
+    const [subs] = await db.query('SELECT * FROM push_subscriptions WHERE user_id = ?', [originalLog.user_id]);
+
+    if (subs.length === 0) {
+        return res.status(404).json({ error: 'User has no active push subscriptions.' });
+    }
+
+    const payload = JSON.stringify({
+        title: originalLog.title,
+        body: originalLog.body,
+        url: '/' // Default or try to extract from body if structured, but simple for now
+    });
+
+    let successCount = 0;
+    let lastError = null;
+
+    // 3. Send
+    for (const sub of subs) {
+        try {
+            await webpush.sendNotification({
+                endpoint: sub.endpoint,
+                keys: { p256dh: sub.p256dh, auth: sub.auth }
+            }, payload);
+            successCount++;
+        } catch (err) {
+            console.error(`Retry failed for sub ${sub.id}:`, err);
+            lastError = err.message || 'Unknown error';
+            if (err.statusCode === 410 || err.statusCode === 404) {
+                await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
+            }
+        }
+    }
+
+    // 4. Update Log Status
+    // If at least one succeeded, mark as sent. If all failed, mark as error.
+    if (successCount > 0) {
+        await db.query("UPDATE push_logs SET status = 'sent', error_message = NULL, created_at = NOW() WHERE id = ?", [logId]);
+        res.json({ success: true, message: `Odesláno na ${successCount} zařízení.` });
+    } else {
+        const errorMsg = lastError || 'All subscriptions failed';
+        await db.query("UPDATE push_logs SET status = 'error', error_message = ?, created_at = NOW() WHERE id = ?", [errorMsg, logId]);
+        res.status(500).json({ error: errorMsg });
+    }
 }));
 
 // GET TARGET USERS COUNT (Admin Preview)
@@ -221,12 +280,6 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
     });
 
     await Promise.all(promises);
-
-    // Optional: Keep aggregate history for quick stats if desired, but granular logs are primary now.
-    await db.query(
-        'INSERT INTO notification_history (subject, body, filters, recipient_count) VALUES (?, ?, ?, ?)',
-        [subject, body, JSON.stringify(filters || { targetIds: targetUserIds ? targetUserIds.length : 0 }), successCount]
-    );
 
     res.json({ success: true, count: successCount });
 }));

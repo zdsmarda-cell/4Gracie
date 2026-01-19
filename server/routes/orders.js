@@ -154,11 +154,15 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
     // Check if webpush is configured
     const canPush = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY;
     if (canPush) {
-        webpush.setVapidDetails(
-            `mailto:${process.env.EMAIL_FROM || 'info@4gracie.cz'}`,
-            process.env.VAPID_PUBLIC_KEY,
-            process.env.VAPID_PRIVATE_KEY
-        );
+        try {
+            webpush.setVapidDetails(
+                `mailto:${process.env.EMAIL_FROM || 'info@4gracie.cz'}`,
+                process.env.VAPID_PUBLIC_KEY,
+                process.env.VAPID_PRIVATE_KEY
+            );
+        } catch (confErr) {
+            console.error("❌ WebPush Config Error:", confErr.message);
+        }
     }
 
     for(const o of orders) {
@@ -212,10 +216,13 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
                         );
 
                     } catch (err) {
+                        const errMsg = err.body ? `${err.statusCode}: ${err.body}` : (err.message || 'Unknown error');
+                        console.error(`Push failed for ${o.id}:`, errMsg);
+
                         // LOG ERROR TO DB
                         await db.query(
                             'INSERT INTO push_logs (user_id, title, body, status, error_message) VALUES (?, ?, ?, ?, ?)',
-                            [o.user_id, pushTitle, pushBody, 'error', err.message || 'Send failed']
+                            [o.user_id, pushTitle, pushBody, 'error', errMsg]
                         );
 
                         if (err.statusCode === 410 || err.statusCode === 404) {
