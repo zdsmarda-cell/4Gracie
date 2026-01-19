@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Language } from '../../types';
 import { Settings as SettingsIcon, Languages, Wand2, Server, Terminal, Clock, Truck } from 'lucide-react';
@@ -52,7 +52,7 @@ export const SettingsTab: React.FC = () => {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="text-xs font-bold text-gray-500 block mb-1">Doba jedné zastávky (min)</label>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Základní čas nakládky v depu (min)</label>
                             <input 
                                 type="number" 
                                 className="w-full border rounded p-2 text-sm" 
@@ -61,7 +61,7 @@ export const SettingsTab: React.FC = () => {
                             />
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-gray-500 block mb-1">Čas naložení 1 ks na depu (sec)</label>
+                            <label className="text-xs font-bold text-gray-500 block mb-1">Čas naložení 1 balíku (sec)</label>
                             <input 
                                 type="number" 
                                 className="w-full border rounded p-2 text-sm" 
@@ -121,47 +121,3 @@ export const SettingsTab: React.FC = () => {
                     <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
                         <Wand2 size={20} className="mr-2 text-purple-600" />
                         AI Překlady
-                    </h3>
-                    <p className="text-sm text-gray-500 mb-4">
-                        Pokud je tato možnost zapnuta, aplikace se při ukládání produktů, kategorií a dalších entit 
-                        automaticky spojí s AI službou a vygeneruje překlady do aktivních jazyků.
-                    </p>
-                    <label className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-white rounded transition">
-                        <input 
-                            type="checkbox" 
-                            className="w-5 h-5 text-accent rounded focus:ring-accent"
-                            checked={settings.enableAiTranslation ?? true}
-                            onChange={(e) => toggleAi(e.target.checked)}
-                        />
-                        <span className="text-sm font-bold text-gray-900">Povolit automatické AI překlady</span>
-                    </label>
-                </div>
-
-                {/* Server Settings Section */}
-                <div className="bg-gray-50 p-6 rounded-xl border border-gray-100">
-                    <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
-                        <Server size={20} className="mr-2 text-gray-600" />
-                        Serverová nastavení
-                    </h3>
-                    <div className="space-y-4">
-                        <label className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-white rounded transition">
-                            <input 
-                                type="checkbox" 
-                                className="w-5 h-5 text-accent rounded focus:ring-accent"
-                                checked={settings.server?.consoleLogging ?? false}
-                                onChange={(e) => toggleConsoleLogging(e.target.checked)}
-                            />
-                            <div className="flex items-center">
-                                <Terminal size={16} className="mr-2 text-gray-500" />
-                                <span className="text-sm font-bold text-gray-900">Logovat emaily do konzole serveru</span>
-                            </div>
-                        </label>
-                        <p className="text-xs text-gray-500 ml-9">
-                            Pokud je zapnuto, obsah odesílaných emailů (HTML) se bude vypisovat do serverové konzole pro účely ladění.
-                        </p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};

@@ -99,7 +99,7 @@ const RideDetail: React.FC<{
     onClose: () => void;
     onEditOrder: (orderId: string) => void;
 }> = ({ date, onClose, onEditOrder }) => {
-    const { orders, rides, allUsers, updateRide, t, formatDate, isOperationPending, refreshData, printRouteSheet } = useStore();
+    const { orders, rides, allUsers, updateRide, deleteRide, t, formatDate, isOperationPending, refreshData, printRouteSheet } = useStore();
     const [isRefreshing, setIsRefreshing] = useState(true);
     
     useEffect(() => {
@@ -140,6 +140,7 @@ const RideDetail: React.FC<{
     const handleCreateRide = async () => {
         if (!selectedDriverId || selectedOrderIds.size === 0) return;
         
+        // Find existing ride for this driver on this date
         const existingRide = dayRides.find(r => r.driverId === selectedDriverId);
         
         if (existingRide) {
@@ -167,13 +168,20 @@ const RideDetail: React.FC<{
     };
 
     const handleRemoveOrderFromRide = async (ride: Ride, orderId: string) => {
-        // Removing order resets route calculation
-        const updatedRide = { 
-            ...ride, 
-            orderIds: ride.orderIds.filter(id => id !== orderId),
-            steps: [] 
-        };
-        await updateRide(updatedRide);
+        const newOrderIds = ride.orderIds.filter(id => id !== orderId);
+        
+        if (newOrderIds.length === 0) {
+            // Delete ride if empty
+            await deleteRide(ride.id);
+        } else {
+            // Update
+            const updatedRide = { 
+                ...ride, 
+                orderIds: newOrderIds,
+                steps: [] 
+            };
+            await updateRide(updatedRide);
+        }
     };
 
     return (

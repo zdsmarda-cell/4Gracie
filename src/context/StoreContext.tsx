@@ -129,6 +129,7 @@ interface StoreContextType {
   
   rides: Ride[];
   updateRide: (ride: Ride) => Promise<boolean>;
+  deleteRide: (rideId: string) => Promise<boolean>;
   printRouteSheet: (ride: Ride, driverName: string) => void;
   
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
@@ -157,6 +158,7 @@ interface StoreContextType {
   
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
+  showNotify: (msg: string, type?: 'success'|'error', autoClose?: boolean) => void;
 
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
@@ -394,7 +396,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, [getFullApiUrl, logout]);
 
   // --- USE EXTRACTED LOGIC HOOKS ---
-  const { updateRide, printRouteSheet } = useRideLogic({ 
+  const { updateRide, deleteRide, printRouteSheet } = useRideLogic({ 
     dataSource, apiCall, setRides, orders, products, settings, showNotify 
   });
 
@@ -1266,11 +1268,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
       settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig,
       updateEventSlot, removeEventSlot, notifyEventSubscribers,
-      rides, updateRide, printRouteSheet,
+      rides, updateRide, deleteRide, printRouteSheet,
       checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee,
       getAvailableEventDates, isEventCapacityAvailable,
       t, tData, generateInvoice, printInvoice, generateCzIban, removeDiacritics, formatDate, getImageUrl, getFullApiUrl, uploadImage,
-      importDatabase, refreshData, globalNotification, dismissNotification,
+      importDatabase, refreshData, globalNotification, dismissNotification, showNotify,
       isAuthModalOpen, openAuthModal, closeAuthModal,
       cookieSettings, saveCookieSettings,
       isPwa, isPwaUpdateAvailable, updatePwa, appVersion: APP_VERSION,

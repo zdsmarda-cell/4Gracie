@@ -36,6 +36,22 @@ export const useRideLogic = ({ dataSource, apiCall, setRides, orders, products, 
         }
     };
 
+    const deleteRide = async (rideId: string): Promise<boolean> => {
+        if (dataSource === 'api') {
+            const res = await apiCall(`/api/admin/rides/${rideId}`, 'DELETE');
+            if (res && res.success) {
+                setRides(prev => prev.filter(r => r.id !== rideId));
+                showNotify('Jízda smazána (žádné objednávky).');
+                return true;
+            }
+            return false;
+        } else {
+            setRides(prev => prev.filter(r => r.id !== rideId));
+            showNotify('Jízda smazána.');
+            return true;
+        }
+    };
+
     const printRouteSheet = async (ride: Ride, driverName: string) => {
         const blob = await generateRoutePdf(ride, orders, products, settings, driverName);
         const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
@@ -47,6 +63,7 @@ export const useRideLogic = ({ dataSource, apiCall, setRides, orders, products, 
 
     return {
         updateRide,
+        deleteRide,
         printRouteSheet
     };
 };
