@@ -291,6 +291,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
+    // @ts-ignore
+    const isProd = import.meta.env?.PROD;
+    
+    // Suppress success messages in production environment
+    if (isProd && type === 'success') {
+        return;
+    }
+
     setGlobalNotification({ message, type, autoClose });
   };
 
