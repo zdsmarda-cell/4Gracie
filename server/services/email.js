@@ -158,7 +158,8 @@ export const processCustomerEmail = async (to, order, type, settings, customStat
         to,
         subject,
         html,
-        attachments
+        attachments,
+        encoding: 'base64'
     });
 };
 
@@ -172,7 +173,8 @@ export const processOperatorEmail = async (to, order, type, settings) => {
         from: process.env.EMAIL_FROM || 'info@4gracie.cz',
         to,
         subject: `Nová objednávka #${order.id}`,
-        html
+        html,
+        encoding: 'base64'
     });
 };
 
@@ -227,7 +229,8 @@ export const startEmailWorker = () => {
                         from: process.env.EMAIL_FROM,
                         to: row.recipient_email,
                         subject: row.subject,
-                        html: payload.html
+                        html: payload.html,
+                        encoding: 'base64'
                     });
                 }
 
