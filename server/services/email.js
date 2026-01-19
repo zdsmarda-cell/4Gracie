@@ -25,9 +25,17 @@ export const initEmail = async () => {
 
 const getImgUrl = (path) => {
     if (!path) return '';
-    if (path.startsWith('data:') || path.startsWith('http')) return path;
-    const baseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
-    return `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
+    // Pokud je to base64 nebo absolutní URL, vracíme rovnou
+    if (path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) return path;
+    
+    // Získání base URL bez koncového lomítka
+    let baseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
+    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+    
+    // Přidání lomítka na začátek cesty, pokud chybí
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    
+    return `${baseUrl}${cleanPath}`;
 };
 
 const formatDate = (dateStr) => {
@@ -153,6 +161,12 @@ export const processCustomerEmail = async (to, order, type, settings, customStat
 
     const html = generateOrderHtml(order, subject, message, lang, settings);
 
+    // --- LOGGING ---
+    if (settings && settings.server && settings.server.consoleLogging) {
+        console.log(`📨 EMAIL LOG [Customer]: To: ${to}, Subject: ${subject}`);
+        console.log(`   Context: Order #${order.id}, Status: ${customStatus || type}`);
+    }
+
     await transporter.sendMail({
         from: process.env.EMAIL_FROM || 'info@4gracie.cz',
         to,
@@ -169,6 +183,11 @@ export const processOperatorEmail = async (to, order, type, settings) => {
 
     const html = generateOrderHtml(order, 'Nová objednávka (Admin)', 'Přišla nová objednávka.', 'cs', settings);
     
+    // --- LOGGING ---
+    if (settings && settings.server && settings.server.consoleLogging) {
+        console.log(`📨 EMAIL LOG [Operator]: To: ${to}, Subject: Nová objednávka #${order.id}`);
+    }
+
     await transporter.sendMail({
         from: process.env.EMAIL_FROM || 'info@4gracie.cz',
         to,
