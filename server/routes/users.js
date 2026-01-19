@@ -22,11 +22,6 @@ router.get('/', withDb(async (req, res, db) => {
         FROM users u 
     `;
     
-    // Join with addresses if filtering by ZIP to ensure we only get relevant users
-    if (zip) {
-        query += ` JOIN user_addresses ua ON u.id = ua.user_id `;
-    }
-
     query += ` WHERE 1=1 `;
     
     const params = [];
@@ -37,11 +32,18 @@ router.get('/', withDb(async (req, res, db) => {
         query += ' AND (SELECT COUNT(*) FROM push_subscriptions ps WHERE ps.user_id = u.id) > 0';
     }
 
-    // Filter by ZIP
+    // Filter by ZIP (LATEST ADDRESS ONLY)
+    // We select the single latest address for the user (ordered by ID desc, which assumes timestamp-based IDs)
+    // and check if that specific address matches the ZIP.
     if (zip) {
-        // Remove spaces for loose matching
         const cleanZip = zip.replace(/\s/g, '');
-        query += ' AND REPLACE(ua.zip, " ", "") LIKE ?';
+        query += ` AND (
+            SELECT REPLACE(ua.zip, ' ', '')
+            FROM user_addresses ua
+            WHERE ua.user_id = u.id
+            ORDER BY ua.id DESC
+            LIMIT 1
+        ) LIKE ?`;
         params.push(`%${cleanZip}%`);
     }
 

@@ -52,6 +52,18 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
         return () => clearTimeout(timer);
     }, [userFilters.search, userFilters.zip]);
 
+    // Helper to get latest ZIP based on ID (Timestamp)
+    const getLatestZip = (u: User) => {
+        const all = [...(u.deliveryAddresses || []), ...(u.billingAddresses || [])];
+        if (all.length === 0) return '';
+        
+        // Sort by ID descending (ID starts with timestamp in our system)
+        // This finds the most recently added/updated address
+        all.sort((a, b) => b.id.localeCompare(a.id));
+        
+        return all[0].zip;
+    };
+
     const filteredUsers = useMemo(() => {
         return fetchedUsers.filter(u => {
             if (userFilters.marketing === 'yes' && !u.marketingConsent) return false;
@@ -59,10 +71,14 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
             if (userFilters.status === 'active' && u.isBlocked) return false;
             if (userFilters.status === 'blocked' && !u.isBlocked) return false;
             
-            // Orders context only has FUTURE orders in API mode.
-            // Stats filtering will be inaccurate without backend aggregation.
-            // We disable client-side stats filtering in API mode or accept it shows only active orders stats.
-            
+            // Client-side ZIP fallback if needed (though server handles main filtering)
+            // Ensures displayed data matches intent if server returns partial matches
+            if (userFilters.zip) {
+                const latestZip = getLatestZip(u).replace(/\s/g, '');
+                const searchZip = userFilters.zip.replace(/\s/g, '');
+                if (!latestZip.includes(searchZip)) return false;
+            }
+
             return true;
         });
     }, [fetchedUsers, userFilters]);
@@ -71,15 +87,6 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
         const start = (currentPage - 1) * itemsPerPage;
         return filteredUsers.slice(start, start + itemsPerPage);
     }, [filteredUsers, currentPage, itemsPerPage]);
-
-    // Helper to get latest ZIP
-    const getLatestZip = (u: User) => {
-        const all = [...(u.deliveryAddresses || []), ...(u.billingAddresses || [])];
-        if (all.length === 0) return '';
-        // Assuming addresses are returned in DB order, last one is likely newest or updated.
-        // If not, we take last one in array.
-        return all[all.length - 1].zip;
-    };
 
     const handleUserExport = () => {
         const usersToExport = filteredUsers.filter(u => selectedUserIds.includes(u.id));
@@ -176,7 +183,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                         <input type="text" className="w-full border rounded p-2" placeholder="Text..." value={userFilters.search} onChange={e => setUserFilters({...userFilters, search: e.target.value})} />
                     </div>
                     <div className="w-24">
-                        <div className="mb-1 font-bold text-gray-400">PSČ</div>
+                        <div className="mb-1 font-bold text-gray-400">PSČ (Poslední)</div>
                         <input type="text" className="w-full border rounded p-2" placeholder="např. 664" value={userFilters.zip} onChange={e => setUserFilters({...userFilters, zip: e.target.value})} />
                     </div>
                     <div>
@@ -220,7 +227,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                         </th>
                         <th className="px-6 py-4 text-left">{t('common.name')}</th>
                         <th className="px-6 py-4 text-left">{t('common.email')}</th>
-                        <th className="px-6 py-4 text-left">PSČ (Last)</th>
+                        <th className="px-6 py-4 text-left">PSČ (Poslední)</th>
                         <th className="px-6 py-4 text-left">{t('common.role')}</th>
                         <th className="px-6 py-4 text-center">Marketing</th>
                         <th className="px-6 py-4 text-center">Push</th>
