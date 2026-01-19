@@ -1,19 +1,12 @@
 
-import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
-import { 
-  CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, 
-  OrderStatus, DiscountCode, AppliedDiscount, DeliveryRegion, 
-  PackagingType, CompanyDetails, BackupData, PickupLocation, Ride, CookieSettings,
-  OrdersSearchResult, EventSlot
-} from '../types';
+import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, Ride, EventSlot, CookieSettings, OrdersSearchResult } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
 import { calculateCzIban, formatDate, removeDiacritics } from '../utils/helpers';
-
-// IMPORT NEW LOGIC HOOKS
 import { useRideLogic } from './slices/rideLogic';
 import { useOrderLogic } from './slices/orderLogic';
 
@@ -85,7 +78,7 @@ interface StoreContextType {
   
   user: User | null;
   allUsers: User[];
-  refreshUser: () => Promise<void>; // NEW
+  refreshUser: () => Promise<void>; 
   login: (email: string, password?: string) => Promise<{ success: boolean; message?: string }>;
   register: (name: string, email: string, phone: string, password?: string) => void;
   logout: () => void;
@@ -402,9 +395,46 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     dataSource, apiCall, setRides, orders, products, settings, showNotify 
   });
 
-  const { addOrder, updateOrder, updateOrderStatus, searchOrders } = useOrderLogic({
+  const { addOrder, updateOrder, updateOrderStatus } = useOrderLogic({
     dataSource, apiCall, setOrders, setRides, rides, language, settings, showNotify, t
   });
+  
+  // Custom searchOrders with Local pagination logic
+  const searchOrders = useCallback(async (filters: any) => {
+      if (dataSource === 'api') {
+          const q = new URLSearchParams(filters).toString();
+          const res = await apiCall(`/api/orders?${q}`, 'GET');
+          if (res && res.success) return res;
+          return { orders: [], total: 0, page: 1, pages: 1 };
+      } else {
+          // Local Mode Implementation
+          let filtered = orders.filter(o => {
+              if (filters.id && !o.id.includes(filters.id)) return false;
+              if (filters.userId && o.userId !== filters.userId) return false;
+              if (filters.dateFrom && o.deliveryDate < filters.dateFrom) return false;
+              if (filters.dateTo && o.deliveryDate > filters.dateTo) return false;
+              if (filters.customer && !o.userName?.toLowerCase().includes(filters.customer.toLowerCase())) return false;
+              if (filters.status && !filters.status.split(',').includes(o.status)) return false;
+              // ... other filters if needed
+              return true;
+          });
+          
+          filtered.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+          const page = Number(filters.page) || 1;
+          const limit = Number(filters.limit) || 10;
+          const start = (page - 1) * limit;
+          const end = start + limit;
+          
+          return { 
+              orders: filtered.slice(start, end), 
+              total: filtered.length, 
+              page: page, 
+              pages: Math.ceil(filtered.length / limit) 
+          };
+      }
+  }, [dataSource, apiCall, orders]);
+
 
   const fetchData = async () => {
       setIsLoading(true);
@@ -502,6 +532,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               setSwRegistration(registration);
               registration.pushManager.getSubscription().then(sub => {
                   setPushSubscription(sub);
+                  
+                  // NEW: AUTO SYNC SUBSCRIPTION ON LOAD
+                  // If browser has a sub but backend might not, or expired, this refreshes it
+                  if (sub && user && dataSource === 'api') {
+                      apiCall('/api/notifications/subscribe', 'POST', { subscription: sub })
+                          .catch(e => console.error("Auto-sync push failed", e));
+                  }
               });
           });
           
@@ -509,7 +546,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
              window.location.reload();
           });
       }
-  }, []);
+  }, [user, dataSource, apiCall]); // Run when user logs in or data source ready
 
   useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
   useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
@@ -1272,10 +1309,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <StoreContext.Provider value={{
       dataSource, setDataSource, isLoading, isOperationPending, dbConnectionError,
-      isPreviewEnvironment, // Added here
+      isPreviewEnvironment, 
       language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart,
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
-      refreshUser, // NEW EXPORT
+      refreshUser,
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration: () => ({ valid: true, invalidCodes: [] }), searchOrders,
       products, addProduct, updateProduct, deleteProduct, searchProducts,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,

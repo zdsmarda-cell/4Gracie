@@ -1,13 +1,13 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck, Smartphone, LogOut, Loader2 } from 'lucide-react';
+import { Trash2, Plus, Edit, MapPin, Building, X, ChevronDown, ChevronUp, FileText, QrCode, Minus, Check, AlertCircle, Lock, Save, ShoppingBag, Clock, ImageIcon, Search, FileCheck, Smartphone, LogOut, Loader2, ArrowDown } from 'lucide-react';
 import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMethod, ProductCategory } from '../types';
 import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Profile: React.FC = () => {
-  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa, isPushSupported, logout, refreshUser } = useStore();
+  const { user, t, updateUser, settings, printInvoice, updateOrder, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl, pushSubscription, subscribeToPush, unsubscribeFromPush, isPushSupported, logout, refreshUser, searchOrders } = useStore();
   const navigate = useNavigate();
   
   // General Modal State (For Profile Address Management)
@@ -15,7 +15,11 @@ export const Profile: React.FC = () => {
   const [editingAddr, setEditingAddr] = useState<Partial<Address> | null>(null);
   const [addressError, setAddressError] = useState<string | null>(null);
   
-  // Order List State
+  // Order List State (Paginated)
+  const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [qrModalOrder, setQrModalOrder] = useState<Order | null>(null);
   
@@ -44,7 +48,32 @@ export const Profile: React.FC = () => {
   // REFRESH USER DATA ON MOUNT
   useEffect(() => {
       refreshUser();
+      loadHistory(1, true); // Load first page
   }, []);
+
+  const loadHistory = useCallback(async (page: number, reset: boolean = false) => {
+      if (!user) return;
+      setIsHistoryLoading(true);
+      try {
+          const res = await searchOrders({
+              userId: user.id,
+              page: page,
+              limit: 10
+          });
+          
+          if (reset) {
+              setHistoryOrders(res.orders);
+          } else {
+              setHistoryOrders(prev => [...prev, ...res.orders]);
+          }
+          setHistoryTotal(res.total);
+          setHistoryPage(page);
+      } catch (e) {
+          console.error("Failed to load history", e);
+      } finally {
+          setIsHistoryLoading(false);
+      }
+  }, [user, searchOrders]);
 
   useEffect(() => {
     if (user) {
@@ -54,8 +83,6 @@ export const Profile: React.FC = () => {
   }, [user]);
 
   if (!user) return <Navigate to="/" />;
-
-  const myOrders = orders.filter(o => o.userId === user.id).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   // Derived state for Calendar validation in Modal
   const derivedRegion = useMemo(() => {
@@ -293,8 +320,13 @@ export const Profile: React.FC = () => {
 
     // PASS true as 3rd arg for isUserEdit
     const success = await updateOrder(finalOrder, true, true); 
-    if (success) setIsEditOrderModalOpen(false);
-    else setOrderSaveError('Chyba při ukládání.');
+    if (success) {
+        setIsEditOrderModalOpen(false);
+        // Refresh the list to show updated values
+        setHistoryOrders(prev => prev.map(o => o.id === finalOrder.id ? finalOrder : o));
+    } else {
+        setOrderSaveError('Chyba při ukládání.');
+    }
   };
 
   // --- PASSWORD & MISC ---
@@ -354,9 +386,13 @@ export const Profile: React.FC = () => {
         
         {/* Orders Column */}
         <div className="lg:col-span-2 space-y-8">
-          <h2 className="text-2xl font-serif font-bold">Historie objednávek</h2>
+          <div className="flex justify-between items-center">
+            <h2 className="text-2xl font-serif font-bold">Historie objednávek</h2>
+            {historyTotal > 0 && <span className="text-xs text-gray-400 font-bold">{historyOrders.length} z {historyTotal}</span>}
+          </div>
+          
           <div className="space-y-4">
-            {myOrders.map(o => {
+            {historyOrders.map(o => {
               const discountSum = o.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
               const total = Math.max(0, o.totalPrice - discountSum) + o.packagingFee + (o.deliveryFee || 0);
               const isExpanded = expandedOrderId === o.id;
@@ -493,7 +529,20 @@ export const Profile: React.FC = () => {
                 </div>
               );
             })}
-            {myOrders.length === 0 && (
+            
+            {/* Load More Button */}
+            {historyOrders.length < historyTotal && (
+                <button 
+                    onClick={() => loadHistory(historyPage + 1)}
+                    disabled={isHistoryLoading}
+                    className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50"
+                >
+                    {isHistoryLoading ? <Loader2 className="animate-spin" size={16}/> : <ArrowDown size={16}/>}
+                    Načíst starší objednávky
+                </button>
+            )}
+
+            {historyOrders.length === 0 && !isHistoryLoading && (
               <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-gray-200">
                 <ShoppingBag size={48} className="mx-auto text-gray-200 mb-4" />
                 <h3 className="text-lg font-bold text-gray-400">Zatím žádné objednávky</h3>

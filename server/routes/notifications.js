@@ -60,33 +60,21 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     }
 
     try {
-        // FIX: Check for existence explicitly using the full endpoint string to avoid Prefix Index collisions (endpoint(255))
-        // Some push services have very long endpoints where the uniqueness is at the end.
-        const [existing] = await db.query('SELECT id, user_id FROM push_subscriptions WHERE endpoint = ?', [subscription.endpoint]);
+        // ENFORCE UNIQUE USER: If user is logged in, remove ALL their previous subscriptions.
+        // This ensures the user has only 1 active device in the DB (the last one used).
+        // This solves the issue of duplicates and stale records.
+        if (userId) {
+            await db.query('DELETE FROM push_subscriptions WHERE user_id = ?', [userId]);
+        } 
         
-        if (existing.length > 0) {
-            // Update Existing
-            // If we have a userId now, update it. If we don't (logout/guest), keep the old user_id (don't overwrite with null unless intentional logic requires it, here we prefer keeping it linked if possible or strictly following session)
-            // Logic update: If authenticated, claim the subscription.
-            if (userId) {
-                await db.query(
-                    `UPDATE push_subscriptions SET user_id = ?, p256dh = ?, auth = ?, updated_at = NOW() WHERE endpoint = ?`,
-                    [userId, subscription.keys.p256dh, subscription.keys.auth, subscription.endpoint]
-                );
-            } else {
-                // Just update keys/time, keep user_id as is (or should we null it? Usually keeping it is safer for "forgot to login" scenarios, but for strict privacy, maybe null. Let's update keys only.)
-                await db.query(
-                    `UPDATE push_subscriptions SET p256dh = ?, auth = ?, updated_at = NOW() WHERE endpoint = ?`,
-                    [subscription.keys.p256dh, subscription.keys.auth, subscription.endpoint]
-                );
-            }
-        } else {
-            // Insert New
-            await db.query(
-                `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`,
-                [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
-            );
-        }
+        // Also remove this specific endpoint if it was assigned to someone else (cleanup)
+        await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [subscription.endpoint]);
+
+        // Insert New Record
+        await db.query(
+            `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`,
+            [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
+        );
         
         res.json({ success: true });
     } catch (e) {
@@ -119,7 +107,6 @@ router.post('/unsubscribe', withDb(async (req, res, db) => {
     try {
         if (userId) {
             // CASE A: Logged in user - Only delete THEIR record for this endpoint.
-            // This prevents deleting records of other users if endpoints collide or if the DB has duplicates.
             await db.query('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?', [userId, endpoint]);
         } else {
             // CASE B: Guest/Anonymous - Fallback to endpoint match only
@@ -196,7 +183,7 @@ router.post('/retry', requireAdmin, withDb(async (req, res, db) => {
             await webpush.sendNotification({
                 endpoint: sub.endpoint,
                 keys: { p256dh: sub.p256dh, auth: sub.auth }
-            }, payload, { TTL: 86400 }); // Keep alive 24h
+            }, payload, { TTL: 2419200 }); // 4 weeks TTL
             successCount++;
         } catch (err) {
             console.error(`Retry failed for sub ${sub.id}:`, err);
@@ -304,8 +291,8 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
         };
         
         try {
-            // Add TTL (Time To Live) option. Default 24 hours (86400s)
-            await webpush.sendNotification(pushConfig, payload, { TTL: 86400 });
+            // Set TTL to 4 weeks (2419200 seconds) to try and deliver "forever" (practically)
+            await webpush.sendNotification(pushConfig, payload, { TTL: 2419200 });
             successCount++;
             // LOG SUCCESS
             await db.query(
@@ -319,6 +306,7 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
                 [sub.user_id, subject, body, 'error', err.message || 'Send failed']
             );
 
+            // 410 Gone / 404 Not Found -> Subscription expired or invalid
             if (err.statusCode === 410 || err.statusCode === 404) {
                 await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [sub.endpoint]);
             }
