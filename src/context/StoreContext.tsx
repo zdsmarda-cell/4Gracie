@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import { 
   CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, 
@@ -84,6 +85,7 @@ interface StoreContextType {
   
   user: User | null;
   allUsers: User[];
+  refreshUser: () => Promise<void>; // NEW
   login: (email: string, password?: string) => Promise<{ success: boolean; message?: string }>;
   register: (name: string, email: string, phone: string, password?: string) => void;
   logout: () => void;
@@ -707,6 +709,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return false;
   };
 
+  // REFRESH USER FROM DB (Fresh Data)
+  const refreshUser = async () => {
+      if(dataSource === 'api') {
+          const res = await apiCall('/api/users/me', 'GET');
+          if(res && res.success) {
+              setUser(res.user);
+              localStorage.setItem('session_user', JSON.stringify(res.user));
+          }
+      }
+  };
+
   const sendPasswordReset = async (email: string) => {
       if (dataSource === 'api') {
           const res = await apiCall('/api/auth/reset-password', 'POST', { email });
@@ -951,7 +964,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // --- MISC ---
   const generateInvoice = (o: Order) => `INV-${o.id}`;
   
-  // Helper to fetch font buffer for PDF
   const fetchFont = async (url: string) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Failed to load font: ${response.statusText}`);
@@ -1263,6 +1275,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       isPreviewEnvironment, // Added here
       language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart,
       user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
+      refreshUser, // NEW EXPORT
       orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration: () => ({ valid: true, invalidCodes: [] }), searchOrders,
       products, addProduct, updateProduct, deleteProduct, searchProducts,
       discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Navigate, useNavigate } from 'react-router-dom';
@@ -6,7 +7,7 @@ import { Address, Order, OrderStatus, Product, DeliveryType, Language, PaymentMe
 import { CustomCalendar } from '../components/CustomCalendar';
 
 export const Profile: React.FC = () => {
-  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa, isPushSupported, logout } = useStore();
+  const { user, orders, t, updateUser, settings, printInvoice, updateOrder, updateOrderStatus, checkAvailability, products, getDeliveryRegion, changePassword, generateCzIban, removeDiacritics, formatDate, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, getImageUrl, pushSubscription, subscribeToPush, unsubscribeFromPush, isPwa, isPushSupported, logout, refreshUser } = useStore();
   const navigate = useNavigate();
   
   // General Modal State (For Profile Address Management)
@@ -39,6 +40,11 @@ export const Profile: React.FC = () => {
 
   // Push Loading State
   const [isPushLoading, setIsPushLoading] = useState(false);
+
+  // REFRESH USER DATA ON MOUNT
+  useEffect(() => {
+      refreshUser();
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -96,6 +102,7 @@ export const Profile: React.FC = () => {
           }
       } finally {
           setIsPushLoading(false);
+          refreshUser(); // Refresh to update UI based on DB state if needed
       }
   };
 
@@ -955,7 +962,7 @@ export const Profile: React.FC = () => {
              </div>
              <div className="p-6 bg-gray-50 border-t flex gap-4">
                <button onClick={() => setIsEditOrderModalOpen(false)} className="flex-1 py-3 bg-white border rounded-xl font-bold text-sm uppercase transition">{t('admin.cancel')}</button>
-               <button onClick={handleSaveOrder} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-sm uppercase shadow-lg transition flex items-center justify-center gap-2"><Save size={16}/> Uložit změny</button>
+               <button onClick={handleSaveOrder} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold text-sm uppercase shadow-lg transition flex items-center justify-center gap-2"><Save size={16}/> {t('admin.save_changes')}</button>
              </div>
           </div>
          </div>

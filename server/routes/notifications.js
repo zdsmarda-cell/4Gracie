@@ -196,7 +196,7 @@ router.post('/retry', requireAdmin, withDb(async (req, res, db) => {
             await webpush.sendNotification({
                 endpoint: sub.endpoint,
                 keys: { p256dh: sub.p256dh, auth: sub.auth }
-            }, payload);
+            }, payload, { TTL: 86400 }); // Keep alive 24h
             successCount++;
         } catch (err) {
             console.error(`Retry failed for sub ${sub.id}:`, err);
@@ -304,7 +304,8 @@ router.post('/send', requireAdmin, withDb(async (req, res, db) => {
         };
         
         try {
-            await webpush.sendNotification(pushConfig, payload);
+            // Add TTL (Time To Live) option. Default 24 hours (86400s)
+            await webpush.sendNotification(pushConfig, payload, { TTL: 86400 });
             successCount++;
             // LOG SUCCESS
             await db.query(

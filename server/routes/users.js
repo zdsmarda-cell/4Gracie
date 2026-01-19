@@ -3,6 +3,7 @@ import express from 'express';
 import { withDb } from '../db.js';
 import nodemailer from 'nodemailer';
 import jwt from '../services/jwt.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 const SECRET_KEY = process.env.JWT_SECRET || 'dev_secret_key_change_in_prod';
@@ -10,7 +11,7 @@ const REFRESH_SECRET_KEY = process.env.JWT_REFRESH_SECRET || (SECRET_KEY + '_ref
 
 const hashPassword = (pwd) => `hashed_${Buffer.from(pwd).toString('base64')}`;
 
-// GET USERS (Protected)
+// GET USERS (Protected - Admin)
 router.get('/', withDb(async (req, res, db) => {
     const { search, hasPush } = req.query;
     
@@ -39,8 +40,7 @@ router.get('/', withDb(async (req, res, db) => {
         users.push({
             id: row.id, email: row.email, name: row.name, phone: row.phone, role: row.role,
             isBlocked: Boolean(row.is_blocked), marketingConsent: Boolean(row.marketing_consent),
-            hasPushSubscription: Boolean(row.has_push), // NEW FIELD
-            // passwordHash removed for security
+            hasPushSubscription: Boolean(row.has_push),
             deliveryAddresses: addrs.filter(a => a.type === 'delivery'),
             billingAddresses: addrs.filter(a => a.type === 'billing')
         });
@@ -48,13 +48,39 @@ router.get('/', withDb(async (req, res, db) => {
     res.json({ success: true, users });
 }));
 
+// GET CURRENT USER (Fresh Data)
+router.get('/me', authenticateToken, withDb(async (req, res, db) => {
+    const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    
+    if (rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+
+    const u = rows[0];
+    const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
+    
+    // Check push status
+    const [push] = await db.query('SELECT COUNT(*) as c FROM push_subscriptions WHERE user_id = ?', [u.id]);
+
+    const userData = {
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        phone: u.phone,
+        role: u.role,
+        isBlocked: Boolean(u.is_blocked),
+        marketingConsent: Boolean(u.marketing_consent),
+        hasPushSubscription: push[0].c > 0,
+        deliveryAddresses: addrs.filter(a => a.type === 'delivery'),
+        billingAddresses: addrs.filter(a => a.type === 'billing')
+    };
+
+    res.json({ success: true, user: userData });
+}));
+
 // CREATE/UPDATE USER
 router.post('/', withDb(async (req, res, db) => {
     const u = req.body;
-    
-    // CRITICAL FIX: Use COALESCE for password_hash in UPDATE clause.
-    // If u.passwordHash is provided (registration/password change), it updates.
-    // If it is missing (profile update), it keeps the existing value in DB.
     
     await db.query(
         `INSERT INTO users (id, email, password_hash, name, phone, role, is_blocked, marketing_consent) 
@@ -71,7 +97,7 @@ router.post('/', withDb(async (req, res, db) => {
             u.id, u.email, u.passwordHash, u.name, u.phone, u.role, u.isBlocked, u.marketingConsent, 
             // Update params:
             u.email, 
-            u.passwordHash || null, // Pass null explicitly if undefined to trigger COALESCE
+            u.passwordHash || null, 
             u.name, 
             u.phone, 
             u.role, 
@@ -97,7 +123,6 @@ router.post('/login', withDb(async (req, res, db) => {
     if (rows.length > 0) {
         const u = rows[0];
         
-        // Check if password_hash is NULL (safety check for previously corrupted accounts)
         if (!u.password_hash) {
             return res.json({ success: false, message: 'Účet nemá nastavené heslo. Kontaktujte podporu nebo proveďte reset hesla.' });
         }
@@ -111,19 +136,14 @@ router.post('/login', withDb(async (req, res, db) => {
             return res.json({ success: false, message: 'Účet je zablokován.' });
         }
 
-        // Token Expiration Logic
-        // Web: 24h refresh
-        // PWA: 1y refresh (permanent login)
         const refreshExp = isPwa ? (365 * 24 * 60 * 60) : (24 * 60 * 60);
 
-        // 1. Access Token (Short lived - 15 mins)
         const token = jwt.sign(
             { id: u.id, email: u.email, role: u.role }, 
             SECRET_KEY, 
             { expiresIn: '15m' } 
         );
 
-        // 2. Refresh Token
         const refreshToken = jwt.sign(
             { id: u.id, email: u.email, role: u.role, type: 'refresh' },
             REFRESH_SECRET_KEY,
@@ -132,7 +152,9 @@ router.post('/login', withDb(async (req, res, db) => {
 
         const [addrs] = await db.query('SELECT * FROM user_addresses WHERE user_id = ?', [u.id]);
         
-        // Return user WITHOUT passwordHash
+        // Check push status
+        const [push] = await db.query('SELECT COUNT(*) as c FROM push_subscriptions WHERE user_id = ?', [u.id]);
+
         res.json({ 
             success: true, 
             token, 
@@ -145,6 +167,7 @@ router.post('/login', withDb(async (req, res, db) => {
                 role: u.role, 
                 isBlocked: Boolean(u.is_blocked), 
                 marketingConsent: Boolean(u.marketing_consent), 
+                hasPushSubscription: push[0].c > 0,
                 deliveryAddresses: addrs.filter(a => a.type === 'delivery'), 
                 billingAddresses: addrs.filter(a => a.type === 'billing') 
             } 
@@ -162,7 +185,6 @@ router.post('/refresh-token', async (req, res) => {
     jwt.verify(refreshToken, REFRESH_SECRET_KEY, (err, user) => {
         if (err) return res.status(403).json({ success: false, message: 'Invalid refresh token' });
         
-        // Issue new Access Token
         const newAccessToken = jwt.sign(
             { id: user.id, email: user.email, role: user.role },
             SECRET_KEY,
