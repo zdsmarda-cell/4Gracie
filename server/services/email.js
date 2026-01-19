@@ -71,7 +71,7 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
     let itemsHtml = order.items.map(item => `
         <tr>
             <td style="padding: 10px; border-bottom: 1px solid #eee;">
-                ${item.images && item.images[0] ? `<img src="${getImgUrl(item.images[0])}" alt="${item.name}" width="50" style="border-radius: 5px;">` : ''}
+                ${item.images && item.images[0] ? `<img src="${getImgUrl(item.images[0])}" alt="${item.name}" width="50" style="border-radius: 5px; display: block;">` : ''}
             </td>
             <td style="padding: 10px; border-bottom: 1px solid #eee;">
                 <strong>${item.name}</strong>
@@ -163,8 +163,14 @@ export const processCustomerEmail = async (to, order, type, settings, customStat
 
     // --- LOGGING ---
     if (settings && settings.server && settings.server.consoleLogging) {
-        console.log(`📨 EMAIL LOG [Customer]: To: ${to}, Subject: ${subject}`);
-        console.log(`   Context: Order #${order.id}, Status: ${customStatus || type}`);
+        console.log(`\n📨 EMAIL LOG [Customer] ------------------------------------------------`);
+        console.log(`To: ${to}`);
+        console.log(`Subject: ${subject}`);
+        console.log(`Context: Order #${order.id}, Status: ${customStatus || type}`);
+        console.log(`--- RAW HTML START ---`);
+        console.log(html);
+        console.log(`--- RAW HTML END ---`);
+        console.log(`----------------------------------------------------------------------\n`);
     }
 
     await transporter.sendMail({
@@ -185,7 +191,13 @@ export const processOperatorEmail = async (to, order, type, settings) => {
     
     // --- LOGGING ---
     if (settings && settings.server && settings.server.consoleLogging) {
-        console.log(`📨 EMAIL LOG [Operator]: To: ${to}, Subject: Nová objednávka #${order.id}`);
+        console.log(`\n📨 EMAIL LOG [Operator] ------------------------------------------------`);
+        console.log(`To: ${to}`);
+        console.log(`Subject: Nová objednávka #${order.id}`);
+        console.log(`--- RAW HTML START ---`);
+        console.log(html);
+        console.log(`--- RAW HTML END ---`);
+        console.log(`----------------------------------------------------------------------\n`);
     }
 
     await transporter.sendMail({
@@ -244,6 +256,10 @@ export const startEmailWorker = () => {
                 } else if (row.type === 'event_notify') {
                     // Specific handler for event notification
                     if (!transporter) await initEmail();
+                    
+                    // Optional logging for bulk emails if needed, usually omitted to save log space
+                    // if (payload.settings?.server?.consoleLogging) console.log(`📨 Event Email to ${row.recipient_email}`);
+
                     await transporter.sendMail({
                         from: process.env.EMAIL_FROM,
                         to: row.recipient_email,
