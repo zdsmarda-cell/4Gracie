@@ -155,7 +155,15 @@ export const PickupTab: React.FC = () => {
                 {(settings.pickupLocations || []).map(loc => (
                     <div key={loc.id} className={`bg-white p-6 rounded-2xl border shadow-sm ${!loc.enabled ? 'opacity-75 bg-gray-50' : ''}`}>
                         <div className="flex justify-between items-start mb-4">
-                            <div><h3 className="font-bold text-lg">{loc.name}</h3><div className="text-xs text-gray-500 mt-1">{loc.street}, {loc.city}</div></div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h3 className="font-bold text-lg">{loc.name}</h3>
+                                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${loc.enabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                        {loc.enabled ? 'Aktivní' : 'Neaktivní'}
+                                    </span>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">{loc.street}, {loc.city}</div>
+                            </div>
                             <div className="flex gap-2">
                                 <button onClick={() => openModal(loc)} className="p-1 hover:bg-gray-100 rounded"><Edit size={16}/></button>
                                 <button onClick={() => setDeleteTargetId(loc.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 size={16}/></button>

@@ -223,7 +223,12 @@ export const DeliveryTab: React.FC = () => {
                 <div key={r.id} className={`bg-white p-6 rounded-2xl border shadow-sm ${!r.enabled ? 'opacity-75 bg-gray-50' : ''}`}>
                     <div className="flex justify-between items-start mb-4">
                     <div>
-                        <h3 className="font-bold text-lg">{r.name}</h3>
+                        <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-lg">{r.name}</h3>
+                            <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${r.enabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                {r.enabled ? 'Aktivní' : 'Neaktivní'}
+                            </span>
+                        </div>
                         <div className="text-xs text-gray-500 mt-1">{r.deliveryTimeStart || '?'} - {r.deliveryTimeEnd || '?'}</div>
                     </div>
                     <div className="flex gap-2">
