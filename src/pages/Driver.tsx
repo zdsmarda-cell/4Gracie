@@ -1,12 +1,15 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../context/StoreContext';
-import { Order, OrderStatus, Product } from '../types';
-import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye } from 'lucide-react';
+import { Order, OrderStatus, Product, Ride } from '../types';
+import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye, ArrowLeft, RefreshCw, Calendar, ChevronRight } from 'lucide-react';
 import { calculatePackageCountLogic } from '../utils/orderLogic';
 
 export const Driver: React.FC = () => {
-    const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment } = useStore();
+    const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment, refreshData } = useStore();
     const [modalState, setModalState] = useState<{ type: 'complete' | 'fail', orderId: string } | null>(null);
+    const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const wakeLockRef = useRef<any>(null);
 
     // --- WAKE LOCK API ---
@@ -16,10 +19,10 @@ export const Driver: React.FC = () => {
                 try {
                     const lock = await (navigator as any).wakeLock.request('screen');
                     wakeLockRef.current = lock;
-                    console.log('💡 Wake Lock active');
+                    // console.log('💡 Wake Lock active');
                     
                     lock.addEventListener('release', () => {
-                        console.log('💡 Wake Lock released');
+                        // console.log('💡 Wake Lock released');
                     });
                 } catch (err: any) {
                     console.error(`❌ Wake Lock error: ${err.name}, ${err.message}`);
@@ -45,38 +48,44 @@ export const Driver: React.FC = () => {
         };
     }, []);
 
-    // Identify Active Ride for current driver
-    const activeRide = useMemo(() => {
-        if (!user) return null;
-        const today = new Date().toISOString().split('T')[0];
+    // Get all rides relevant for this driver
+    const myRides = useMemo(() => {
+        if (!user) return [];
         
-        // 1. Priority: Ride currently marked as 'active' (regardless of date - e.g. unfinished from yesterday)
-        const active = rides.find(r => r.driverId === user.id && r.status === 'active');
-        if (active) return active;
+        // Filter rides for current driver
+        let relevantRides = rides.filter(r => r.driverId === user.id);
 
-        // 2. Priority: Planned ride for TODAY
-        const todayPlanned = rides.find(r => r.driverId === user.id && r.date === today && r.status === 'planned');
-        if (todayPlanned) return todayPlanned;
+        // Sort: Active first, then by Date ascending (oldest first for history, or upcoming?)
+        // Usually drivers want upcoming.
+        // Let's sort by date ASC.
+        return relevantRides.sort((a, b) => a.date.localeCompare(b.date));
+    }, [rides, user]);
 
-        // 3. Priority: Nearest FUTURE planned ride
-        const futurePlanned = rides
-            .filter(r => r.driverId === user.id && r.status === 'planned' && r.date > today)
-            .sort((a, b) => a.date.localeCompare(b.date))[0];
-        if (futurePlanned) return futurePlanned;
-
-        // 4. PREVIEW FALLBACK: In local/preview mode, show ANY planned ride found (even past) to allow testing functionality
-        if (isPreviewEnvironment) {
-             const anyPlanned = rides.find(r => r.driverId === user.id && r.status === 'planned');
-             if (anyPlanned) return anyPlanned;
+    // Auto-select ONLY if a ride is currently ACTIVE (started)
+    // This prevents the user from being "stuck" in a planned ride detail, but keeps them focused if they are driving.
+    useEffect(() => {
+        const activeRide = myRides.find(r => r.status === 'active');
+        if (activeRide && !selectedRideId) {
+            setSelectedRideId(activeRide.id);
         }
+    }, [myRides]);
 
-        return null;
-    }, [rides, user, isPreviewEnvironment]);
+    const handleRefresh = async () => {
+        setIsRefreshing(true);
+        await refreshData();
+        setIsRefreshing(false);
+    };
 
-    // Determine Active Stop (First non-completed/non-cancelled delivery step)
+    // --- VIEW LOGIC ---
+
+    const currentRide = useMemo(() => 
+        myRides.find(r => r.id === selectedRideId), 
+    [myRides, selectedRideId]);
+
+    // Determine Active Stop for the current ride view
     const activeStopId = useMemo(() => {
-        if (!activeRide || !activeRide.steps) return null;
-        for (const step of activeRide.steps) {
+        if (!currentRide || !currentRide.steps) return null;
+        for (const step of currentRide.steps) {
             if (step.type === 'delivery') {
                 const order = orders.find(o => o.id === step.orderId);
                 if (order && order.status !== OrderStatus.DELIVERED && order.status !== OrderStatus.CANCELLED && order.status !== OrderStatus.NOT_PICKED_UP) {
@@ -85,15 +94,13 @@ export const Driver: React.FC = () => {
             }
         }
         return null;
-    }, [activeRide, orders]);
+    }, [currentRide, orders]);
 
     const isDeliveryLate = (arrivalTime: string, order: Order) => {
-        // Logic to check if arrivalTime > region/slot end time
         if (!settings.deliveryRegions || !order.deliveryZip) return false;
         const region = settings.deliveryRegions.find(r => r.enabled && r.zips.includes(order.deliveryZip!.replace(/\s/g, '')));
         if (!region) return false;
         
-        // Check exception for date
         const ex = region.exceptions?.find(e => e.date === order.deliveryDate);
         const endTime = (ex && ex.isOpen) ? ex.deliveryTimeEnd : region.deliveryTimeEnd;
         
@@ -106,7 +113,6 @@ export const Driver: React.FC = () => {
     };
 
     const handleNavigation = (address: string, orderId: string) => {
-        // Open Google Maps
         const encoded = encodeURIComponent(address);
         window.open(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`, '_blank');
     };
@@ -114,7 +120,7 @@ export const Driver: React.FC = () => {
     const handleStatusUpdate = async () => {
         if (!modalState) return;
         const newStatus = modalState.type === 'complete' ? OrderStatus.DELIVERED : OrderStatus.NOT_PICKED_UP;
-        await updateOrderStatus([modalState.orderId], newStatus, true, true); // Notify customer + Push
+        await updateOrderStatus([modalState.orderId], newStatus, true, true);
         setModalState(null);
     };
 
@@ -122,60 +128,127 @@ export const Driver: React.FC = () => {
         return <div className="p-8 text-center text-gray-500">Přístup pouze pro řidiče.</div>;
     }
 
-    if (!activeRide) {
+    // --- RENDER LIST VIEW ---
+    if (!selectedRideId) {
         return (
-            <div className="p-8 text-center flex flex-col items-center">
-                <div className="bg-gray-100 p-4 rounded-full mb-4">
-                    <Map size={48} className="text-gray-400" />
+            <div className="max-w-2xl mx-auto p-4 animate-fade-in">
+                <div className="flex justify-between items-center mb-6">
+                    <h1 className="text-2xl font-serif font-bold text-primary">Moje jízdy</h1>
+                    <button 
+                        onClick={handleRefresh} 
+                        disabled={isRefreshing}
+                        className="bg-white p-2 rounded-full shadow-sm border border-gray-200 text-gray-600 hover:text-accent disabled:opacity-50 transition"
+                    >
+                        <RefreshCw size={20} className={isRefreshing ? 'animate-spin' : ''} />
+                    </button>
                 </div>
-                <h2 className="text-xl font-bold text-gray-700">Žádná aktivní jízda</h2>
-                <p className="text-gray-500 mt-2">Nemáte naplánované žádné jízdy.</p>
+
+                <div className="space-y-3">
+                    {myRides.length === 0 ? (
+                        <div className="p-8 text-center flex flex-col items-center bg-white rounded-2xl border border-dashed border-gray-200">
+                            <div className="bg-gray-50 p-4 rounded-full mb-4">
+                                <Map size={32} className="text-gray-400" />
+                            </div>
+                            <h2 className="text-lg font-bold text-gray-600">Žádné jízdy</h2>
+                            <p className="text-sm text-gray-400 mt-1">Momentálně nemáte přiřazené žádné trasy.</p>
+                        </div>
+                    ) : (
+                        myRides.map(ride => {
+                            const stopCount = ride.steps?.filter(s => s.type === 'delivery').length || 0;
+                            const isToday = ride.date === new Date().toISOString().split('T')[0];
+                            const isFuture = ride.date > new Date().toISOString().split('T')[0];
+                            
+                            return (
+                                <div 
+                                    key={ride.id}
+                                    onClick={() => setSelectedRideId(ride.id)}
+                                    className={`bg-white p-5 rounded-2xl border shadow-sm cursor-pointer hover:shadow-md transition active:scale-[0.98] ${ride.status === 'active' ? 'border-l-4 border-l-green-500 ring-1 ring-green-100' : 'border-l-4 border-l-blue-500'}`}
+                                >
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`p-3 rounded-xl ${ride.status === 'active' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
+                                                <Calendar size={20} />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-bold text-lg text-gray-900">{formatDate(ride.date)}</span>
+                                                    {isToday && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Dnes</span>}
+                                                </div>
+                                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                                    <span>{stopCount} zastávek</span>
+                                                    <span>•</span>
+                                                    <span>Start: {ride.departureTime}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <ChevronRight size={20} className="text-gray-300" />
+                                    </div>
+                                    <div className="mt-3 pt-3 border-t flex justify-between items-center">
+                                        <span className={`text-xs font-bold uppercase ${ride.status === 'active' ? 'text-green-600' : ride.status === 'completed' ? 'text-gray-400' : 'text-blue-600'}`}>
+                                            {ride.status === 'active' ? '● Probíhá' : ride.status === 'completed' ? 'Dokončeno' : 'Naplánováno'}
+                                        </span>
+                                        <span className="text-[10px] text-gray-400 font-mono">#{ride.id.slice(-6)}</span>
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
             </div>
         );
     }
 
+    // --- RENDER DETAIL VIEW ---
+    if (!currentRide) return null; // Should not happen
+
     return (
-        <div className="max-w-2xl mx-auto pb-24">
+        <div className="max-w-2xl mx-auto pb-24 animate-in slide-in-from-right-8 duration-300">
             <div className="bg-white p-4 sticky top-16 md:top-20 z-40 border-b shadow-sm flex justify-between items-center">
-                <div>
-                    <div className="flex items-center gap-2">
-                        <h1 className="text-lg font-bold text-primary">Jízda: {formatDate(activeRide.date)}</h1>
-                        {wakeLockRef.current && <span className="flex h-2 w-2 relative" title="Obrazovka je aktivní"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>}
+                <div className="flex items-center gap-3">
+                    <button 
+                        onClick={() => setSelectedRideId(null)}
+                        className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition"
+                    >
+                        <ArrowLeft size={24} />
+                    </button>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h1 className="text-lg font-bold text-primary">{formatDate(currentRide.date)}</h1>
+                            {wakeLockRef.current && <span className="flex h-2 w-2 relative" title="Obrazovka je aktivní"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span></span>}
+                        </div>
+                        <div className="text-xs text-gray-500">{currentRide.steps?.filter(s => s.type === 'delivery').length || 0} zastávek • Odjezd {currentRide.departureTime}</div>
                     </div>
-                    <div className="text-xs text-gray-500">{activeRide.steps?.filter(s => s.type === 'delivery').length || 0} zastávek • Odjezd {activeRide.departureTime}</div>
                 </div>
-                <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold uppercase">
-                    {activeRide.status === 'active' ? 'Na trase' : 'Plán'}
+                <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${currentRide.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                    {currentRide.status === 'active' ? 'Na trase' : 'Plán'}
                 </div>
             </div>
 
             <div className="p-4 space-y-1">
-                {activeRide.steps?.map((step, idx) => {
+                {currentRide.steps?.map((step, idx) => {
                         const isDepot = step.type === 'pickup';
                         if (isDepot) return null; 
 
                         const order = orders.find(o => o.id === step.orderId);
-                        if (!order) return null; // Safety
+                        if (!order) return null;
 
                         const isDelivered = order.status === OrderStatus.DELIVERED;
                         const isCancelled = order.status === OrderStatus.CANCELLED;
                         const isFailed = order.status === OrderStatus.NOT_PICKED_UP;
                         const isClosed = isDelivered || isFailed || isCancelled;
                         
-                        const isLast = idx === (activeRide.steps?.length || 0) - 1;
+                        const isLast = idx === (currentRide.steps?.length || 0) - 1;
                         const isActive = activeStopId === step.orderId;
                         
                         const isLate = isDeliveryLate(step.arrivalTime, order);
                         const hasError = !!step.error;
 
-                        // Calculate Package Count for Display
                         const enrichedItems = order.items.map(i => {
                             const p = products.find(prod => prod.id === i.id);
                             return { ...i, volume: p?.volume || i.volume || 0 };
                         });
                         const pkgCount = calculatePackageCountLogic(enrichedItems, settings.packaging.types);
 
-                        // Correct COD Logic: Only if not paid and not finished
                         const showCod = !order.isPaid && !isClosed;
                         const amountToPay = showCod ? getOrderAmountToPay(order) : 0;
 
@@ -192,13 +265,11 @@ export const Driver: React.FC = () => {
                                     <div className="p-4">
                                         <div className="flex justify-between items-start mb-2">
                                             <div>
-                                                {/* Order ID above Name */}
                                                 <div className="text-[10px] text-gray-400 font-mono mb-0.5">#{order.id}</div>
                                                 <div className="font-bold text-lg">
                                                     {isCancelled && <span className="text-red-600 mr-2">[STORNO]</span>}
                                                     {step.customerName}
                                                 </div>
-                                                {/* Phone Number Display */}
                                                 {step.customerPhone && (
                                                     <a href={`tel:${step.customerPhone}`} className={`text-sm font-bold flex items-center mt-1 ${isClosed ? 'text-gray-500 pointer-events-none' : 'text-blue-600 hover:underline'}`}>
                                                         <Phone size={14} className="mr-1"/> {step.customerPhone}
@@ -206,31 +277,26 @@ export const Driver: React.FC = () => {
                                                 )}
                                             </div>
                                             <div className="text-right flex flex-col items-end">
-                                                {/* Package Count Badge */}
                                                 <div className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center mb-1">
                                                     <Package size={10} className="mr-1"/> {pkgCount} {pkgCount === 1 ? 'balík' : pkgCount < 5 ? 'balíky' : 'balíků'}
                                                 </div>
 
-                                                {/* Status Badges */}
                                                 {isDelivered && <div className="text-green-600 font-bold text-xs flex items-center justify-end"><CheckCircle size={12} className="mr-1"/> Doručeno</div>}
                                                 {isFailed && <div className="text-red-600 font-bold text-xs flex items-center justify-end"><XCircle size={12} className="mr-1"/> Nedoručeno</div>}
                                                 {isCancelled && <div className="text-red-600 font-bold text-xs flex items-center justify-end"><Ban size={12} className="mr-1"/> Zrušeno</div>}
                                                 
-                                                {/* Late Warning */}
                                                 {isLate && !isClosed && !hasError && (
                                                     <div className="text-red-600 font-black text-xs bg-red-50 px-2 py-1 rounded border border-red-100 mb-1 flex items-center">
                                                         <AlertTriangle size={10} className="mr-1"/> POZOR: ZPOŽDĚNÍ
                                                     </div>
                                                 )}
 
-                                                {/* Error Warning */}
                                                 {hasError && (
                                                     <div className="text-red-600 font-black text-xs bg-red-50 px-2 py-1 rounded border border-red-100 mb-1 flex items-center animate-pulse">
                                                         <AlertTriangle size={10} className="mr-1"/> CHYBA ADRESY
                                                     </div>
                                                 )}
                                                 
-                                                {/* Payment Badge */}
                                                 {!isClosed && (
                                                     showCod 
                                                         ? <div className="text-red-600 font-bold bg-red-50 px-2 py-1 rounded text-xs border border-red-100 mt-1">Dobírka: {amountToPay} Kč</div>

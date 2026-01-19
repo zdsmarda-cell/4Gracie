@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { OrderStatus } from '../../types';
-import { FileSpreadsheet, X, Eye, ListFilter, Zap } from 'lucide-react';
+import { FileSpreadsheet, X, Eye, ListFilter, Zap, Calendar } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface LoadTabProps {
@@ -27,8 +27,9 @@ interface ServerLoadDetail {
 }
 
 export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
-    const { dayConfigs, settings, t, formatDate, dataSource, getFullApiUrl, orders, getDailyLoad, products } = useStore();
+    const { dayConfigs, settings, t, formatDate, dataSource, getFullApiUrl, orders, getDailyLoad, products, refreshData } = useStore();
     const [showLoadHistory, setShowLoadHistory] = useState(false);
+    const [historyMonth, setHistoryMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
     
     // Detail Modal State
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -36,6 +37,11 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
     // New state for server data
     const [serverDetails, setServerDetails] = useState<{ summary: ServerLoadSummary[], details: ServerLoadDetail[] } | null>(null);
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+
+    // Refresh data on mount (tab click) to ensure load calculation is accurate
+    useEffect(() => {
+        refreshData();
+    }, []);
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
 
@@ -57,8 +63,10 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         if (!showLoadHistory) {
              return sorted.filter(d => d >= now);
         }
-        return sorted.reverse(); 
-    }, [dayConfigs, orders, showLoadHistory, settings]); // Changed settings.eventSlots to settings to ensure deep updates trigger re-render
+        
+        // In history mode, filter by selected month
+        return sorted.filter(d => d.startsWith(historyMonth)).reverse(); 
+    }, [dayConfigs, orders, showLoadHistory, settings, historyMonth]);
 
     const getDayCapacityLimit = (date: string, catId: string) => {
         const config = dayConfigs.find(d => d.date === date);
@@ -68,10 +76,6 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
     const getEventCapacityLimit = (date: string, catId: string) => {
         const slot = settings.eventSlots?.find(s => s.date === date);
         return slot?.capacityOverrides?.[catId] ?? 0;
-    };
-
-    const getActiveOrdersCount = (date: string) => {
-        return orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED).length;
     };
 
     // Fetch details when modal opens
@@ -185,10 +189,6 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
 
             // 2. Pass: Distribute Capacity Group Overheads
             ccGroups.forEach(group => {
-                // If hasEvent -> goes to Event Load (not supported in summary structure fully yet, 
-                // but for total count it works). 
-                // Note: serverDetails structure merges overheads into one `total_overhead` per category currently.
-                // Splitting Std/Event happens in the Main Table view, detail view is aggregate.
                 const sum = summaryMap.get(group.maxOverheadCategory);
                 if (sum) {
                     sum.total_overhead = Number(sum.total_overhead) + group.maxOverhead;
@@ -220,260 +220,254 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
             return acc;
         }, {} as Record<string, ServerLoadDetail[]>);
 
-        const catKeys = [...settings.categories.map(c => c.id), 'unknown'];
-
-        catKeys.forEach(catId => {
-            const items = grouped[catId];
-            if (!items || items.length === 0) return;
-
-            const catName = catId === 'unknown' ? 'Nezařazeno / Chyba' : (settings.categories.find(c => c.id === catId)?.name || catId);
-            const catSummary = serverDetails.summary.find(s => (s.category || 'unknown') === catId);
-            const totalLoad = (Number(catSummary?.total_workload) || 0) + (Number(catSummary?.total_overhead) || 0);
-
-            exportRows.push({ Název: `KATEGORIE: ${catName} (Celkem pracnost: ${totalLoad})`, Ks: '', Jednotka: '', 'Pracnost (Suma)': '' });
+        Object.keys(grouped).forEach(cat => {
+            const sum = serverDetails.summary.find(s => s.category === cat);
+            const catName = sortedCategories.find(c => c.id === cat)?.name || cat;
             
-            items.forEach(p => {
+            // Header Row
+            exportRows.push({ Název: `--- ${catName} ---`, Ks: '', Jednotka: '', 'Pracnost (Suma)': '' });
+            
+            grouped[cat].forEach(d => {
                 exportRows.push({
-                    Název: p.name,
-                    Ks: Number(p.total_quantity),
-                    Jednotka: p.unit,
-                    'Pracnost (Suma)': Number(p.product_workload)
+                    Název: d.name,
+                    Ks: d.total_quantity,
+                    Jednotka: d.unit,
+                    'Pracnost (Suma)': d.product_workload
                 });
             });
-            exportRows.push({}); 
+            
+            // Summary Footer
+            exportRows.push({ 
+                Název: 'CELKEM ZA KATEGORII', 
+                Ks: '', 
+                Jednotka: '', 
+                'Pracnost (Suma)': Number(sum?.total_workload || 0) + Number(sum?.total_overhead || 0) 
+            });
+            exportRows.push({}); // Spacer
         });
 
         const ws = XLSX.utils.json_to_sheet(exportRows);
-        const wscols = [{wch: 40}, {wch: 10}, {wch: 10}, {wch: 15}];
-        ws['!cols'] = wscols;
-
         XLSX.utils.book_append_sheet(wb, ws, "Výroba");
         XLSX.writeFile(wb, `vyroba_${selectedDate}.xlsx`);
     };
 
     return (
         <div className="animate-fade-in space-y-4">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <h2 className="text-xl font-bold text-primary">{t('admin.load')}</h2>
-                <button onClick={() => setShowLoadHistory(!showLoadHistory)} className="text-xs bg-white border px-3 py-1 rounded hover:bg-gray-50">
-                {showLoadHistory ? t('admin.view_current') : t('admin.view_history')}
-                </button>
+                
+                <div className="flex items-center gap-3 bg-gray-50 p-1.5 rounded-xl border">
+                    {showLoadHistory && (
+                        <div className="flex items-center gap-2 px-2 animate-in slide-in-from-right-2">
+                            <Calendar size={14} className="text-gray-400"/>
+                            <input 
+                                type="month" 
+                                className="border rounded p-1 text-xs bg-white focus:ring-accent outline-none"
+                                value={historyMonth}
+                                onChange={e => setHistoryMonth(e.target.value)}
+                            />
+                        </div>
+                    )}
+                    <button 
+                        onClick={() => setShowLoadHistory(!showLoadHistory)} 
+                        className={`text-xs px-3 py-1.5 rounded-lg font-bold transition ${showLoadHistory ? 'bg-primary text-white shadow-sm' : 'bg-white text-gray-600 hover:bg-gray-100'}`}
+                    >
+                        {showLoadHistory ? t('admin.view_current') : t('admin.view_history')}
+                    </button>
+                </div>
             </div>
             
             <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto">
                 <table className="min-w-full divide-y">
                 <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
                     <tr>
-                    <th className="px-6 py-4 text-left min-w-[120px]">Datum</th>
-                    <th className="px-6 py-4 text-center w-16">Detail</th>
-                    <th className="px-6 py-4 text-center">Objednávky</th>
-                    <th className="px-6 py-4 text-left w-24">Stav</th>
-                    {sortedCategories.map(cat => (
-                        <th key={cat.id} className="px-6 py-4 text-left min-w-[150px]">{cat.name}</th>
-                    ))}
+                        <th className="px-6 py-4 text-left min-w-[120px]">Datum</th>
+                        <th className="px-6 py-4 text-left w-32">Stav</th>
+                        {sortedCategories.map(cat => (
+                            <th key={cat.id} className="px-6 py-4 text-left min-w-[180px]">{cat.name}</th>
+                        ))}
+                        <th className="px-6 py-4 text-right w-20">Detail</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y text-xs">
                     {loadDates.map(date => {
                         const { load, eventLoad } = getDailyLoad(date);
                         const dayConfig = dayConfigs.find(d => d.date === date);
-                        const eventSlot = settings.eventSlots?.find(s => s.date === date);
                         const isClosed = dayConfig && !dayConfig.isOpen;
-                        const ordersCount = getActiveOrdersCount(date);
-                        const isEventDay = !!eventSlot;
-                        
+                        const eventSlot = settings.eventSlots?.find(s => s.date === date);
+
                         return (
-                            <tr key={date} className={`hover:bg-gray-50 ${isClosed ? 'bg-red-50' : ''}`}>
-                                <td className="px-6 py-4 font-mono font-bold text-sm cursor-pointer hover:text-blue-600 hover:underline" onClick={() => onNavigateToDate(date)}>
-                                    <div className="flex flex-col">
-                                        <span>{formatDate(date)}</span>
-                                        {isEventDay && <span className="text-[9px] text-purple-600 font-bold uppercase mt-1 flex items-center"><Zap size={10} className="mr-1"/> Akce</span>}
-                                    </div>
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                    <button onClick={() => handleOpenDetail(date)} className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold hover:bg-blue-200 transition flex items-center justify-center mx-auto"><Eye size={16}/></button>
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                    {ordersCount > 0 ? (
-                                        <button 
-                                            onClick={() => onNavigateToDate(date)} 
-                                            className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold text-[10px] hover:bg-purple-200 transition flex items-center justify-center gap-1 mx-auto"
-                                            title="Přejít na objednávky"
-                                        >
-                                            <ListFilter size={12}/> {ordersCount}
-                                        </button>
-                                    ) : (
-                                        <span className="text-gray-300">-</span>
-                                    )}
+                            <tr key={date} className={`hover:bg-gray-50 ${isClosed ? 'bg-red-50' : eventSlot ? 'bg-purple-50' : ''}`}>
+                                <td className="px-6 py-4 font-mono font-bold text-sm">
+                                    {formatDate(date)}
                                 </td>
                                 <td className="px-6 py-4">
-                                    {isClosed ? <span className="text-red-600 font-bold uppercase text-[10px]">{t('admin.exception_closed')}</span> : <span className="text-green-600 font-bold uppercase text-[10px]">Otevřeno</span>}
+                                    {isClosed ? 
+                                        <span className="text-red-600 font-bold uppercase text-[10px]">{t('admin.exception_closed')}</span> 
+                                        : eventSlot ? 
+                                            <span className="text-purple-600 font-bold uppercase text-[10px] flex items-center"><Zap size={10} className="mr-1"/> AKCE</span> 
+                                            : <span className="text-green-600 font-bold uppercase text-[10px]">Otevřeno</span>
+                                    }
                                 </td>
                                 {sortedCategories.map(cat => {
-                                    // STANDARD
-                                    const limit = getDayCapacityLimit(date, cat.id);
-                                    const current = load[cat.id] || 0;
-                                    const percent = limit > 0 ? Math.min(100, (current / limit) * 100) : 0;
-                                    let color = 'bg-green-500';
-                                    if (percent > 80) color = 'bg-orange-500';
-                                    if (percent >= 100) color = 'bg-red-500';
-
-                                    // EVENT
-                                    const eventLimit = getEventCapacityLimit(date, cat.id);
-                                    const currentEvent = eventLoad[cat.id] || 0;
-                                    const showEventRow = isEventDay || currentEvent > 0;
-                                    const eventPercent = eventLimit > 0 ? Math.min(100, (currentEvent / eventLimit) * 100) : 0;
+                                    // 1. Standard Capacity
+                                    const stdLimit = getDayCapacityLimit(date, cat.id);
+                                    const stdCurrent = load[cat.id] || 0;
+                                    const stdPercent = stdLimit > 0 ? Math.min(100, (stdCurrent / stdLimit) * 100) : 0;
                                     
+                                    // 2. Event Capacity (if slot exists)
+                                    const evtLimit = getEventCapacityLimit(date, cat.id);
+                                    const evtCurrent = eventLoad[cat.id] || 0;
+                                    const evtPercent = evtLimit > 0 ? Math.min(100, (evtCurrent / evtLimit) * 100) : 0;
+
+                                    const getColor = (pct: number) => {
+                                        if (pct >= 100) return 'bg-red-500';
+                                        if (pct > 80) return 'bg-orange-500';
+                                        return 'bg-green-500';
+                                    };
+
                                     return (
-                                    <td key={cat.id} className="px-6 py-4 align-middle">
-                                        <div className="w-full space-y-2">
-                                            {/* Standard Row */}
-                                            <div>
-                                                <div className="flex justify-between mb-1">
-                                                    <span className="font-mono text-[9px] text-gray-500"></span>
-                                                    <div className="text-[10px]">
-                                                        <span className="font-mono">{Math.round(current)} / {limit}</span>
-                                                        <span className="font-bold ml-1">{Math.round(percent)}%</span>
+                                        <td key={cat.id} className="px-6 py-4 align-middle">
+                                            <div className="space-y-2">
+                                                {/* Standard Bar */}
+                                                <div className="w-full">
+                                                    <div className="flex justify-between mb-1">
+                                                        <span className="font-mono text-[10px] text-gray-500">Std: {Math.round(stdCurrent)} / {stdLimit}</span>
+                                                    </div>
+                                                    <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden w-full">
+                                                        <div className={`h-full ${getColor(stdPercent)} transition-all duration-500`} style={{ width: `${stdPercent}%` }}></div>
                                                     </div>
                                                 </div>
-                                                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-full border border-gray-100">
-                                                    <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${percent}%` }}></div>
-                                                </div>
-                                            </div>
 
-                                            {/* Event Row (Conditional) */}
-                                            {showEventRow && (
-                                                <div className="pt-1 border-t border-dashed border-gray-200">
-                                                    <div className="flex justify-between mb-1 text-purple-700">
-                                                        <span className="font-bold text-[9px] flex items-center"></span>
-                                                        <div className="text-[10px]">
-                                                            <span className="font-mono">{Math.round(currentEvent)} / {eventLimit}</span>
-                                                            <span className="font-bold ml-1">{Math.round(eventPercent)}%</span>
+                                                {/* Event Bar (Only if slot exists for this category) */}
+                                                {(eventSlot && evtLimit > 0) && (
+                                                     <div className="w-full">
+                                                        <div className="flex justify-between mb-1">
+                                                            <span className="font-mono text-[10px] text-purple-600 font-bold">Akce: {Math.round(evtCurrent)} / {evtLimit}</span>
+                                                        </div>
+                                                        <div className="h-1.5 bg-purple-200 rounded-full overflow-hidden w-full">
+                                                            <div className={`h-full bg-purple-600 transition-all duration-500`} style={{ width: `${evtPercent}%` }}></div>
                                                         </div>
                                                     </div>
-                                                    <div className="h-1.5 bg-purple-50 rounded-full overflow-hidden w-full border border-purple-100">
-                                                        <div className="h-full bg-purple-500 transition-all duration-500" style={{ width: `${eventPercent}%` }}></div>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </td>
+                                                )}
+                                            </div>
+                                        </td>
                                     );
                                 })}
+                                <td className="px-6 py-4 text-right">
+                                    <div className="flex gap-2 justify-end">
+                                        <button 
+                                            onClick={() => onNavigateToDate(date)} 
+                                            className="p-1.5 hover:bg-white rounded-lg text-gray-400 hover:text-blue-600 transition" 
+                                            title="Zobrazit objednávky"
+                                        >
+                                            <ListFilter size={16}/>
+                                        </button>
+                                        <button 
+                                            onClick={() => handleOpenDetail(date)} 
+                                            className="p-1.5 hover:bg-white rounded-lg text-gray-400 hover:text-purple-600 transition" 
+                                            title="Detail výroby"
+                                        >
+                                            <Eye size={16}/>
+                                        </button>
+                                    </div>
+                                </td>
                             </tr>
                         );
                     })}
                 </tbody>
                 </table>
                 {loadDates.length === 0 && (
-                    <div className="p-8 text-center text-gray-400 font-bold">Žádná data pro zobrazení</div>
+                    <div className="p-8 text-center text-gray-400">Žádná data pro zobrazení</div>
                 )}
             </div>
 
             {/* DETAIL MODAL */}
             {selectedDate && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[250] p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedDate(null)}>
-                    <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-                        <div className="p-6 border-b flex justify-between items-center bg-gray-50">
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setSelectedDate(null)}>
+                    <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="p-6 border-b flex justify-between items-center bg-gray-50 rounded-t-2xl">
                             <div>
-                                <h2 className="text-xl font-serif font-bold text-primary">Detail výroby: {formatDate(selectedDate)}</h2>
+                                <h3 className="text-xl font-bold text-primary flex items-center gap-2">
+                                    Detail výroby: <span className="font-mono">{formatDate(selectedDate)}</span>
+                                </h3>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Detailní rozpad pracnosti a surovin pro vybraný den.
+                                </p>
                             </div>
-                            <div className="flex gap-2">
-                                <button onClick={handleExportXLS} className="bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center hover:bg-green-700 transition">
-                                    <FileSpreadsheet size={16} className="mr-2"/> Export XLS
-                                </button>
-                                <button onClick={() => setSelectedDate(null)} className="p-2 hover:bg-gray-200 rounded-full transition"><X size={20}/></button>
-                            </div>
+                            <button onClick={() => setSelectedDate(null)} className="p-2 hover:bg-gray-200 rounded-full transition text-gray-500"><X size={20}/></button>
                         </div>
                         
-                        <div className="p-6 overflow-y-auto flex-grow space-y-8">
+                        <div className="p-6 overflow-y-auto flex-grow bg-white">
                             {isLoadingDetails ? (
-                                <p className="text-center text-gray-400">Načítám data...</p>
-                            ) : !serverDetails || serverDetails.details.length === 0 ? (
-                                <p className="text-center text-gray-400">Žádná výroba pro tento den (nebo chyba načítání).</p>
-                            ) : (
-                                <>
-                                    {/* Known Categories */}
-                                    {settings.categories.map(cat => {
-                                        const items = serverDetails.details.filter(d => d.category === cat.id);
-                                        if (items.length === 0) return null;
+                                <div className="text-center py-12 text-gray-400">Načítám data...</div>
+                            ) : serverDetails ? (
+                                <div className="space-y-8">
+                                    {sortedCategories.map(cat => {
                                         const summary = serverDetails.summary.find(s => s.category === cat.id);
-                                        const total = (Number(summary?.total_workload)||0) + (Number(summary?.total_overhead)||0);
+                                        const catDetails = serverDetails.details.filter(d => d.category === cat.id);
+                                        
+                                        if (!summary && catDetails.length === 0) return null;
 
                                         return (
-                                            <div key={cat.id} className="border rounded-xl overflow-hidden shadow-sm">
-                                                <div className="bg-gray-100 p-3 flex justify-between items-center border-b">
-                                                    <h3 className="font-bold text-sm uppercase text-gray-700">{cat.name}</h3>
-                                                    <span className="text-xs font-bold bg-white px-2 py-1 rounded border">Celkem pracnost: {total}</span>
+                                            <div key={cat.id} className="border rounded-xl overflow-hidden">
+                                                <div className="bg-gray-50 p-3 border-b flex justify-between items-center">
+                                                    <h4 className="font-bold text-sm text-gray-800">{cat.name}</h4>
+                                                    <div className="text-xs font-mono text-gray-500">
+                                                        Celkem pracnost: <strong className="text-primary">{Number(summary?.total_workload || 0) + Number(summary?.total_overhead || 0)}</strong>
+                                                    </div>
                                                 </div>
-                                                <table className="min-w-full divide-y">
-                                                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase">
+                                                <table className="min-w-full divide-y divide-gray-100">
+                                                    <thead className="bg-white text-[10px] font-bold text-gray-400 uppercase">
                                                         <tr>
-                                                            <th className="px-4 py-2 text-left">Název</th>
-                                                            <th className="px-4 py-2 text-center">Ks</th>
-                                                            <th className="px-4 py-2 text-right">Pracnost</th>
+                                                            <th className="px-4 py-2 text-left">Produkt</th>
+                                                            <th className="px-4 py-2 text-center">Množství</th>
+                                                            <th className="px-4 py-2 text-right">Pracnost (Suma)</th>
                                                         </tr>
                                                     </thead>
-                                                    <tbody className="divide-y text-xs">
-                                                        {items.map((p, idx) => (
+                                                    <tbody className="divide-y divide-gray-50 text-xs">
+                                                        {catDetails.map((item, idx) => (
                                                             <tr key={idx} className="hover:bg-gray-50">
-                                                                <td className="px-4 py-2 font-bold">{p.name}</td>
+                                                                <td className="px-4 py-2 font-medium">{item.name}</td>
                                                                 <td className="px-4 py-2 text-center">
-                                                                    {Number(p.total_quantity)} <span className="text-gray-400 text-[10px]">{p.unit}</span>
+                                                                    <span className="font-bold">{item.total_quantity}</span> <span className="text-gray-400">{item.unit}</span>
                                                                 </td>
-                                                                <td className="px-4 py-2 text-right font-mono">{Number(p.product_workload)}</td>
+                                                                <td className="px-4 py-2 text-right font-mono">
+                                                                    {item.product_workload}
+                                                                </td>
                                                             </tr>
                                                         ))}
+                                                        {Number(summary?.total_overhead) > 0 && (
+                                                            <tr className="bg-yellow-50/50">
+                                                                <td className="px-4 py-2 font-bold text-yellow-700">Režie přípravy (Overhead)</td>
+                                                                <td className="px-4 py-2 text-center">-</td>
+                                                                <td className="px-4 py-2 text-right font-mono text-yellow-700 font-bold">{summary?.total_overhead}</td>
+                                                            </tr>
+                                                        )}
                                                     </tbody>
                                                 </table>
                                             </div>
                                         );
                                     })}
-
-                                    {/* Uncategorized / Unknown Items */}
-                                    {(() => {
-                                        const knownCatIds = settings.categories.map(c => c.id);
-                                        const uncategorizedItems = serverDetails.details.filter(d => !d.category || d.category === 'unknown' || !knownCatIds.includes(d.category));
-                                        
-                                        if (uncategorizedItems.length === 0) return null;
-
-                                        // Calculate total for these items
-                                        const totalUncatWorkload = uncategorizedItems.reduce((acc, item) => acc + Number(item.product_workload), 0);
-
-                                        return (
-                                            <div key="uncategorized" className="border rounded-xl overflow-hidden shadow-sm border-red-200">
-                                                <div className="bg-red-50 p-3 flex justify-between items-center border-b border-red-100">
-                                                    <h3 className="font-bold text-sm uppercase text-red-700">Nezařazeno / Chyba dat</h3>
-                                                    <span className="text-xs font-bold bg-white px-2 py-1 rounded border border-red-200 text-red-600">Celkem pracnost: {totalUncatWorkload}</span>
-                                                </div>
-                                                <table className="min-w-full divide-y">
-                                                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-500 uppercase">
-                                                        <tr>
-                                                            <th className="px-4 py-2 text-left">Název</th>
-                                                            <th className="px-4 py-2 text-center">Ks</th>
-                                                            <th className="px-4 py-2 text-right">Pracnost</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y text-xs">
-                                                        {uncategorizedItems.map((p, idx) => (
-                                                            <tr key={idx} className="hover:bg-gray-50">
-                                                                <td className="px-4 py-2 font-bold">{p.name} <span className="text-[9px] text-red-400 block">(ID: {p.product_id || 'N/A'})</span></td>
-                                                                <td className="px-4 py-2 text-center">
-                                                                    {Number(p.total_quantity)} <span className="text-gray-400 text-[10px]">{p.unit}</span>
-                                                                </td>
-                                                                <td className="px-4 py-2 text-right font-mono">{Number(p.product_workload)}</td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        );
-                                    })()}
-                                </>
+                                    
+                                    {(!serverDetails.details || serverDetails.details.length === 0) && (
+                                        <div className="text-center text-gray-400 py-8">Žádná výroba pro tento den.</div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="text-center py-8 text-red-400">Chyba při načítání dat.</div>
                             )}
                         </div>
-                        <div className="p-4 border-t bg-gray-50 text-right">
-                            <button onClick={() => setSelectedDate(null)} className="px-6 py-2 bg-white border rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-100 transition">Zavřít</button>
+
+                        <div className="p-4 border-t bg-gray-50 rounded-b-2xl flex justify-between items-center">
+                            <span className="text-xs text-gray-400">Data jsou agregována z aktivních objednávek.</span>
+                            <button 
+                                onClick={handleExportXLS} 
+                                disabled={!serverDetails || serverDetails.details.length === 0}
+                                className="bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-green-700 transition flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <FileSpreadsheet size={16} className="mr-2"/> Export XLS
+                            </button>
                         </div>
                     </div>
                 </div>
