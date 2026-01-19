@@ -4,7 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Product } from '../../types';
 import { ALLERGENS } from '../../constants';
 import { generateTranslations } from '../../utils/aiTranslator';
-import { Plus, Edit, Trash2, Check, X, ImageIcon, AlertTriangle, Filter, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Plus, Edit, Trash2, Check, X, ImageIcon, AlertTriangle, Filter, ArrowUp, ArrowDown, ArrowUpDown, Wheat, ChevronDown, ChevronUp, Save } from 'lucide-react';
 import { Pagination } from '../../components/Pagination';
 import { MultiSelect } from '../../components/MultiSelect';
 
@@ -36,7 +36,7 @@ const DeleteConfirmModal: React.FC<{
 };
 
 export const ProductsTab: React.FC = () => {
-    const { addProduct, updateProduct, deleteProduct, settings, t, uploadImage, getImageUrl, searchProducts, products: allLocalProducts } = useStore();
+    const { addProduct, updateProduct, deleteProduct, settings, t, uploadImage, getImageUrl, searchProducts, products: allLocalProducts, ingredients } = useStore();
     
     // --- TABLE STATE ---
     const [displayProducts, setDisplayProducts] = useState<Product[]>([]);
@@ -67,6 +67,11 @@ export const ProductsTab: React.FC = () => {
     const [isTranslating, setIsTranslating] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+    
+    // Ingredient Editor State
+    const [expandedIngredientsId, setExpandedIngredientsId] = useState<string | null>(null);
+    const [addingIngredientId, setAddingIngredientId] = useState<string>(''); // Currently selected ing to add
+    const [ingredientQty, setIngredientQty] = useState<string>('1');
 
     const noSpinnerClass = "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
@@ -156,6 +161,49 @@ export const ProductsTab: React.FC = () => {
             setDeleteTarget(null);
             loadData();
         }
+    };
+
+    // --- INGREDIENT LOGIC ---
+
+    const handleAddIngredient = async (product: Product) => {
+        if (!addingIngredientId) return;
+        const qty = parseFloat(ingredientQty);
+        if (isNaN(qty) || qty <= 0) {
+            alert('Množství musí být kladné číslo.');
+            return;
+        }
+
+        const newComposition = [...(product.composition || [])];
+        // Check duplicate
+        if (newComposition.some(i => i.ingredientId === addingIngredientId)) {
+            alert('Tato surovina již je přidána.');
+            return;
+        }
+
+        newComposition.push({ ingredientId: addingIngredientId, quantity: qty });
+        
+        // Update product in DB immediately
+        await updateProduct({ ...product, composition: newComposition });
+        
+        // Update local state to reflect change
+        setDisplayProducts(prev => prev.map(p => p.id === product.id ? { ...p, composition: newComposition } : p));
+        setAddingIngredientId('');
+        setIngredientQty('1');
+    };
+
+    const handleUpdateIngredientQty = async (product: Product, ingId: string, newQty: number) => {
+        if (newQty <= 0) return;
+        const newComposition = (product.composition || []).map(i => 
+            i.ingredientId === ingId ? { ...i, quantity: newQty } : i
+        );
+        await updateProduct({ ...product, composition: newComposition });
+        setDisplayProducts(prev => prev.map(p => p.id === product.id ? { ...p, composition: newComposition } : p));
+    };
+
+    const handleRemoveIngredient = async (product: Product, ingId: string) => {
+        const newComposition = (product.composition || []).filter(i => i.ingredientId !== ingId);
+        await updateProduct({ ...product, composition: newComposition });
+        setDisplayProducts(prev => prev.map(p => p.id === product.id ? { ...p, composition: newComposition } : p));
     };
 
     const saveProduct = async (e: React.FormEvent) => {
@@ -345,6 +393,7 @@ export const ProductsTab: React.FC = () => {
                     <table className="min-w-full divide-y">
                         <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
                             <tr>
+                                <th className="px-6 py-4 text-left w-10"></th> {/* Expand Toggle */}
                                 <th className="px-6 py-4 text-left w-20">Foto</th>
                                 <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('name')}>
                                     <div className="flex items-center">Název {getSortIcon('name')}</div>
@@ -361,29 +410,120 @@ export const ProductsTab: React.FC = () => {
                         </thead>
                         <tbody className="divide-y text-xs">
                             {isLoading ? (
-                                <tr><td colSpan={6} className="p-8 text-center text-gray-400">Načítám produkty...</td></tr>
+                                <tr><td colSpan={7} className="p-8 text-center text-gray-400">Načítám produkty...</td></tr>
                             ) : displayProducts.map(p => (
-                                <tr key={p.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4">
-                                        {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
-                                    </td>
-                                    <td className="px-6 py-4 font-bold">{p.name}</td>
-                                    <td className="px-6 py-4">{getCategoryName(p.category)}</td>
-                                    <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
-                                    <td className="px-6 py-4 text-center">
-                                        <div className="flex justify-center gap-2">
-                                            <span title="E-shop">{p.visibility?.online ? <Check size={14} className="text-green-500"/> : <X size={14} className="text-gray-300"/>}</span>
-                                            {/* Store/Stand indicators optional */}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                        <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                        <button onClick={() => setDeleteTarget({id: p.id, name: p.name})} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
-                                    </td>
-                                </tr>
+                                <React.Fragment key={p.id}>
+                                    <tr className="hover:bg-gray-50 group">
+                                        <td className="px-6 py-4 text-center cursor-pointer relative" onClick={() => setExpandedIngredientsId(expandedIngredientsId === p.id ? null : p.id)}>
+                                            <div className="flex items-center gap-1">
+                                                {expandedIngredientsId === p.id ? <ChevronUp size={16} className="text-gray-400"/> : <ChevronDown size={16} className="text-gray-400 group-hover:text-primary"/>}
+                                                <span className="text-[10px] font-bold text-gray-400">({p.composition?.length || 0})</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
+                                        </td>
+                                        <td className="px-6 py-4 font-bold">{p.name}</td>
+                                        <td className="px-6 py-4">{getCategoryName(p.category)}</td>
+                                        <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
+                                        <td className="px-6 py-4 text-center">
+                                            <div className="flex justify-center gap-2">
+                                                <span title="E-shop">{p.visibility?.online ? <Check size={14} className="text-green-500"/> : <X size={14} className="text-gray-300"/>}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                            <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                            <button onClick={() => setDeleteTarget({id: p.id, name: p.name})} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                        </td>
+                                    </tr>
+
+                                    {/* EXPANDED INGREDIENTS ROW */}
+                                    {expandedIngredientsId === p.id && (
+                                        <tr className="bg-gray-50 border-b border-gray-200">
+                                            <td colSpan={7} className="px-16 py-4">
+                                                <div className="flex items-start gap-8">
+                                                    {/* Product Image */}
+                                                    {p.images?.[0] && (
+                                                        <img src={getImageUrl(p.images[0])} className="w-24 h-24 object-cover rounded-lg border shadow-sm" />
+                                                    )}
+                                                    
+                                                    <div className="flex-grow">
+                                                        <h4 className="font-bold text-gray-600 mb-3 flex items-center gap-2">
+                                                            <Wheat size={16} className="text-accent"/> Receptura (Suroviny)
+                                                        </h4>
+                                                        
+                                                        {/* Ingredients List */}
+                                                        <div className="space-y-2 mb-4">
+                                                            {(p.composition || []).map(ci => {
+                                                                const ing = ingredients.find(i => i.id === ci.ingredientId);
+                                                                if (!ing) return null;
+                                                                return (
+                                                                    <div key={ci.ingredientId} className="flex items-center gap-3 bg-white p-2 rounded border border-gray-200">
+                                                                        <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center overflow-hidden">
+                                                                            {ing.imageUrl ? <img src={getImageUrl(ing.imageUrl)} className="w-full h-full object-cover"/> : <ImageIcon size={14} className="text-gray-300"/>}
+                                                                        </div>
+                                                                        <div className="flex-grow font-bold text-sm">{ing.name}</div>
+                                                                        <input 
+                                                                            type="number" 
+                                                                            min="0.01" 
+                                                                            step="0.01"
+                                                                            className={`w-20 border rounded p-1 text-right font-mono ${noSpinnerClass}`}
+                                                                            value={ci.quantity}
+                                                                            onChange={(e) => handleUpdateIngredientQty(p, ci.ingredientId, parseFloat(e.target.value))}
+                                                                        />
+                                                                        <span className="text-xs text-gray-500 w-8">{ing.unit}</span>
+                                                                        <button onClick={() => handleRemoveIngredient(p, ci.ingredientId)} className="text-red-400 hover:text-red-600 p-1"><X size={14}/></button>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                            {(!p.composition || p.composition.length === 0) && (
+                                                                <p className="text-xs text-gray-400 italic">Žádné suroviny nebyly přidány.</p>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Add Ingredient */}
+                                                        <div className="flex items-center gap-2 pt-2 border-t border-gray-200">
+                                                            <select 
+                                                                className="border rounded p-1.5 text-xs bg-white flex-grow" 
+                                                                value={addingIngredientId} 
+                                                                onChange={e => setAddingIngredientId(e.target.value)}
+                                                            >
+                                                                <option value="">-- Vybrat surovinu --</option>
+                                                                {ingredients
+                                                                    .filter(i => !i.isHidden)
+                                                                    .sort((a,b) => a.name.localeCompare(b.name))
+                                                                    .map(i => (
+                                                                    <option key={i.id} value={i.id} disabled={p.composition?.some(c => c.ingredientId === i.id)}>
+                                                                        {i.name} ({i.unit})
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                            <input 
+                                                                type="number" 
+                                                                min="0.01" 
+                                                                step="0.01"
+                                                                className="w-20 border rounded p-1.5 text-xs text-right"
+                                                                placeholder="Množství"
+                                                                value={ingredientQty}
+                                                                onChange={e => setIngredientQty(e.target.value)}
+                                                            />
+                                                            <button 
+                                                                onClick={() => handleAddIngredient(p)}
+                                                                className="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-green-700"
+                                                                disabled={!addingIngredientId}
+                                                            >
+                                                                Přidat
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </React.Fragment>
                             ))}
                             {!isLoading && displayProducts.length === 0 && (
-                                <tr><td colSpan={6} className="p-8 text-center text-gray-400">Žádné produkty.</td></tr>
+                                <tr><td colSpan={7} className="p-8 text-center text-gray-400">Žádné produkty.</td></tr>
                             )}
                         </tbody>
                     </table>
@@ -580,7 +720,7 @@ export const ProductsTab: React.FC = () => {
                             <div className="flex flex-wrap gap-2">
                                 {editingProduct?.images?.map((img, idx) => (
                                     <div key={idx} className="relative w-20 h-20 group rounded-lg overflow-hidden border">
-                                        <img src={getImageUrl(img)} className="w-full h-full object-cover" />
+                                        <img src={img} className="w-full h-full object-cover" />
                                         <button type="button" onClick={() => setEditingProduct(editingProduct ? {...editingProduct, images: editingProduct.images?.filter((_, i) => i !== idx)} : null)} className="absolute top-0 right-0 bg-red-500 text-white p-1 opacity-0 group-hover:opacity-100 transition"><X size={12}/></button>
                                     </div>
                                 ))}

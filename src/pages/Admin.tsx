@@ -10,7 +10,7 @@ import { ALLERGENS } from '../constants';
 import { 
     LayoutList, Plus, Edit, Trash2, Database, HardDrive, Server, 
     Download, Upload, FileText, Check, X, User as UserIcon, 
-    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar, Mail, Smartphone, Map
+    Ban, ImageIcon, Store, Truck, Filter, Settings, Calendar, Mail, Smartphone, Map, Wheat
 } from 'lucide-react';
 import { OrdersTab } from './admin/OrdersTab';
 import { UsersTab } from './admin/UsersTab';
@@ -27,7 +27,8 @@ import { SettingsTab } from './admin/SettingsTab';
 import { EventsTab } from './admin/EventsTab';
 import { EmailsTab } from './admin/EmailsTab';
 import { MobileNotificationsTab } from './admin/MobileNotificationsTab';
-import { RidesTab } from './admin/RidesTab'; // Import
+import { RidesTab } from './admin/RidesTab'; 
+import { IngredientsTab } from './admin/IngredientsTab'; // NEW IMPORT
 import { Navigate } from 'react-router-dom';
 
 export const Admin: React.FC = () => {
@@ -72,7 +73,7 @@ export const Admin: React.FC = () => {
     };
 
     const availableTabs = [
-        'orders', 'rides', 'users', 'load', 'products', 'categories', // Rides added
+        'orders', 'rides', 'users', 'load', 'ingredients', 'products', 'categories', 
         'delivery', 'pickup', 'capacities', 'events', 'discounts', 
         'packaging', 'operator', 'payments', 'emails', 'mobile_notifications', 'app_settings'
     ];
@@ -97,6 +98,7 @@ export const Admin: React.FC = () => {
                     {tab === 'emails' && <Mail size={12} className="mr-1"/>}
                     {tab === 'mobile_notifications' && <Smartphone size={12} className="mr-1"/>}
                     {tab === 'rides' && <Map size={12} className="mr-1"/>}
+                    {tab === 'ingredients' && <Wheat size={12} className="mr-1"/>}
                     {tab === 'db' ? t('admin.db') : tab === 'categories' ? t('admin.categories') : tab === 'pickup' ? t('admin.pickup') : tab === 'emails' ? 'Emaily' : tab === 'mobile_notifications' ? 'Mobilní Notifikace' : tab === 'rides' ? t('admin.rides') : t(`admin.${tab}`)}
                     </button>
                 ))}
@@ -108,6 +110,7 @@ export const Admin: React.FC = () => {
             {activeTab === 'rides' && <RidesTab />}
             {activeTab === 'users' && <UsersTab onNavigateToEmails={handleNavigateToEmails} />}
             {activeTab === 'products' && <ProductsTab />}
+            {activeTab === 'ingredients' && <IngredientsTab />}
             {activeTab === 'discounts' && <DiscountsTab />}
             {activeTab === 'delivery' && <DeliveryTab />}
             {activeTab === 'pickup' && <PickupTab />}

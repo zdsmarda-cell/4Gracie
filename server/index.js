@@ -23,6 +23,7 @@ import aiRoutes from './routes/ai.js';
 import statsRoutes from './routes/stats.js';
 import notificationRoutes from './routes/notifications.js';
 import ridesRoutes from './routes/rides.js';
+import ingredientRoutes from './routes/ingredients.js';
 
 // --- POLYFILLS FOR NODE.JS ENVIRONMENT (Required for jsPDF) ---
 if (typeof global.btoa === 'undefined') {
@@ -73,6 +74,7 @@ app.use('/api/admin/rides', ridesRoutes);
 app.use('/api/admin/stats', statsRoutes);
 app.use('/api', settingsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/ingredients', ingredientRoutes);
 
 // --- ERROR HANDLING MIDDLEWARE ---
 app.use((err, req, res, next) => {
@@ -114,6 +116,15 @@ const initDb = async () => {
             order_ids JSON,
             steps JSON,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
+        await db.query(`CREATE TABLE IF NOT EXISTS ingredients (
+            id VARCHAR(50) PRIMARY KEY,
+            name VARCHAR(255),
+            unit VARCHAR(20),
+            image_url TEXT,
+            is_hidden BOOLEAN DEFAULT FALSE,
+            full_json JSON
         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
         await db.query(`CREATE TABLE IF NOT EXISTS email_queue (

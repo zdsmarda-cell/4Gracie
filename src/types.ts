@@ -62,7 +62,8 @@ export interface BackupData {
   discountCodes?: DiscountCode[];
   dayConfigs?: DayConfig[];
   settings?: GlobalSettings;
-  rides?: Ride[]; // NEW FIELD
+  rides?: Ride[];
+  ingredients?: Ingredient[]; // NEW
 }
 
 export interface CookieSettings {
@@ -256,6 +257,21 @@ export interface CapacityCategory {
   translations?: Translations;
 }
 
+// NEW: Ingredient Interface
+export interface Ingredient {
+  id: string;
+  name: string;
+  unit: string; // 'ks' | 'g' | 'ml' etc.
+  imageUrl?: string;
+  isHidden: boolean;
+}
+
+// NEW: Link between Product and Ingredient
+export interface ProductIngredient {
+  ingredientId: string;
+  quantity: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -284,6 +300,7 @@ export interface Product {
   vatRateInner: number;
   vatRateTakeaway: number;
   translations?: Translations;
+  composition?: ProductIngredient[]; // NEW: List of ingredients
 }
 
 export interface CartItem extends Product {

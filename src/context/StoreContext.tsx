@@ -1,46 +1,47 @@
 
-import React, { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
-import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, ProductCategory, OrderStatus, PaymentMethod, DiscountCode, DiscountType, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, Ride, EventSlot, CookieSettings, OrdersSearchResult } from '../types';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
+import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, OrderStatus, DiscountCode, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, Ride, EventSlot, CookieSettings, OrdersSearchResult, Ingredient } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic, calculateDiscountAmountLogic } from '../utils/orderLogic';
 import { calculateCzIban, formatDate, removeDiacritics } from '../utils/helpers';
-import { useRideLogic } from './slices/rideLogic';
-import { useOrderLogic } from './slices/orderLogic';
 
+// IMPORT CUSTOM HOOKS
+import { useApi } from '../hooks/useApi';
+import { useAuth } from '../hooks/useAuth';
+import { useCart } from '../hooks/useCart';
+import { useProductLogic } from '../hooks/useProductLogic';
+import { useSettingsLogic } from '../hooks/useSettingsLogic';
+import { useOrderLogic } from './slices/orderLogic';
+import { useRideLogic } from './slices/rideLogic';
+
+// --- TYPES REDEFINITION (Exported) ---
 interface CheckResult {
   allowed: boolean;
   reason?: string;
   status: DayStatus;
 }
-
 export type DayStatus = 'available' | 'closed' | 'full' | 'exceeds' | 'past' | 'too_soon';
-
 interface ValidateDiscountResult {
   success: boolean;
   discount?: DiscountCode;
   amount?: number;
   error?: string;
 }
-
 export interface ImportResult {
   success: boolean;
   collisions?: string[];
   message?: string;
 }
-
 interface RestorationCheckResult {
   valid: boolean;
   invalidCodes: string[];
 }
-
 interface PasswordChangeResult {
   success: boolean;
   message: string;
 }
-
 interface RegionDateInfo {
   isOpen: boolean;
   timeStart?: string;
@@ -48,34 +49,29 @@ interface RegionDateInfo {
   isException: boolean;
   reason?: string;
 }
-
 export type DataSourceMode = 'local' | 'api';
-
 interface GlobalNotification {
   message: string;
   type: 'success' | 'error';
   autoClose: boolean;
 }
 
+// --- CONTEXT TYPE ---
 interface StoreContextType {
   dataSource: DataSourceMode;
   setDataSource: (mode: DataSourceMode) => void;
   isLoading: boolean;
   isOperationPending: boolean;
   dbConnectionError: boolean;
-  
   isPreviewEnvironment: boolean; 
-  
   language: Language;
   setLanguage: (lang: Language) => void;
-  
   cart: CartItem[];
   cartBump: boolean;
   addToCart: (product: Product, quantity?: number) => void;
   removeFromCart: (productId: string) => void;
   updateCartItemQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
-  
   user: User | null;
   allUsers: User[];
   refreshUser: () => Promise<void>; 
@@ -89,20 +85,21 @@ interface StoreContextType {
   resetPasswordByToken: (token: string, newPass: string) => Promise<PasswordChangeResult>;
   changePassword: (oldPass: string, newPass: string) => Promise<PasswordChangeResult>;
   addUser: (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver') => Promise<boolean>;
-  
   orders: Order[];
   addOrder: (order: Order) => Promise<boolean>;
   updateOrderStatus: (orderIds: string[], status: OrderStatus, sendNotify?: boolean, sendPush?: boolean) => Promise<boolean>;
   updateOrder: (order: Order, sendNotify?: boolean, isUserEdit?: boolean) => Promise<boolean>;
   checkOrderRestoration: (order: Order) => RestorationCheckResult;
   searchOrders: (filters: any) => Promise<OrdersSearchResult>;
-  
   products: Product[];
   addProduct: (product: Product) => Promise<boolean>;
   updateProduct: (product: Product) => Promise<boolean>;
   deleteProduct: (id: string) => Promise<boolean>;
   searchProducts: (filters: any) => Promise<{ products: Product[], total: number, page: number, pages: number }>;
-  
+  ingredients: Ingredient[];
+  addIngredient: (ingredient: Ingredient) => Promise<boolean>;
+  updateIngredient: (ingredient: Ingredient) => Promise<boolean>;
+  deleteIngredient: (id: string) => Promise<boolean>;
   discountCodes: DiscountCode[];
   appliedDiscounts: AppliedDiscount[];
   addDiscountCode: (code: DiscountCode) => Promise<boolean>;
@@ -111,22 +108,18 @@ interface StoreContextType {
   applyDiscount: (code: string) => { success: boolean; error?: string };
   removeAppliedDiscount: (code: string) => void;
   validateDiscount: (code: string, currentCart: CartItem[]) => ValidateDiscountResult;
-  
   settings: GlobalSettings;
   updateSettings: (settings: GlobalSettings) => Promise<boolean>;
   dayConfigs: DayConfig[];
   updateDayConfig: (config: DayConfig) => Promise<boolean>;
   removeDayConfig: (date: string) => Promise<boolean>;
-  
   updateEventSlot: (slot: EventSlot) => Promise<boolean>;
   removeEventSlot: (date: string) => Promise<boolean>;
   notifyEventSubscribers: (date: string) => Promise<boolean>;
-  
   rides: Ride[];
   updateRide: (ride: Ride) => Promise<boolean>;
   deleteRide: (rideId: string) => Promise<boolean>;
   printRouteSheet: (ride: Ride, driverName: string) => void;
-  
   checkAvailability: (date: string, cartItems: CartItem[], excludeOrderId?: string) => CheckResult;
   getDateStatus: (date: string, cartItems: CartItem[]) => DayStatus;
   getDailyLoad: (date: string, excludeOrderId?: string) => { load: Record<string, number>; eventLoad: Record<string, number> };
@@ -136,7 +129,6 @@ interface StoreContextType {
   calculatePackagingFee: (items: CartItem[]) => number;
   getAvailableEventDates: (product: Product) => string[];
   isEventCapacityAvailable: (product: Product) => boolean;
-  
   t: (key: string, params?: Record<string, string>) => string;
   tData: (item: any, field: string) => string;
   generateInvoice: (order: Order) => string;
@@ -147,31 +139,24 @@ interface StoreContextType {
   getImageUrl: (path?: string, size?: 'original' | 'medium' | 'small') => string;
   getFullApiUrl: (endpoint: string) => string;
   uploadImage: (base64: string, name: string) => Promise<string>;
-  
   importDatabase: (data: BackupData, selection: Record<string, boolean>) => Promise<ImportResult>;
   refreshData: () => Promise<void>;
-  
   globalNotification: GlobalNotification | null;
   dismissNotification: () => void;
   showNotify: (msg: string, type?: 'success'|'error', autoClose?: boolean) => void;
-
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
-
   cookieSettings: CookieSettings | null;
   saveCookieSettings: (settings: CookieSettings) => void;
-
   isPwa: boolean;
   isPwaUpdateAvailable: boolean;
   updatePwa: () => void;
   appVersion: string;
-
   pushSubscription: PushSubscription | null;
   subscribeToPush: () => Promise<void>;
   unsubscribeFromPush: () => Promise<void>;
   isPushSupported: boolean;
-  
   searchUsers: (filters: any) => Promise<User[]>;
 }
 
@@ -181,7 +166,7 @@ const hashPassword = (pwd: string) => `hashed_${btoa(pwd)}`;
 
 const INITIAL_USERS: User[] = [
     { 
-        id: 'u1', name: 'Jan Novák', email: 'jan.novak@example.com', phone: '+420777777777', 
+        id: 'user1', name: 'Jan Novák', email: 'jan.novak@example.com', phone: '+420777777777', 
         role: 'customer', billingAddresses: [], deliveryAddresses: [], isBlocked: false, 
         passwordHash: hashPassword('1234'), marketingConsent: true 
     },
@@ -210,948 +195,495 @@ const loadFromStorage = <T,>(key: string, fallback: T): T => {
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.0.0';
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [dataSource, setDataSourceState] = useState<DataSourceMode>(() => {
-    // Determine if we are in Production Build Environment
-    let isProdBuild = false;
-    try {
-        // @ts-ignore
-        if (import.meta && import.meta.env && import.meta.env.PROD) {
-            isProdBuild = true;
-        }
-    } catch (e) {
-        // Ignore errors if import.meta is undefined
-    }
-
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-    if (isProdBuild && !isLocalhost) {
-        return 'api';
-    }
+    // --- BASIC STATE ---
+    const [language, setLanguage] = useState<Language>(Language.CS);
+    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+    const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
+    const [cookieSettings, setCookieSettings] = useState<CookieSettings | null>(() => loadFromStorage('cookie_settings', null));
+    const [isPwa, setIsPwa] = useState(false);
+    const [isPwaUpdateAvailable, setIsPwaUpdateAvailable] = useState(false);
+    const [swRegistration, setSwRegistration] = useState<ServiceWorkerRegistration | null>(null);
+    const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
+    const [isPushSupported, setIsPushSupported] = useState(false);
+    const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(null);
     
-    return (localStorage.getItem('app_data_source') as DataSourceMode) || 'local';
-  });
-  
-  const [isLoading, setIsLoading] = useState(true);
-  const [isOperationPending, setIsOperationPending] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [dbConnectionError, setDbConnectionError] = useState(false);
-  const [language, setLanguage] = useState<Language>(Language.CS);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [globalNotification, setGlobalNotification] = useState<GlobalNotification | null>(null);
-  const [cookieSettings, setCookieSettings] = useState<CookieSettings | null>(() => loadFromStorage('cookie_settings', null));
+    // --- MAIN STATES ---
+    const [user, setUser] = useState<User | null>(() => loadFromStorage('session_user', null));
+    const [allUsers, setAllUsers] = useState<User[]>([]);
+    const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
+    const [orders, setOrders] = useState<Order[]>([]);
+    const [rides, setRides] = useState<Ride[]>([]);
+    const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
 
-  // PWA State
-  const [isPwa, setIsPwa] = useState(false);
-  const [isPwaUpdateAvailable, setIsPwaUpdateAvailable] = useState(false);
-  const [swRegistration, setSwRegistration] = useState<ServiceWorkerRegistration | null>(null);
-  
-  // Push State
-  const [pushSubscription, setPushSubscription] = useState<PushSubscription | null>(null);
-  const [isPushSupported, setIsPushSupported] = useState(false);
-  const [vapidPublicKey, setVapidPublicKey] = useState<string | null>(null);
+    // --- HELPERS ---
+    const t = useCallback((key: string, params?: Record<string, string>) => {
+        const langKey = language as Language;
+        let text = TRANSLATIONS[langKey]?.[key] || TRANSLATIONS[Language.CS]?.[key] || key;
+        if (params) Object.entries(params).forEach(([k, v]) => { text = text.replace(`{${k}}`, v); });
+        return text;
+    }, [language]);
 
-  // Data State
-  const [cart, setCart] = useState<CartItem[]>(() => loadFromStorage('cart', []));
-  const [cartBump, setCartBump] = useState(false);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [user, setUser] = useState<User | null>(() => loadFromStorage('session_user', null));
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [discountCodes, setDiscountCodes] = useState<DiscountCode[]>([]);
-  const [settings, setSettings] = useState<GlobalSettings>(DEFAULT_SETTINGS);
-  const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
-  const [appliedDiscounts, setAppliedDiscounts] = useState<AppliedDiscount[]>([]);
-  const [rides, setRides] = useState<Ride[]>([]);
-
-  // Derived state
-  const isPreviewEnvironment = dataSource === 'local';
-
-  // Localization Helpers
-  const t = useCallback((key: string, params?: Record<string, string>) => {
-    const langKey = language as Language;
-    let text = TRANSLATIONS[langKey]?.[key] || TRANSLATIONS[Language.CS]?.[key] || key;
-    if (params) {
-      Object.entries(params).forEach(([k, v]) => {
-        text = text.replace(`{${k}}`, v);
-      });
-    }
-    return text;
-  }, [language]);
-
-  const tData = (item: any, field: string) => {
-    if (!item) return '';
-    if (language === Language.CS) return item[field];
-    return item.translations?.[language]?.[field] || item[field];
-  };
-
-  const setDataSource = (mode: DataSourceMode) => {
-    localStorage.setItem('app_data_source', mode);
-    setDataSourceState(mode);
-    setIsInitialized(false);
-  };
-
-  const showNotify = (message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
-    // @ts-ignore
-    const isProd = import.meta.env?.PROD;
-    
-    // Suppress success messages in production environment
-    if (isProd && type === 'success') {
-        return;
-    }
-
-    setGlobalNotification({ message, type, autoClose });
-  };
-
-  const getFullApiUrl = useCallback((endpoint: string) => {
-    // @ts-ignore
-    const env = (import.meta as any).env;
-    if (env.DEV) return endpoint;
-    let baseUrl = env.VITE_API_URL;
-    if (!baseUrl) {
-       baseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
-    }
-    if (baseUrl.endsWith('/')) {
-        baseUrl = baseUrl.slice(0, -1);
-    }
-    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    return `${baseUrl}${cleanEndpoint}`;
-  }, []);
-
-  const getImageUrl = (path?: string, size: 'original' | 'medium' | 'small' = 'original') => {
-      if (!path) return '';
-      if (path.startsWith('data:') || path.startsWith('http')) return path;
-      if (size !== 'original') {
-          const parts = path.split('.');
-          if (parts.length > 1) {
-              const ext = parts.pop();
-              const base = parts.join('.');
-              const newPath = `${base}-${size}.webp`;
-              return getFullApiUrl(newPath);
-          }
-      }
-      return getFullApiUrl(path);
-  };
-
-  const logout = useCallback(() => { 
-      setUser(null); 
-      localStorage.removeItem('session_user');
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('refresh_token');
-  }, []);
-
-  const apiCall = useCallback(async (endpoint: string, method: string, body?: any) => {
-    const controller = new AbortController();
-    setIsOperationPending(true);
-    const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
-            controller.abort();
-            reject(new Error('TIMEOUT_LIMIT_REACHED'));
-        }, 15000); 
-    });
-
-    try {
-      const url = getFullApiUrl(endpoint);
-      const token = localStorage.getItem('auth_token');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res: any = await Promise.race([
-        fetch(url, {
-          method,
-          headers,
-          body: body ? JSON.stringify(body) : undefined,
-          signal: controller.signal
-        }),
-        timeoutPromise
-      ]);
-      
-      const contentType = res.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-          throw new Error("Server returned invalid data (HTML instead of JSON). Maintenance?");
-      }
-      
-      if (res.status === 401) {
-          logout();
-          throw new Error('Unauthorized');
-      }
-
-      if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || `API Error: ${res.status}`);
-      }
-      
-      setDbConnectionError(false);
-      return await res.json();
-    } catch (e: any) {
-      // Force error in PROD env only if NOT localhost (preview)
-      // @ts-ignore
-      const isProd = import.meta?.env?.PROD;
-      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      
-      if ((isProd && !isLocalhost) || e.message === 'TIMEOUT_LIMIT_REACHED' || e.message.includes('fetch failed')) {
-         setDbConnectionError(true);
-      } 
-      console.warn(`[API] Call to ${endpoint} failed:`, e);
-      return null;
-    } finally {
-        setIsOperationPending(false); 
-    }
-  }, [getFullApiUrl, logout]);
-
-  // --- USE EXTRACTED LOGIC HOOKS ---
-  const { updateRide, deleteRide, printRouteSheet } = useRideLogic({ 
-    dataSource, apiCall, setRides, orders, products, settings, showNotify 
-  });
-
-  const { addOrder, updateOrder, updateOrderStatus } = useOrderLogic({
-    dataSource, apiCall, setOrders, setRides, rides, language, settings, showNotify, t
-  });
-  
-  // Custom searchOrders with Local pagination logic
-  const searchOrders = useCallback(async (filters: any) => {
-      if (dataSource === 'api') {
-          const q = new URLSearchParams(filters).toString();
-          const res = await apiCall(`/api/orders?${q}`, 'GET');
-          if (res && res.success) return res;
-          return { orders: [], total: 0, page: 1, pages: 1 };
-      } else {
-          // Local Mode Implementation
-          let filtered = orders.filter(o => {
-              if (filters.id && !o.id.includes(filters.id)) return false;
-              if (filters.userId && o.userId !== filters.userId) return false;
-              if (filters.dateFrom && o.deliveryDate < filters.dateFrom) return false;
-              if (filters.dateTo && o.deliveryDate > filters.dateTo) return false;
-              if (filters.customer && !o.userName?.toLowerCase().includes(filters.customer.toLowerCase())) return false;
-              if (filters.status && !filters.status.split(',').includes(o.status)) return false;
-              if (filters.deliveryType && o.deliveryType !== filters.deliveryType) return false;
-              // ... other filters if needed
-              return true;
-          });
-          
-          filtered.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-          const page = Number(filters.page) || 1;
-          const limit = Number(filters.limit) || 10;
-          const start = (page - 1) * limit;
-          const end = start + limit;
-          
-          return { 
-              orders: filtered.slice(start, end), 
-              total: filtered.length, 
-              page: page, 
-              pages: Math.ceil(filtered.length / limit) 
-          };
-      }
-  }, [dataSource, apiCall, orders]);
-
-
-  const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        if (dataSource === 'api') {
-          // Reset data
-          setAllUsers([]);
-          setProducts([]);
-          setOrders([]);
-          setDiscountCodes([]);
-          setDayConfigs([]);
-          setRides([]);
-          setSettings(EMPTY_SETTINGS);
-          
-          const data = await apiCall('/api/bootstrap', 'GET');
-          
-          if (data) {
-              setAllUsers(data.users || []);
-              setProducts(data.products || []);
-              setOrders(data.orders || []);
-              
-              if (data.settings) {
-                 const dbSettings = data.settings;
-                 
-                 // 1. Start with defaults for structure
-                 const mergedSettings = { ...DEFAULT_SETTINGS };
-                 
-                 // 2. CRITICAL: If in API mode, WIPE the mock Company Details from the base
-                 // This ensures that if DB is empty, we show blank fields, not "4Gracie s.r.o."
-                 mergedSettings.companyDetails = { ...EMPTY_SETTINGS.companyDetails };
-                 
-                 // 3. Merge DB Settings (Top Level)
-                 Object.assign(mergedSettings, dbSettings);
-
-                 // 4. Ensure nested Company Details from DB overwrite the empty ones if present
-                 if (dbSettings.companyDetails) {
-                     mergedSettings.companyDetails = {
-                         ...mergedSettings.companyDetails,
-                         ...dbSettings.companyDetails
-                     };
-                 }
-                 
-                 // 5. Ensure structure for other complex objects
-                 if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
-                 if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
-                 
-                 setSettings(mergedSettings); 
-              }
-              
-              setDiscountCodes(data.discountCodes || []);
-              setDayConfigs(data.dayConfigs || []);
-              setRides(data.rides || []);
-              
-              if (data.vapidPublicKey) setVapidPublicKey(data.vapidPublicKey);
-          }
-        } else {
-          // Local Mode
-          // @ts-ignore
-          const isProd = import.meta?.env?.PROD;
-          const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-          if (isProd && !isLocalhost) {
-              setDbConnectionError(true);
-              return;
-          }
-
-          let loadedUsers = loadFromStorage('db_users', [] as User[]);
-          if (!loadedUsers || loadedUsers.length === 0) loadedUsers = INITIAL_USERS;
-          setAllUsers(loadedUsers);
-
-          let loadedProducts = loadFromStorage('db_products', [] as Product[]);
-          if (!loadedProducts || loadedProducts.length === 0) loadedProducts = INITIAL_PRODUCTS;
-          setProducts(loadedProducts);
-          
-          let loadedOrders = loadFromStorage('db_orders', [] as Order[]);
-          if (!loadedOrders || loadedOrders.length === 0) loadedOrders = MOCK_ORDERS;
-          setOrders(loadedOrders);
-          
-          const loadedSettings = loadFromStorage('db_settings', DEFAULT_SETTINGS);
-          if (!loadedSettings.categories) loadedSettings.categories = DEFAULT_SETTINGS.categories;
-          if (!loadedSettings.pickupLocations) loadedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
-          
-          setSettings(loadedSettings);
-          setDiscountCodes(loadFromStorage('db_discounts', []));
-          setDayConfigs(loadFromStorage('db_dayconfigs', []));
-          setRides(loadFromStorage('db_rides', []));
-          
-          showNotify("Přepnuto na lokální paměť (Mock Data).", 'success');
-        }
-      } catch (err: any) {
-        console.error("Fetch Data Error", err);
+    const showNotify = useCallback((message: string, type: 'success' | 'error' = 'success', autoClose: boolean = true) => {
         // @ts-ignore
         const isProd = import.meta?.env?.PROD;
-        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        if (isProd && !isLocalhost) setDbConnectionError(true);
-      } finally {
-        setIsLoading(false);
-        setIsInitialized(true);
-      }
-  };
+        if (isProd && type === 'success') return;
+        setGlobalNotification({ message, type, autoClose });
+    }, []);
 
-  useEffect(() => {
-    fetchData();
-    if (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true) {
-        setIsPwa(true);
-    }
-    if ('serviceWorker' in navigator && 'PushManager' in window) {
-        setIsPushSupported(true);
-    }
-  }, [dataSource]);
+    const getFullApiUrl = useCallback((endpoint: string) => {
+        // @ts-ignore
+        const env = (import.meta as any).env;
+        if (env.DEV) return endpoint;
+        let baseUrl = env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
+        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+        const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+        return `${baseUrl}${cleanEndpoint}`;
+    }, []);
 
-  useEffect(() => {
-      if ('serviceWorker' in navigator) {
-          navigator.serviceWorker.ready.then(registration => {
-              setSwRegistration(registration);
-              registration.pushManager.getSubscription().then(sub => {
-                  setPushSubscription(sub);
-                  if (sub && user && dataSource === 'api') {
-                      apiCall('/api/notifications/subscribe', 'POST', { subscription: sub })
-                          .catch(e => console.error("Auto-sync push failed", e));
-                  }
-              });
-          });
-          
-          navigator.serviceWorker.addEventListener('controllerchange', () => {
-             window.location.reload();
-          });
-      }
-  }, [user, dataSource, apiCall]); 
+    // Alias helper
+    const generateCzIban = calculateCzIban;
 
-  useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
-  useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
-  
-  useEffect(() => {
-    if (dataSource === 'local' && isInitialized) {
-      localStorage.setItem('db_users', JSON.stringify(allUsers));
-      localStorage.setItem('db_orders', JSON.stringify(orders));
-      localStorage.setItem('db_products', JSON.stringify(products));
-      localStorage.setItem('db_discounts', JSON.stringify(discountCodes));
-      localStorage.setItem('db_settings', JSON.stringify(settings));
-      localStorage.setItem('db_dayconfigs', JSON.stringify(dayConfigs));
-      localStorage.setItem('db_rides', JSON.stringify(rides));
-    }
-  }, [allUsers, orders, products, discountCodes, settings, dayConfigs, rides, dataSource, isInitialized]);
-
-  const openAuthModal = () => setIsAuthModalOpen(true);
-  const closeAuthModal = () => setIsAuthModalOpen(false);
-  const dismissNotification = () => setGlobalNotification(null);
-
-  const saveCookieSettings = (s: CookieSettings) => {
-      setCookieSettings(s);
-      localStorage.setItem('cookie_settings', JSON.stringify(s));
-  };
-
-  const addToCart = (product: Product, quantity = 1) => {
-    setCart(prev => {
-      const existing = prev.find(item => item.id === product.id);
-      if (existing) {
-        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + quantity } : item);
-      }
-      return [...prev, { ...product, quantity }];
-    });
-    setCartBump(true);
-    setTimeout(() => setCartBump(false), 300);
-    showNotify(t('notification.added_to_cart', { name: product.name }));
-  };
-
-  const removeFromCart = (id: string) => {
-    setCart(prev => prev.filter(item => item.id !== id));
-  };
-
-  const updateCartItemQuantity = (id: string, quantity: number) => {
-    if (quantity < 1) {
-       removeFromCart(id);
-       return;
-    }
-    setCart(prev => prev.map(item => item.id === id ? { ...item, quantity } : item));
-  };
-
-  const clearCart = () => setCart([]);
-
-  useEffect(() => {
-    if (appliedDiscounts.length === 0) return;
-    let updatedDiscounts: AppliedDiscount[] = [];
-    let removedCodes: string[] = [];
+    // --- HOOKS INTEGRATION ---
     
-    for (const applied of appliedDiscounts) {
-      const calculation = calculateDiscountAmountLogic(applied.code, cart, discountCodes, orders);
-      if (calculation.success && calculation.amount !== undefined) {
-        updatedDiscounts.push({ code: applied.code, amount: calculation.amount });
-      } else {
-        removedCodes.push(applied.code);
-      }
-    }
-    const isDifferent = JSON.stringify(updatedDiscounts) !== JSON.stringify(appliedDiscounts);
-    if (isDifferent) {
-      setAppliedDiscounts(updatedDiscounts);
-      if (removedCodes.length > 0) showNotify(`${t('discount.invalid')}: ${removedCodes.join(', ')}`, 'error');
-    }
-  }, [cart]);
+    const { 
+        dataSource, setDataSource, isLoading, setIsLoading, 
+        isOperationPending, dbConnectionError, setDbConnectionError, apiCall 
+    } = useApi(
+        (localStorage.getItem('app_data_source') as DataSourceMode) || 'local',
+        getFullApiUrl,
+        () => setUser(null),
+        showNotify
+    );
 
-  // --- PRODUCT & CATEGORY ACTIONS ---
+    const {
+        login, register, logout, addUser, updateUser, updateUserAdmin, 
+        toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword
+    } = useAuth(
+        dataSource, apiCall, showNotify, async () => { /* noop refresh trigger for auth internally */ }, isPwa, allUsers, setAllUsers, user, setUser
+    );
 
-  const addProduct = async (p: Product): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => [...prev, p]); showNotify(t('notification.db_saved')); return true; }
-        return false;
-    } else {
-        setProducts(prev => [...prev, p]); return true;
-    }
-  };
+    const {
+        cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart
+    } = useCart(cart, setCart, showNotify);
 
-  const updateProduct = async (p: Product): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/products', 'POST', p);
-        if (res && res.success) { setProducts(prev => prev.map(x => x.id === p.id ? p : x)); showNotify(t('notification.db_saved')); return true; }
-        return false;
-    } else {
-        setProducts(prev => prev.map(x => x.id === p.id ? p : x)); return true;
-    }
-  };
+    const {
+        products, setProducts, ingredients, setIngredients,
+        addProduct, updateProduct, deleteProduct, searchProducts,
+        addIngredient, updateIngredient, deleteIngredient
+    } = useProductLogic({ dataSource, apiCall, showNotify, t });
 
-  const deleteProduct = async (id: string): Promise<boolean> => {
-    if (dataSource === 'api') {
-        const res = await apiCall(`/api/products/${id}`, 'DELETE');
-        if (res && res.success) { setProducts(prev => prev.filter(x => x.id !== id)); showNotify(t('notification.db_saved')); return true; }
-        return false;
-    } else {
-        setProducts(prev => prev.filter(x => x.id !== id)); return true;
-    }
-  };
+    const {
+        settings, setSettings, dayConfigs, setDayConfigs, discountCodes, setDiscountCodes,
+        updateSettings, updateDayConfig, removeDayConfig, updateEventSlot, removeEventSlot,
+        notifyEventSubscribers, addDiscountCode, updateDiscountCode, deleteDiscountCode
+    } = useSettingsLogic({ dataSource, apiCall, showNotify, t });
 
-  const searchProducts = useCallback(async (filters: any) => {
-      if (dataSource === 'api') {
-          const q = new URLSearchParams(filters).toString();
-          const res = await apiCall(`/api/products?${q}`, 'GET');
-          if (res && res.success) return res;
-          return { products: [], total: 0, page: 1, pages: 1 };
-      } else {
-          return { products: products, total: products.length, page: 1, pages: 1 };
-      }
-  }, [dataSource, apiCall, products]);
+    const { 
+        addOrder, updateOrder, updateOrderStatus, searchOrders 
+    } = useOrderLogic({ dataSource, apiCall, setOrders, setRides, rides, language, settings, showNotify, t });
 
-  // --- USER ACTIONS ---
+    const { 
+        updateRide, deleteRide, printRouteSheet 
+    } = useRideLogic({ dataSource, apiCall, setRides, orders, products, settings, showNotify });
 
-  const login = async (email: string, password?: string) => {
-    if (dataSource === 'api') {
-        const res = await apiCall('/api/users/login', 'POST', { email, password, isPwa });
-        if (res && res.success) {
-            setUser(res.user);
-            localStorage.setItem('session_user', JSON.stringify(res.user));
-            if (res.token) localStorage.setItem('auth_token', res.token);
-            if (res.refreshToken) localStorage.setItem('refresh_token', res.refreshToken);
-            return { success: true };
+    // --- REFRESH USER LOGIC ---
+    const refreshUser = async () => {
+        if(dataSource === 'api') {
+            const res = await apiCall('/api/users/me', 'GET');
+            if(res && res.success) {
+                setUser(res.user);
+                localStorage.setItem('session_user', JSON.stringify(res.user));
+            }
         }
-        return { success: false, message: res?.message || 'Login failed' };
-    } else {
-        const foundUser = allUsers.find(u => u.email === email);
-        if (foundUser) {
-            if (foundUser.isBlocked) return { success: false, message: t('cart.account_blocked') };
-            if (password && foundUser.passwordHash !== hashPassword(password)) return { success: false, message: 'Chybné heslo' };
-            setUser(foundUser); 
-            return { success: true };
-        }
-        return { success: false, message: 'Nenalezen' };
-    }
-  };
-
-  const register = (name: string, email: string, phone: string, password?: string) => {
-    if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) { 
-        showNotify('Email exists', 'error');
-        return; 
-    }
-    const newUser: User = { 
-        id: Date.now().toString(), name, email, phone, role: 'customer', 
-        billingAddresses: [], deliveryAddresses: [], isBlocked: false, 
-        passwordHash: hashPassword(password || '1234'), marketingConsent: false 
     };
-    
-    if (dataSource === 'api') {
-        apiCall('/api/users', 'POST', newUser).then(res => {
-            if (res && res.success) showNotify('Registrace OK', 'success');
-        });
-    } else {
-        setAllUsers(prev => [...prev, newUser]); setUser(newUser); 
-    }
-  };
 
-  const updateUser = async (u: User) => {
-      const res = await apiCall('/api/users', 'POST', u); 
-      if (res || dataSource === 'local') {
-          setUser(u);
-          setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
-          return true;
-      }
-      return false;
-  };
-  
-  const updateUserAdmin = async (u: User) => {
-      return updateUser(u); 
-  };
-
-  const addUser = async (name: string, email: string, phone: string, role: any) => {
-      const newUser: User = { 
-          id: Date.now().toString(), name, email, phone, role, 
-          billingAddresses: [], deliveryAddresses: [], isBlocked: false, 
-          passwordHash: hashPassword('1234'), marketingConsent: false 
-      };
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/users', 'POST', newUser);
-          if (res && res.success) {
-              setAllUsers(prev => [...prev, newUser]);
-              return true;
-          }
-          return false;
-      } else {
-          setAllUsers(prev => [...prev, newUser]);
-          return true;
-      }
-  };
-
-  const toggleUserBlock = async (id: string) => {
-      const u = allUsers.find(x => x.id === id);
-      if (u) return updateUserAdmin({ ...u, isBlocked: !u.isBlocked });
-      return false;
-  };
-
-  const refreshUser = async () => {
-      if(dataSource === 'api') {
-          const res = await apiCall('/api/users/me', 'GET');
-          if(res && res.success) {
-              setUser(res.user);
-              localStorage.setItem('session_user', JSON.stringify(res.user));
-          }
-      }
-  };
-
-  const sendPasswordReset = async (email: string) => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/auth/reset-password', 'POST', { email });
-          return res;
-      }
-      return { success: true, message: 'Simulated' };
-  };
-
-  const resetPasswordByToken = async (token: string, newPass: string) => {
-      if (dataSource === 'api') {
-          const newHash = hashPassword(newPass);
-          const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash });
-          return res;
-      }
-      return { success: true, message: 'Simulated' };
-  };
-
-  const changePassword = async (old: string, newP: string) => {
-      if (!user) return { success: false, message: 'Login required' };
-      const u = { ...user, passwordHash: hashPassword(newP) };
-      await updateUser(u);
-      return { success: true, message: 'Heslo změněno' };
-  };
-
-  const searchUsers = useCallback(async (filters: any) => {
-      if (dataSource === 'api') {
-          const q = new URLSearchParams(filters).toString();
-          const res = await apiCall(`/api/users?${q}`, 'GET');
-          if (res && res.success) return res.users;
-          return [];
-      }
-      return allUsers; 
-  }, [dataSource, apiCall, allUsers]);
-
-  // --- SETTINGS & CONFIG ---
-
-  const updateSettings = async (s: GlobalSettings) => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/settings', 'POST', s);
-          if (res && res.success) { setSettings(s); showNotify(t('notification.saved')); return true; }
-          return false;
-      } else {
-          setSettings(s); return true;
-      }
-  };
-
-  const updateDayConfig = async (c: DayConfig) => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/calendar', 'POST', c);
-          if (res && res.success) {
-              setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-              return true;
-          }
-          return false;
-      } else {
-          setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
-          return true;
-      }
-  };
-
-  const removeDayConfig = async (date: string) => {
-      if (dataSource === 'api') {
-          const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
-          if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); return true; }
-          return false;
-      } else {
-          setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
-      }
-  };
-
-  // --- EVENTS ---
-  
-  const updateEventSlot = async (slot: any) => {
-      const newSlots = [...(settings.eventSlots || [])];
-      const idx = newSlots.findIndex(s => s.date === slot.date);
-      if (idx > -1) newSlots[idx] = slot;
-      else newSlots.push(slot);
-      
-      return await updateSettings({ ...settings, eventSlots: newSlots });
-  };
-
-  const removeEventSlot = async (date: string) => {
-      const newSlots = (settings.eventSlots || []).filter(s => s.date !== date);
-      return await updateSettings({ ...settings, eventSlots: newSlots });
-  };
-
-  const notifyEventSubscribers = async (date: string) => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/admin/notify-event', 'POST', { date });
-          if (res && res.success) showNotify(`Notifikace odeslána ${res.count} odběratelům.`);
-          return true;
-      }
-      return false;
-  };
-
-  // --- DISCOUNTS ---
-
-  const addDiscountCode = async (c: DiscountCode) => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/discounts', 'POST', c);
-          if (res && res.success) { setDiscountCodes(prev => [...prev, c]); return true; }
-          return false;
-      } else {
-          setDiscountCodes(prev => [...prev, c]); return true;
-      }
-  };
-
-  const updateDiscountCode = async (c: DiscountCode) => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/discounts', 'POST', c);
-          if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === c.id ? c : x)); return true; }
-          return false;
-      } else {
-          setDiscountCodes(prev => prev.map(x => x.id === c.id ? c : x)); return true;
-      }
-  };
-
-  const deleteDiscountCode = async (id: string) => {
-      if (dataSource === 'api') {
-          const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
-          if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true; }
-          return false;
-      } else {
-          setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
-      }
-  };
-
-  const applyDiscount = (code: string) => {
-      if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
-      const result = calculateDiscountAmountLogic(code, cart, discountCodes, orders);
-      if (result.success && result.discount && result.amount !== undefined) {
-          if (appliedDiscounts.length > 0 && !result.discount.isStackable) return { success: false, error: t('discount.not_stackable') };
-          setAppliedDiscounts([...appliedDiscounts, { code: result.discount.code, amount: result.amount }]);
-          return { success: true };
-      }
-      return { success: false, error: result.error };
-  };
-
-  const removeAppliedDiscount = (code: string) => setAppliedDiscounts(prev => prev.filter(d => d.code !== code));
-  const validateDiscount = (code: string, items: CartItem[]) => calculateDiscountAmountLogic(code, items, discountCodes, orders);
-
-  // --- LOGIC HELPERS ---
-
-  const calculatePackagingFee = (items: CartItem[]) => calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
-
-  const getDailyLoad = (date: string, excludeOrderId?: string) => {
-      const relevantOrders = orders.filter(o => 
-          o.deliveryDate === date && 
-          o.status !== OrderStatus.CANCELLED && 
-          o.status !== OrderStatus.DELIVERED && // EXCLUDE DELIVERED from Active Load
-          o.status !== OrderStatus.NOT_PICKED_UP && // EXCLUDE NOT PICKED UP
-          o.id !== excludeOrderId
-      );
-      return calculateDailyLoad(relevantOrders, products, settings);
-  };
-
-  const checkAvailability = (date: string, items: CartItem[], excludeOrderId?: string): CheckResult => {
-      const today = new Date(); today.setHours(0,0,0,0);
-      const target = new Date(date); target.setHours(0,0,0,0);
-      if (isNaN(target.getTime())) return { allowed: false, reason: 'Invalid Date', status: 'closed' };
-
-      if (target.getTime() < today.getTime()) return { allowed: false, reason: t('error.past'), status: 'past' };
-      
-      const maxLead = items.length > 0 ? Math.max(...items.map(i => Number(i.leadTimeDays) || 0)) : 0;
-      const minDate = new Date(today.getTime()); 
-      minDate.setDate(minDate.getDate() + maxLead);
-      
-      if (target.getTime() < minDate.getTime()) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
-
-      // Day Config Check
-      const config = dayConfigs.find(d => d.date === date);
-      if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
-
-      // Load Check
-      const { load, eventLoad } = getDailyLoad(date, excludeOrderId);
-      
-      // Simulate adding current items
-      items.forEach(item => {
-          const productDef = products.find(p => String(p.id) === String(item.id));
-          const workload = Number(productDef?.workload) || Number(item.workload) || 0;
-          const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
-          const quantity = Number(item.quantity) || 0;
-          
-          const cat = item.category || productDef?.category;
-          const isEvent = !!(item.isEventProduct || productDef?.isEventProduct);
-          
-          if (cat) {
-              if (isEvent) {
-                  eventLoad[cat] = (eventLoad[cat] || 0) + (workload * quantity) + overhead;
-              } else {
-                  load[cat] = (load[cat] || 0) + (workload * quantity) + overhead;
-              }
-          }
-      });
-      
-      // Check limits
-      let anyExceeds = false;
-      const catsToCheck = new Set([...settings.categories.map(c => c.id)]);
-      
-      for(const cat of catsToCheck) {
-          const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
-          if ((load[cat] || 0) > limit) anyExceeds = true; 
-      }
-      
-      if (anyExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
-      
-      // Check Event Slots if event items present
-      const hasEventItems = items.some(i => i.isEventProduct);
-      if (hasEventItems) {
-          const slot = settings.eventSlots?.find(s => s.date === date);
-          if (!slot) return { allowed: false, reason: t('cart.event_only'), status: 'closed' }; 
-          
-          // Check event capacity
-          let eventExceeds = false;
-          for(const cat of catsToCheck) {
-              const limit = slot.capacityOverrides?.[cat] ?? 0;
-              if (limit > 0 && (eventLoad[cat] || 0) > limit) eventExceeds = true;
-          }
-          if (eventExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
-      }
-
-      return { allowed: true, status: 'available' };
-  };
-
-  const getDateStatus = (date: string, items: CartItem[]) => checkAvailability(date, items).status;
-
-  const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
-  
-  const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { 
-      const ex = r.exceptions?.find(e => e.date === d); 
-      return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; 
-  };
-
-  const getPickupPointInfo = (loc: PickupLocation, dateStr: string) => {
-      const ex = loc.exceptions?.find(e => e.date === dateStr);
-      if (ex) return { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true };
-      
-      const day = new Date(dateStr).getDay();
-      const config = loc.openingHours[day];
-      if (!config || !config.isOpen) return { isOpen: false, isException: false };
-      
-      return { isOpen: true, timeStart: config.start, timeEnd: config.end, isException: false };
-  };
-
-  const getAvailableEventDates = (p: Product) => getAvailableEventDatesLogic(p, settings, orders, products);
-  const isEventCapacityAvailable = (p: Product) => getAvailableEventDatesLogic(p, settings, orders, products).length > 0;
-
-  // --- MISC ---
-  const generateInvoice = (o: Order) => `INV-${o.id}`;
-  
-  const printInvoice = async (order: Order, type: 'proforma' | 'final' = 'proforma') => {
-      if (dataSource === 'api') {
+    // --- DATA FETCHING ---
+    const fetchData = async () => {
+        setIsLoading(true);
         try {
-            const token = localStorage.getItem('auth_token');
-            const res = await fetch(getFullApiUrl(`/api/orders/${order.id}/invoice?type=${type}`), {
-                headers: {
-                    'Authorization': `Bearer ${token}`
+          if (dataSource === 'api') {
+            setAllUsers([]); setProducts([]); setOrders([]); setIngredients([]); setDiscountCodes([]); setDayConfigs([]); setRides([]);
+            setSettings(EMPTY_SETTINGS);
+            
+            const data = await apiCall('/api/bootstrap', 'GET');
+            
+            if (data) {
+                setAllUsers(data.users || []);
+                setProducts(data.products || []);
+                setOrders(data.orders || []);
+                if (data.settings) {
+                   const dbSettings = { ...DEFAULT_SETTINGS, ...data.settings };
+                   if (!dbSettings.categories) dbSettings.categories = DEFAULT_SETTINGS.categories;
+                   if (!dbSettings.pickupLocations) dbSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
+                   setSettings(dbSettings); 
+                }
+                setDiscountCodes(data.discountCodes || []);
+                setDayConfigs(data.dayConfigs || []);
+                setRides(data.rides || []);
+                setIngredients(data.ingredients || []);
+                if (data.vapidPublicKey) setVapidPublicKey(data.vapidPublicKey);
+            }
+          } else {
+            // @ts-ignore
+            const isProd = import.meta?.env?.PROD;
+            const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            if (isProd && !isLocalhost) { setDbConnectionError(true); return; }
+  
+            // LOCAL MODE
+            // Force merge INITIAL_USERS to ensure mock login credentials are correct and fresh
+            const storedUsers = loadFromStorage<User[]>('db_users', []);
+            const mergedUsers = [...storedUsers];
+            
+            INITIAL_USERS.forEach(initUser => {
+                const idx = mergedUsers.findIndex(u => u.id === initUser.id);
+                if (idx >= 0) {
+                    // Overwrite existing to ensure correct password hash and roles
+                    mergedUsers[idx] = initUser;
+                } else {
+                    mergedUsers.push(initUser);
                 }
             });
-            
-            if (!res.ok) throw new Error('Download failed');
-            
-            const blob = await res.blob();
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `faktura_${order.id}_${type}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-        } catch (e) {
-            console.error(e);
-            showNotify("Chyba při stahování faktury", "error");
-        }
-      } else {
-        // Local fallback (simple jsPDF for demo)
-        const doc = new jsPDF();
-        doc.text(`Faktura ${type} - ${order.id}`, 10, 10);
-        doc.save(`faktura_${order.id}_${type}.pdf`);
-      }
-  };
-  
-  const generateCzIban = calculateCzIban;
+            setAllUsers(mergedUsers);
 
-  // --- PWA ---
-  const updatePwa = () => {
-      if (swRegistration && swRegistration.waiting) {
-          swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
-          setIsPwaUpdateAvailable(false);
-          window.location.reload();
-      }
-  };
-
-  // --- PUSH ---
-  const subscribeToPush = async () => {
-      if (!swRegistration || !vapidPublicKey) return;
-      try {
-          const sub = await swRegistration.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: vapidPublicKey
-          });
-          setPushSubscription(sub);
-          if (dataSource === 'api') {
-              await apiCall('/api/notifications/subscribe', 'POST', { subscription: sub });
+            setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
+            setOrders(loadFromStorage('db_orders', MOCK_ORDERS));
+            setSettings(loadFromStorage('db_settings', DEFAULT_SETTINGS));
+            setDiscountCodes(loadFromStorage('db_discounts', []));
+            setDayConfigs(loadFromStorage('db_dayconfigs', []));
+            setRides(loadFromStorage('db_rides', []));
+            setIngredients(loadFromStorage('db_ingredients', []));
+            
+            showNotify("Přepnuto na lokální paměť (Mock Data).", 'success');
           }
-      } catch (e) {
-          console.error("Push subscribe failed", e);
-      }
-  };
+        } catch (err: any) {
+          console.error("Fetch Data Error", err);
+          setDbConnectionError(true);
+        } finally {
+          setIsLoading(false);
+          setIsInitialized(true);
+        }
+    };
 
-  const unsubscribeFromPush = async () => {
-      if (!pushSubscription) return;
-      await pushSubscription.unsubscribe();
-      setPushSubscription(null);
-      if (dataSource === 'api') {
-          await apiCall('/api/notifications/unsubscribe', 'POST', { endpoint: pushSubscription.endpoint });
-      }
-  };
+    const [isInitialized, setIsInitialized] = useState(false);
 
-  // --- IMPORT ---
-  const importDatabase = async (d: BackupData, s: any): Promise<ImportResult> => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/admin/import', 'POST', { data: d, selection: s });
-          if (res && res.success) { await fetchData(); return { success: true }; }
-          return { success: false, message: res?.error };
-      } else {
-          return { success: true };
-      }
-  };
+    useEffect(() => { fetchData(); }, [dataSource]);
 
-  const refreshData = async () => {
-      await fetchData();
-  };
-  
-  const uploadImage = async (base64: string, name: string): Promise<string> => {
-      if (dataSource === 'api') {
-          const res = await apiCall('/api/admin/upload', 'POST', { image: base64, name });
-          if (res && res.success) return res.url;
-          throw new Error(res?.error || 'Upload failed');
-      }
-      return base64;
-  };
+    useEffect(() => {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then(registration => {
+                setSwRegistration(registration);
+                registration.pushManager.getSubscription().then(sub => {
+                    setPushSubscription(sub);
+                    if (sub && user && dataSource === 'api') {
+                        apiCall('/api/notifications/subscribe', 'POST', { subscription: sub }).catch(e => console.error(e));
+                    }
+                });
+            });
+        }
+    }, [user, dataSource, apiCall]);
 
-  return (
-    <StoreContext.Provider value={{
-      dataSource, setDataSource, isLoading, isOperationPending, dbConnectionError,
-      isPreviewEnvironment, 
-      language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart,
-      user, allUsers, login, logout, register, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
-      refreshUser,
-      orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration: () => ({ valid: true, invalidCodes: [] }), searchOrders,
-      products, addProduct, updateProduct, deleteProduct, searchProducts,
-      discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
-      settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig,
-      updateEventSlot, removeEventSlot, notifyEventSubscribers,
-      rides, updateRide, deleteRide, printRouteSheet,
-      checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee,
-      getAvailableEventDates, isEventCapacityAvailable,
-      t, tData, generateInvoice, printInvoice, generateCzIban, removeDiacritics, formatDate, getImageUrl, getFullApiUrl, uploadImage,
-      importDatabase, refreshData, globalNotification, dismissNotification, showNotify,
-      isAuthModalOpen, openAuthModal, closeAuthModal,
-      cookieSettings, saveCookieSettings,
-      isPwa, isPwaUpdateAvailable, updatePwa, appVersion: APP_VERSION,
-      pushSubscription, subscribeToPush, unsubscribeFromPush, isPushSupported,
-      searchUsers
-    }}>
-      {children}
-    </StoreContext.Provider>
-  );
+    // Storage Sync
+    useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
+    useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
+    useEffect(() => {
+        if (dataSource === 'local' && isInitialized) {
+            localStorage.setItem('db_users', JSON.stringify(allUsers));
+            localStorage.setItem('db_orders', JSON.stringify(orders));
+            localStorage.setItem('db_products', JSON.stringify(products));
+            localStorage.setItem('db_discounts', JSON.stringify(discountCodes));
+            localStorage.setItem('db_settings', JSON.stringify(settings));
+            localStorage.setItem('db_dayconfigs', JSON.stringify(dayConfigs));
+            localStorage.setItem('db_rides', JSON.stringify(rides));
+            localStorage.setItem('db_ingredients', JSON.stringify(ingredients));
+        }
+    }, [allUsers, orders, products, discountCodes, settings, dayConfigs, rides, ingredients, dataSource, isInitialized]);
+
+    // --- CART DISCOUNTS ---
+    useEffect(() => {
+        if (appliedDiscounts.length === 0) return;
+        let updatedDiscounts: AppliedDiscount[] = [];
+        let removedCodes: string[] = [];
+        
+        for (const applied of appliedDiscounts) {
+          const calculation = calculateDiscountAmountLogic(applied.code, cart, discountCodes, orders);
+          if (calculation.success && calculation.amount !== undefined) {
+            updatedDiscounts.push({ code: applied.code, amount: calculation.amount });
+          } else {
+            removedCodes.push(applied.code);
+          }
+        }
+        const isDifferent = JSON.stringify(updatedDiscounts) !== JSON.stringify(appliedDiscounts);
+        if (isDifferent) {
+          setAppliedDiscounts(updatedDiscounts);
+          if (removedCodes.length > 0) showNotify(`${t('discount.invalid')}: ${removedCodes.join(', ')}`, 'error');
+        }
+    }, [cart]);
+
+    // --- DERIVED LOGIC ---
+    const getImageUrl = (path?: string, size: 'original' | 'medium' | 'small' = 'original') => {
+        if (!path) return '';
+        if (path.startsWith('data:') || path.startsWith('http')) return path;
+        if (size !== 'original') {
+            const parts = path.split('.');
+            if (parts.length > 1) {
+                const ext = parts.pop();
+                const base = parts.join('.');
+                const newPath = `${base}-${size}.webp`;
+                return getFullApiUrl(newPath);
+            }
+        }
+        return getFullApiUrl(path);
+    };
+
+    const uploadImage = async (base64: string, name: string): Promise<string> => {
+        if (dataSource === 'api') {
+            const res = await apiCall('/api/admin/upload', 'POST', { image: base64, name });
+            if (res && res.success) return res.url;
+            throw new Error(res?.error || 'Upload failed');
+        }
+        return base64;
+    };
+
+    const importDatabase = async (d: BackupData, s: any): Promise<ImportResult> => {
+        if (dataSource === 'api') {
+            const res = await apiCall('/api/admin/import', 'POST', { data: d, selection: s });
+            if (res && res.success) { await fetchData(); return { success: true }; }
+            return { success: false, message: res?.error };
+        } else {
+            return { success: true };
+        }
+    };
+
+    // Push
+    const updatePwa = () => { if (swRegistration && swRegistration.waiting) { swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' }); setIsPwaUpdateAvailable(false); window.location.reload(); } };
+    const subscribeToPush = async () => { if (!swRegistration || !vapidPublicKey) return; try { const sub = await swRegistration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidPublicKey }); setPushSubscription(sub); if (dataSource === 'api') await apiCall('/api/notifications/subscribe', 'POST', { subscription: sub }); } catch (e) { console.error("Push subscribe failed", e); } };
+    const unsubscribeFromPush = async () => { if (!pushSubscription) return; await pushSubscription.unsubscribe(); setPushSubscription(null); if (dataSource === 'api') await apiCall('/api/notifications/unsubscribe', 'POST', { endpoint: pushSubscription.endpoint }); };
+
+    // --- MISSING FUNCTIONS IMPLEMENTATION ---
+
+    const getDailyLoad = useCallback((date: string, excludeOrderId?: string) => {
+        const relevantOrders = orders.filter(o => 
+            o.deliveryDate === date && 
+            o.status !== OrderStatus.CANCELLED &&
+            o.status !== OrderStatus.DELIVERED &&
+            o.status !== OrderStatus.NOT_PICKED_UP && 
+            o.id !== excludeOrderId
+        );
+        return calculateDailyLoad(relevantOrders, products, settings);
+    }, [orders, products, settings]);
+
+    const checkAvailability = useCallback((date: string, cartItems: CartItem[], excludeOrderId?: string): CheckResult => {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
+        
+        if (targetDate < today) return { allowed: false, reason: t('error.past'), status: 'past' };
+        
+        const maxLeadTime = cartItems.length > 0 ? Math.max(...cartItems.map(i => i.leadTimeDays || 0)) : 0;
+        const minPossibleDate = new Date(today); 
+        minPossibleDate.setDate(minPossibleDate.getDate() + maxLeadTime);
+        
+        if (targetDate < minPossibleDate) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
+
+        const config = dayConfigs.find(d => d.date === date);
+        if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
+
+        const { load, eventLoad } = getDailyLoad(date, excludeOrderId);
+        
+        const cartLoad: Record<string, number> = {};
+        const cartEventLoad: Record<string, number> = {};
+        
+        cartItems.forEach(item => {
+             const productDef = products.find(p => String(p.id) === String(item.id)) || item;
+             const workload = Number(productDef.workload) || 0;
+             const overhead = Number(productDef.workloadOverhead) || 0;
+             const cat = productDef.category || 'unknown';
+             const isEvent = !!productDef.isEventProduct;
+             
+             if (isEvent) {
+                 cartEventLoad[cat] = (cartEventLoad[cat] || 0) + (workload * item.quantity);
+                 cartEventLoad[cat] += overhead; 
+             } else {
+                 cartLoad[cat] = (cartLoad[cat] || 0) + (workload * item.quantity);
+                 cartLoad[cat] += overhead;
+             }
+        });
+
+        for (const cat of settings.categories) {
+            const limit = config?.capacityOverrides?.[cat.id] ?? settings.defaultCapacities[cat.id] ?? 0;
+            const current = load[cat.id] || 0;
+            const added = cartLoad[cat.id] || 0;
+            if ((current + added) > limit) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
+        }
+        
+        const eventSlot = settings.eventSlots?.find(s => s.date === date);
+        if (Object.keys(cartEventLoad).length > 0) {
+             if (!eventSlot) return { allowed: false, reason: t('cart.event_only'), status: 'closed' };
+             for (const catId in cartEventLoad) {
+                 const limit = eventSlot.capacityOverrides?.[catId] ?? 0;
+                 const current = eventLoad[catId] || 0;
+                 const added = cartEventLoad[catId] || 0;
+                 if ((current + added) > limit) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
+             }
+        }
+
+        return { allowed: true, status: 'available' };
+    }, [dayConfigs, getDailyLoad, settings, products, t]);
+
+    const getDateStatus = (date: string, items: CartItem[]) => checkAvailability(date, items).status;
+
+    const getDeliveryRegion = (zip: string) => {
+        const cleanZip = zip.replace(/\s/g, '');
+        return settings.deliveryRegions.find(r => r.enabled && r.zips.includes(cleanZip));
+    };
+
+    const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { 
+        const ex = r.exceptions?.find(e => e.date === d); 
+        if (ex) return { 
+            isOpen: ex.isOpen, 
+            timeStart: ex.deliveryTimeStart, 
+            timeEnd: ex.deliveryTimeEnd, 
+            isException: true,
+            reason: ex.isOpen ? t('admin.exception_open') : t('admin.exception_closed')
+        };
+        return { 
+            isOpen: true, 
+            timeStart: r.deliveryTimeStart, 
+            timeEnd: r.deliveryTimeEnd, 
+            isException: false 
+        }; 
+    };
+
+    const getPickupPointInfo = (location: PickupLocation, dateStr: string) => {
+        const ex = location.exceptions?.find(e => e.date === dateStr);
+        if (ex) return {
+            isOpen: ex.isOpen,
+            timeStart: ex.deliveryTimeStart,
+            timeEnd: ex.deliveryTimeEnd,
+            isException: true,
+            reason: ex.isOpen ? t('admin.exception_open') : t('admin.exception_closed')
+        };
+
+        const date = new Date(dateStr);
+        const dayOfWeek = date.getDay();
+        const config = location.openingHours[dayOfWeek];
+
+        if (!config || !config.isOpen) return { isOpen: false, isException: false, reason: t('error.day_closed') };
+
+        return {
+            isOpen: true,
+            timeStart: config.start,
+            timeEnd: config.end,
+            isException: false
+        };
+    };
+
+    const calculatePackagingFee = (items: CartItem[]) => {
+        return calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
+    };
+
+    const applyDiscount = (code: string) => {
+        if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
+        const res = calculateDiscountAmountLogic(code, cart, discountCodes, orders);
+        if (res.success && res.amount !== undefined) {
+            if (appliedDiscounts.length > 0 && !res.discount?.isStackable) return { success: false, error: t('discount.not_stackable') };
+            const existingNonStackable = appliedDiscounts.some(ad => {
+                const d = discountCodes.find(dc => dc.code === ad.code);
+                return d && !d.isStackable;
+            });
+            if (existingNonStackable) return { success: false, error: t('discount.not_stackable') };
+
+            setAppliedDiscounts(prev => [...prev, { code: res.discount!.code, amount: res.amount! }]);
+            return { success: true };
+        }
+        return { success: false, error: res.error || t('discount.invalid') };
+    };
+
+    const removeAppliedDiscount = (code: string) => {
+        setAppliedDiscounts(prev => prev.filter(d => d.code !== code));
+    };
+
+    const validateDiscount = (code: string, currentCart: CartItem[]) => {
+        return calculateDiscountAmountLogic(code, currentCart, discountCodes, orders);
+    };
+
+    const getAvailableEventDates = (product: Product) => {
+        return getAvailableEventDatesLogic(product, settings, orders, products);
+    };
+
+    const isEventCapacityAvailable = (product: Product) => {
+        const dates = getAvailableEventDates(product);
+        return dates.length > 0;
+    };
+
+    const printInvoice = async (order: Order, type: 'proforma' | 'final' = 'proforma') => {
+        if (dataSource === 'api') {
+            try {
+                const token = localStorage.getItem('auth_token');
+                const response = await fetch(getFullApiUrl(`/api/orders/${order.id}/invoice?type=${type}`), {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to download invoice');
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `faktura_${order.id}_${type}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            } catch (e) {
+                showNotify('Chyba při stahování faktury.', 'error');
+            }
+        } else {
+            alert('Tisk faktur je dostupný v API režimu.');
+        }
+    };
+
+    const searchUsers = useCallback(async (filters: any) => {
+        if (dataSource === 'api') {
+            const q = new URLSearchParams(filters).toString();
+            const res = await apiCall(`/api/users?${q}`, 'GET');
+            if (res && res.success) return res.users;
+            return [];
+        } else {
+            return allUsers.filter(u => {
+                if (filters.search) {
+                    const term = filters.search.toLowerCase();
+                    if (!u.name.toLowerCase().includes(term) && !u.email.toLowerCase().includes(term)) return false;
+                }
+                return true;
+            });
+        }
+    }, [dataSource, apiCall, allUsers]);
+
+    return (
+        <StoreContext.Provider value={{
+            dataSource, setDataSource, isLoading, isOperationPending, dbConnectionError,
+            isPreviewEnvironment: dataSource === 'local',
+            language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart,
+            user, allUsers, refreshUser, login, register, logout, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
+            orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration: () => ({ valid: true, invalidCodes: [] }), searchOrders,
+            products, addProduct, updateProduct, deleteProduct, searchProducts,
+            ingredients, addIngredient, updateIngredient, deleteIngredient,
+            discountCodes, appliedDiscounts, addDiscountCode, updateDiscountCode, deleteDiscountCode, applyDiscount, removeAppliedDiscount, validateDiscount,
+            settings, updateSettings, dayConfigs, updateDayConfig, removeDayConfig, updateEventSlot, removeEventSlot, notifyEventSubscribers,
+            rides, updateRide, deleteRide, printRouteSheet,
+            checkAvailability, getDateStatus, getDailyLoad, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee,
+            getAvailableEventDates, isEventCapacityAvailable,
+            t, tData: (item, field) => language === Language.CS ? item[field] : (item.translations?.[language]?.[field] || item[field]), 
+            generateInvoice: (o) => `INV-${o.id}`, printInvoice, generateCzIban, removeDiacritics, formatDate, getImageUrl, getFullApiUrl, uploadImage,
+            importDatabase, refreshData: fetchData, globalNotification, dismissNotification: () => setGlobalNotification(null), showNotify,
+            isAuthModalOpen, openAuthModal: () => setIsAuthModalOpen(true), closeAuthModal: () => setIsAuthModalOpen(false),
+            cookieSettings, saveCookieSettings: (s) => { setCookieSettings(s); localStorage.setItem('cookie_settings', JSON.stringify(s)); },
+            isPwa, isPwaUpdateAvailable, updatePwa, appVersion: APP_VERSION,
+            pushSubscription, subscribeToPush, unsubscribeFromPush, isPushSupported,
+            searchUsers
+        }}>
+            {children}
+        </StoreContext.Provider>
+    );
 };
 
 export const useStore = () => {

@@ -1,3 +1,4 @@
+
 import express from 'express';
 import { withDb, parseJsonCol } from '../db.js';
 import jwt from '../services/jwt.js';
@@ -52,7 +53,8 @@ router.get('/', withDb(async (req, res, db) => {
         settings: null,
         discountCodes: [],
         dayConfigs: [],
-        rides: [], // ADDED THIS
+        rides: [], 
+        ingredients: [], // NEW
         vapidPublicKey: process.env.VITE_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY
     };
 
@@ -94,6 +96,12 @@ router.get('/', withDb(async (req, res, db) => {
             if (r.final_invoice_date) o.finalInvoiceDate = r.final_invoice_date;
             return o;
         });
+        
+        // Ingredients (Admin primarily, but maybe useful to have)
+        if (isAdmin) {
+             const [iRows] = await db.query('SELECT full_json FROM ingredients');
+             response.ingredients = iRows.map(r => parseJsonCol(r, 'full_json'));
+        }
 
         // Discount Codes (Admin only)
         if (isAdmin) {
