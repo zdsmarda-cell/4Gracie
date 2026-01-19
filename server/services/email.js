@@ -28,9 +28,25 @@ const getImgUrl = (path) => {
     // Pokud je to base64 nebo absolutní URL, vracíme rovnou
     if (path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) return path;
     
-    // Získání base URL bez koncového lomítka
-    // Priorita: APP_URL (pro produkci/email), VITE_API_URL, localhost fallback
-    let baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
+    let baseUrl = process.env.APP_URL;
+
+    // Pokud je nastaveno APP_URL a PORT, zkusíme port připojit (pokud tam už není)
+    // Řeší situaci: APP_URL=https://eshop.4gracie.cz, PORT=3000 -> https://eshop.4gracie.cz:3000
+    if (baseUrl && process.env.PORT) {
+        if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+        
+        // Přidáme port pouze pokud tam není a pokud to není standardní port 80/443 (což v Node většinou není)
+        if (!baseUrl.includes(`:${process.env.PORT}`)) {
+            baseUrl = `${baseUrl}:${process.env.PORT}`;
+        }
+    }
+
+    // Fallbacky, pokud APP_URL není nastaveno
+    if (!baseUrl) {
+        baseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
+    }
+
+    // Ujištění, že na konci není lomítko
     if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
     
     // Přidání lomítka na začátek cesty, pokud chybí
