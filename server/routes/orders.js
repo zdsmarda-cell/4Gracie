@@ -13,24 +13,36 @@ const STATUS_TRANSLATIONS = {
     de: { created: 'Erstellt', confirmed: 'Bestätigt', preparing: 'In Vorbereitung', ready: 'Bereit', on_way: 'Unterwegs', delivered: 'Geliefert', not_picked_up: 'Nicht abgeholt', cancelled: 'Storniert' }
 };
 
-// Get Orders - Protected (Any logged in user can try, ideally filter by ID for non-admins, but simplistic auth for now)
+// Get Orders - Protected
 router.get('/', authenticateToken, withDb(async (req, res, db) => {
-    const { id, dateFrom, dateTo, userId, status, customer, isEvent, isPaid, page = 1, limit = 50 } = req.query;
+    const { 
+        id, dateFrom, dateTo, createdFrom, createdTo, 
+        userId, status, customer, isEvent, isPaid, 
+        sort, order, page = 1, limit = 50 
+    } = req.query;
     
-    // Security: If user is not admin, FORCE userId filter to their own ID
     let safeUserId = userId;
     if (req.user.role !== 'admin') {
         safeUserId = req.user.id;
     }
 
     const offset = (Number(page) - 1) * Number(limit);
-    let query = 'SELECT full_json, final_invoice_date FROM orders WHERE 1=1';
+    let query = 'SELECT full_json, final_invoice_date, created_at FROM orders WHERE 1=1';
     const params = [];
+    
+    // ID
     if (id) { query += ' AND id LIKE ?'; params.push(`%${id}%`); }
     if (safeUserId) { query += ' AND user_id = ?'; params.push(safeUserId); }
+    
+    // Delivery Date
     if (dateFrom) { query += ' AND delivery_date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND delivery_date <= ?'; params.push(dateTo); }
     
+    // Creation Date
+    if (createdFrom) { query += ' AND created_at >= ?'; params.push(`${createdFrom} 00:00:00`); }
+    if (createdTo) { query += ' AND created_at <= ?'; params.push(`${createdTo} 23:59:59`); }
+    
+    // Status
     if (status) { 
         const statuses = status.split(',').filter(s => s.trim() !== '');
         if (statuses.length > 0) {
@@ -39,30 +51,62 @@ router.get('/', authenticateToken, withDb(async (req, res, db) => {
         }
     }
     
+    // Payment
     if (isPaid === 'yes') { query += ' AND is_paid = 1'; }
     if (isPaid === 'no') { query += ' AND is_paid = 0'; }
     
+    // Customer Name
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
     
+    // Event Flag (JSON Search)
     if (isEvent === 'yes') { 
         query += ` AND full_json LIKE '%"isEventProduct":true%'`; 
     } else if (isEvent === 'no') {
         query += ` AND full_json NOT LIKE '%"isEventProduct":true%'`; 
     }
     
-    const [cnt] = await db.query(query.replace('SELECT full_json, final_invoice_date', 'SELECT COUNT(*) as t'), params);
-    query += ' ORDER BY delivery_date DESC, created_at DESC LIMIT ? OFFSET ?';
+    // Count Query
+    const [cnt] = await db.query(query.replace('SELECT full_json, final_invoice_date, created_at', 'SELECT COUNT(*) as t'), params);
+    
+    // Sorting
+    let orderByClause = 'ORDER BY delivery_date DESC, created_at DESC'; // Default
+    if (sort) {
+        const direction = order === 'asc' ? 'ASC' : 'DESC';
+        switch (sort) {
+            case 'id': orderByClause = `ORDER BY id ${direction}`; break;
+            case 'created': orderByClause = `ORDER BY created_at ${direction}`; break;
+            case 'deliveryDate': orderByClause = `ORDER BY delivery_date ${direction}`; break;
+            case 'customer': orderByClause = `ORDER BY user_name ${direction}`; break;
+            case 'price': orderByClause = `ORDER BY total_price ${direction}`; break;
+            case 'status': orderByClause = `ORDER BY status ${direction}`; break;
+            default: break; 
+        }
+    }
+    
+    query += ` ${orderByClause} LIMIT ? OFFSET ?`;
     params.push(Number(limit), Number(offset));
     
     const [rows] = await db.query(query, params);
-    res.json({ success: true, orders: rows.map(r => { const j = parseJsonCol(r, 'full_json'); if(r.final_invoice_date) j.finalInvoiceDate = r.final_invoice_date; return j; }), total: cnt[0].t, page: Number(page), pages: Math.ceil(cnt[0].t / Number(limit)) });
+    
+    res.json({ 
+        success: true, 
+        orders: rows.map(r => { 
+            const j = parseJsonCol(r, 'full_json'); 
+            if(r.final_invoice_date) j.finalInvoiceDate = r.final_invoice_date; 
+            // Ensure createdAt from DB column overrides JSON if exists to be precise
+            if(r.created_at) j.createdAt = r.created_at;
+            return j; 
+        }), 
+        total: cnt[0].t, 
+        page: Number(page), 
+        pages: Math.ceil(cnt[0].t / Number(limit)) 
+    });
 }));
 
 // Create/Update Order - Protected
 router.post('/', authenticateToken, withDb(async (req, res, db) => {
     const order = req.body;
     
-    // Security check: User can only edit own orders unless admin
     if (req.user.role !== 'admin' && order.userId !== req.user.id) {
         return res.status(403).json({ error: 'Nemáte oprávnění upravovat cizí objednávky.' });
     }
@@ -133,7 +177,6 @@ router.post('/', authenticateToken, withDb(async (req, res, db) => {
 
 // Status Updates - Admin/Driver Only
 router.put('/status', authenticateToken, withDb(async (req, res, db) => {
-    // Drivers can typically mark delivered, Admins everything. For simplicity, allow authenticated users with roles.
     if (req.user.role === 'customer') {
         return res.status(403).json({ error: 'Zákazníci nemohou měnit stav objednávky.' });
     }
@@ -151,7 +194,6 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
 
     const [orders] = await db.query('SELECT id, user_id, full_json, final_invoice_date FROM orders WHERE id IN (?)', [ids]);
     
-    // Check if webpush is configured
     const canPush = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY;
     if (canPush) {
         try {
@@ -185,11 +227,9 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
 
         await db.query('UPDATE orders SET full_json = ? WHERE id = ?', [JSON.stringify(json), o.id]);
 
-        // --- PUSH NOTIFICATION LOGIC ---
         if (sendPush && canPush && o.user_id) {
             const [subs] = await db.query('SELECT * FROM push_subscriptions WHERE user_id = ?', [o.user_id]);
             if (subs.length > 0) {
-                // Determine language and translate status
                 const lang = json.language || 'cs';
                 const translatedStatus = STATUS_TRANSLATIONS[lang]?.[status] || status;
                 
@@ -209,7 +249,6 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
                             keys: { p256dh: sub.p256dh, auth: sub.auth }
                         }, payload);
 
-                        // LOG SUCCESS TO DB
                         await db.query(
                             'INSERT INTO push_logs (user_id, title, body, status) VALUES (?, ?, ?, ?)',
                             [o.user_id, pushTitle, pushBody, 'sent']
@@ -219,7 +258,6 @@ router.put('/status', authenticateToken, withDb(async (req, res, db) => {
                         const errMsg = err.body ? `${err.statusCode}: ${err.body}` : (err.message || 'Unknown error');
                         console.error(`Push failed for ${o.id}:`, errMsg);
 
-                        // LOG ERROR TO DB
                         await db.query(
                             'INSERT INTO push_logs (user_id, title, body, status, error_message) VALUES (?, ?, ?, ?, ?)',
                             [o.user_id, pushTitle, pushBody, 'error', errMsg]

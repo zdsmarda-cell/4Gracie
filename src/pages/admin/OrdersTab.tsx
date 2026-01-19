@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Language, PaymentMethod } from '../../types';
 import { Pagination } from '../../components/Pagination';
 import { MultiSelect } from '../../components/MultiSelect';
-import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle } from 'lucide-react';
+import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
 interface OrdersTabProps {
@@ -89,15 +90,21 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     const [limit, setLimit] = useState(50);
     const [totalPages, setTotalPages] = useState(1);
 
+    // Filters
     const [filters, setFilters] = useState({
         id: '',
         dateFrom: initialDate || '',
         dateTo: initialDate || '',
+        createdFrom: '',
+        createdTo: '',
         status: '', 
         customer: '',
         isEvent: initialEventOnly ? 'yes' : 'all', 
         isPaid: 'all'
     });
+
+    // Sorting State: key + direction
+    const [sort, setSort] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
 
     const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
     const [notifyCustomer, setNotifyCustomer] = useState(false);
@@ -139,49 +146,22 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     const loadData = useCallback(async () => {
         setIsLoadingOrders(true);
         try {
-            if (dataSource === 'local') {
-                let filtered = orders.filter(o => {
-                    if (filters.id && !o.id.includes(filters.id)) return false;
-                    if (filters.dateFrom && o.deliveryDate < filters.dateFrom) return false;
-                    if (filters.dateTo && o.deliveryDate > filters.dateTo) return false;
-                    if (filters.customer && !o.userName?.toLowerCase().includes(filters.customer.toLowerCase())) return false;
-                    if (filters.status && !filters.status.split(',').includes(o.status)) return false;
-                    if (filters.isPaid !== 'all') {
-                        const isPaidBool = filters.isPaid === 'yes';
-                        if (o.isPaid !== isPaidBool) return false;
-                    }
-                    if (filters.isEvent !== 'all') {
-                        const hasEvent = o.items.some(i => i.isEventProduct);
-                        if (filters.isEvent === 'yes' && !hasEvent) return false;
-                        if (filters.isEvent === 'no' && hasEvent) return false;
-                    }
-                    return true;
-                });
-                
-                filtered.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-                
-                const start = (currentPage - 1) * limit;
-                const end = start + limit;
-                setDisplayOrders(filtered.slice(start, end));
-                setTotalRecords(filtered.length);
-                setTotalPages(Math.ceil(filtered.length / limit));
-                
-            } else {
-                const res = await searchOrders({
-                    page: currentPage,
-                    limit: limit,
-                    ...filters
-                });
-                setDisplayOrders(res.orders);
-                setTotalRecords(res.total);
-                setTotalPages(res.pages);
-            }
+            const res = await searchOrders({
+                page: currentPage,
+                limit: limit,
+                sort: sort?.key,
+                order: sort?.direction,
+                ...filters
+            });
+            setDisplayOrders(res.orders);
+            setTotalRecords(res.total);
+            setTotalPages(res.pages);
         } catch (error) {
             console.error("LoadData Error:", error);
         } finally {
             setIsLoadingOrders(false);
         }
-    }, [currentPage, limit, filters, searchOrders, dataSource, orders]);
+    }, [currentPage, limit, filters, sort, searchOrders]);
 
     useEffect(() => {
         loadData();
@@ -190,6 +170,28 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     const handleFilterChange = (key: string, value: string) => {
         setFilters(prev => ({ ...prev, [key]: value }));
         setCurrentPage(1);
+    };
+
+    // 3-state sort handler
+    const handleSort = (key: string) => {
+        setSort(prev => {
+            if (prev?.key === key) {
+                // If currently DESC, switch to ASC
+                if (prev.direction === 'desc') return { key, direction: 'asc' };
+                // If currently ASC, remove sort
+                return null; 
+            }
+            // Default first click: DESC
+            return { key, direction: 'desc' };
+        });
+        setCurrentPage(1);
+    };
+
+    const getSortIcon = (key: string) => {
+        if (sort?.key !== key) return <ArrowUpDown size={14} className="text-gray-300 ml-1 inline" />;
+        return sort.direction === 'asc' 
+            ? <ArrowUp size={14} className="text-primary ml-1 inline" />
+            : <ArrowDown size={14} className="text-primary ml-1 inline" />;
     };
 
     const handleBulkStatusChangeRequest = (status: OrderStatus) => {
@@ -380,10 +382,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
             {/* Filter Bar */}
             <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">ID</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={filters.id} onChange={e => handleFilterChange('id', e.target.value)} /></div>
-                <div><label className="text-xs font-bold text-gray-400 block mb-1">Datum Od</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateFrom} onChange={e => handleFilterChange('dateFrom', e.target.value)} /></div>
-                <div><label className="text-xs font-bold text-gray-400 block mb-1">Datum Do</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateTo} onChange={e => handleFilterChange('dateTo', e.target.value)} /></div>
+                <div><label className="text-xs font-bold text-gray-400 block mb-1">Dodání Od</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateFrom} onChange={e => handleFilterChange('dateFrom', e.target.value)} /></div>
+                <div><label className="text-xs font-bold text-gray-400 block mb-1">Dodání Do</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateTo} onChange={e => handleFilterChange('dateTo', e.target.value)} /></div>
+                <div><label className="text-xs font-bold text-gray-400 block mb-1">Vytvořeno Od</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.createdFrom} onChange={e => handleFilterChange('createdFrom', e.target.value)} /></div>
+                <div><label className="text-xs font-bold text-gray-400 block mb-1">Vytvořeno Do</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.createdTo} onChange={e => handleFilterChange('createdTo', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={filters.customer} onChange={e => handleFilterChange('customer', e.target.value)} /></div>
-                <div>
+                <div className="md:col-span-2">
                     <MultiSelect 
                         label="Stav"
                         options={statusOptions}
@@ -391,10 +395,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                         onChange={(values) => handleFilterChange('status', values.join(','))}
                     />
                 </div>
-                <div className="flex items-end gap-2">
+                <div className="flex items-end gap-2 md:col-span-4 justify-end">
                     <button onClick={() => {
-                        setFilters({ id: '', dateFrom: '', dateTo: '', status: '', customer: '', isEvent: 'all', isPaid: 'all' });
+                        setFilters({ id: '', dateFrom: '', dateTo: '', createdFrom: '', createdTo: '', status: '', customer: '', isEvent: 'all', isPaid: 'all' });
                         setCurrentPage(1);
+                        setSort(null);
                         if(onClearFilters) onClearFilters();
                     }} className="text-xs text-red-500 hover:text-red-700 font-bold flex items-center mb-2">
                         <X size={14} className="mr-1"/> Zrušit
@@ -407,23 +412,45 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                     <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
                         <tr>
                             <th className="px-6 py-4 text-center"><input type="checkbox" onChange={e => setSelectedOrders(e.target.checked ? displayOrders.map(o => o.id) : [])} checked={selectedOrders.length === displayOrders.length && displayOrders.length > 0} /></th>
-                            <th className="px-6 py-4 text-left">{t('filter.id')}</th>
-                            <th className="px-6 py-4 text-left">{t('common.date')}</th>
-                            <th className="px-6 py-4 text-left">{t('filter.customer')}</th>
-                            <th className="px-6 py-4 text-left">{t('common.price')} (Kč)</th>
+                            
+                            <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('id')}>
+                                {t('filter.id')} {getSortIcon('id')}
+                            </th>
+                            
+                            <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('created')}>
+                                Vytvořeno {getSortIcon('created')}
+                            </th>
+
+                            <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('deliveryDate')}>
+                                {t('common.date')} {getSortIcon('deliveryDate')}
+                            </th>
+                            
+                            <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('customer')}>
+                                {t('filter.customer')} {getSortIcon('customer')}
+                            </th>
+                            
+                            <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('price')}>
+                                {t('common.price')} (Kč) {getSortIcon('price')}
+                            </th>
+                            
                             <th className="px-6 py-4 text-left">{t('filter.payment')}</th>
-                            <th className="px-6 py-4 text-left">{t('filter.status')}</th>
+                            
+                            <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('status')}>
+                                {t('filter.status')} {getSortIcon('status')}
+                            </th>
+                            
                             <th className="px-6 py-4 text-right">{t('common.actions')}</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y text-[11px]">
                         {isLoadingOrders ? (
-                            <tr><td colSpan={8} className="p-8 text-center text-gray-400">Načítám data...</td></tr>
+                            <tr><td colSpan={9} className="p-8 text-center text-gray-400">Načítám data...</td></tr>
                         ) : (
                             displayOrders.map(order => (
                                 <tr key={order.id} className="hover:bg-gray-50 transition">
                                     <td className="px-6 py-4 text-center"><input type="checkbox" checked={selectedOrders.includes(order.id)} onChange={() => setSelectedOrders(prev => prev.includes(order.id) ? prev.filter(x => x !== order.id) : [...prev, order.id])} /></td>
                                     <td className="px-6 py-4 font-bold">{order.id}</td>
+                                    <td className="px-6 py-4 text-gray-500">{new Date(order.createdAt).toLocaleDateString('cs-CZ')}</td>
                                     <td className="px-6 py-4 font-mono">{formatDate(order.deliveryDate)}</td>
                                     <td className="px-6 py-4">{order.userName}</td>
                                     <td className="px-6 py-4 font-bold">{order.totalPrice + order.packagingFee + (order.deliveryFee || 0)} Kč</td>
@@ -440,7 +467,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                             ))
                         )}
                         {!isLoadingOrders && displayOrders.length === 0 && (
-                            <tr><td colSpan={8} className="p-8 text-center text-gray-400">Žádné objednávky</td></tr>
+                            <tr><td colSpan={9} className="p-8 text-center text-gray-400">Žádné objednávky</td></tr>
                         )}
                     </tbody>
                 </table>
