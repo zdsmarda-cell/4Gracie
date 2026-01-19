@@ -1025,8 +1025,37 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // --- MISC ---
   const generateInvoice = (o: Order) => `INV-${o.id}`;
   
-  const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
-      // Implementation omitted for brevity, assumed unchanged
+  const printInvoice = async (order: Order, type: 'proforma' | 'final' = 'proforma') => {
+      if (dataSource === 'api') {
+        try {
+            const token = localStorage.getItem('auth_token');
+            const res = await fetch(getFullApiUrl(`/api/orders/${order.id}/invoice?type=${type}`), {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (!res.ok) throw new Error('Download failed');
+            
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `faktura_${order.id}_${type}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (e) {
+            console.error(e);
+            showNotify("Chyba při stahování faktury", "error");
+        }
+      } else {
+        // Local fallback (simple jsPDF for demo)
+        const doc = new jsPDF();
+        doc.text(`Faktura ${type} - ${order.id}`, 10, 10);
+        doc.save(`faktura_${order.id}_${type}.pdf`);
+      }
   };
   
   const generateCzIban = calculateCzIban;

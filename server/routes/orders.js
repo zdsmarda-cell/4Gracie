@@ -2,6 +2,7 @@
 import express from 'express';
 import { withDb, parseJsonCol } from '../db.js';
 import { queueOrderEmail } from '../services/email.js';
+import { generateInvoicePdf } from '../services/pdf.js'; // Import PDF generator
 import { authenticateToken, requireAdmin } from '../middleware/auth.js';
 import webpush from 'web-push';
 
@@ -12,6 +13,41 @@ const STATUS_TRANSLATIONS = {
     en: { created: 'Created', confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready', on_way: 'On the way', delivered: 'Delivered', not_picked_up: 'Not picked up', cancelled: 'Cancelled' },
     de: { created: 'Erstellt', confirmed: 'Bestätigt', preparing: 'In Vorbereitung', ready: 'Bereit', on_way: 'Unterwegs', delivered: 'Geliefert', not_picked_up: 'Nicht abgeholt', cancelled: 'Storniert' }
 };
+
+// DOWNLOAD INVOICE PDF
+router.get('/:id/invoice', authenticateToken, withDb(async (req, res, db) => {
+    const { id } = req.params;
+    const { type } = req.query; // 'proforma' or 'final'
+
+    // 1. Fetch Order
+    const [rows] = await db.query('SELECT * FROM orders WHERE id = ?', [id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Objednávka nenalezena' });
+
+    const orderRow = rows[0];
+    const order = parseJsonCol(orderRow, 'full_json');
+    if (orderRow.final_invoice_date) order.finalInvoiceDate = orderRow.final_invoice_date;
+    if (orderRow.created_at) order.createdAt = orderRow.created_at;
+
+    // Security check: User can only download their own invoice (unless admin)
+    if (req.user.role !== 'admin' && req.user.id !== order.userId) {
+        return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // 2. Fetch Settings (for Company Details fallback)
+    const [sRows] = await db.query('SELECT data FROM app_settings WHERE key_name = "global"');
+    const settings = sRows.length > 0 ? parseJsonCol(sRows[0]) : {};
+
+    try {
+        const pdfBuffer = await generateInvoicePdf(order, type || 'proforma', settings);
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=faktura_${order.id}_${type}.pdf`);
+        res.send(pdfBuffer);
+    } catch (e) {
+        console.error("PDF Gen Error:", e);
+        res.status(500).json({ error: 'Failed to generate PDF' });
+    }
+}));
 
 // Get Orders - Protected
 router.get('/', authenticateToken, withDb(async (req, res, db) => {

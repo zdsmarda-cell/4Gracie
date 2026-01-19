@@ -46,8 +46,8 @@ const InvoiceSelectionModal: React.FC<{
 }> = ({ isOpen, onClose, onSelect }) => {
     if (!isOpen) return null;
     return (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-200">
-            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl relative">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl relative" onClick={e => e.stopPropagation()}>
                 <button onClick={onClose} className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-full"><X size={18}/></button>
                 <h3 className="text-lg font-bold mb-2 text-center">Výběr dokladu</h3>
                 <p className="text-sm text-gray-500 mb-6 text-center">Tato objednávka je již doručena. Který doklad chcete vygenerovat?</p>
@@ -581,7 +581,13 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                     <td className="px-6 py-4 text-right">
                                         <div className="flex justify-end gap-2 items-center">
                                             <button onClick={() => setQrModalOrder(order)} className="p-1 text-gray-400 hover:text-accent hover:bg-gray-100 rounded transition" title="QR Platba"><QrCode size={16}/></button>
-                                            <button onClick={() => handleInvoiceClick(order)} className={`p-1 hover:bg-gray-100 rounded transition ${order.status === OrderStatus.DELIVERED ? 'text-green-600 hover:text-green-800' : 'text-gray-400 hover:text-primary'}`} title={order.status === OrderStatus.DELIVERED ? "Faktura" : "Zálohová faktura"}>{order.status === OrderStatus.DELIVERED ? <FileCheck size={16}/> : <FileText size={16}/>}</button>
+                                            <button 
+                                                onClick={() => handleInvoiceClick(order)} 
+                                                className={`p-1 hover:bg-gray-100 rounded transition ${order.status === OrderStatus.DELIVERED ? 'text-green-600 hover:text-green-800' : 'text-gray-400 hover:text-primary'}`} 
+                                                title={order.status === OrderStatus.DELIVERED ? "Faktura" : "Zálohová faktura"}
+                                            >
+                                                {order.status === OrderStatus.DELIVERED ? <FileCheck size={16}/> : <FileText size={16}/>}
+                                            </button>
                                             <button onClick={() => openEditModal(order)} className="text-blue-600 font-bold hover:underline p-1 flex items-center" title="Upravit objednávku"><Edit size={16}/></button>
                                         </div>
                                     </td>
@@ -630,7 +636,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
             )}
 
             <StatusConfirmModal isOpen={confirmStatus.isOpen} count={selectedOrders.length} status={confirmStatus.status!} onConfirm={confirmBulkStatusChange} onClose={() => setConfirmStatus({ isOpen: false, status: null })} t={t}/>
-            <InvoiceSelectionModal isOpen={!!invoiceModalOrder} onClose={() => setInvoiceModalOrder(null)} onSelect={(type) => { if (invoiceModalOrder) { printInvoice(invoiceModalOrder, type); setInvoiceModalOrder(null); }}} />
+            <InvoiceSelectionModal 
+                isOpen={!!invoiceModalOrder} 
+                onClose={() => setInvoiceModalOrder(null)} 
+                onSelect={(type) => { if (invoiceModalOrder) { printInvoice(invoiceModalOrder, type); setInvoiceModalOrder(null); }}} 
+            />
 
             {/* RESTORED EDIT MODAL WITH 2 COLUMN LAYOUT */}
             {isEditModalOpen && editingOrder && (
