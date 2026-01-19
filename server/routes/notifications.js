@@ -60,12 +60,31 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     }
 
     try {
-        await db.query(
-            `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) 
-             VALUES (?, ?, ?, ?) 
-             ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), updated_at = NOW()`,
-            [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
-        );
+        if (userId) {
+            // CASE 1: Valid User ID - Claim ownership or update existing
+            await db.query(
+                `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) 
+                 VALUES (?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE 
+                    user_id = VALUES(user_id), 
+                    p256dh = VALUES(p256dh), 
+                    auth = VALUES(auth), 
+                    updated_at = NOW()`,
+                [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
+            );
+        } else {
+            // CASE 2: No User ID (Guest or Expired Token) 
+            // Insert as NULL user, BUT if exists, DO NOT overwrite existing user_id with NULL
+            await db.query(
+                `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) 
+                 VALUES (NULL, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE 
+                    p256dh = VALUES(p256dh), 
+                    auth = VALUES(auth), 
+                    updated_at = NOW()`,
+                [subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
+            );
+        }
         res.json({ success: true });
     } catch (e) {
         console.error("Subscription Error:", e);
