@@ -443,18 +443,37 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             setAllUsers([]); setProducts([]); setOrders([]); setIngredients([]); setDiscountCodes([]); setDayConfigs([]); setRides([]);
             setSettings(EMPTY_SETTINGS);
             
-            const data = await apiCall('/api/bootstrap', 'GET');
+            // Add cache buster to prevent cached settings
+            const data = await apiCall(`/api/bootstrap?_t=${Date.now()}`, 'GET');
             
             if (data) {
                 setAllUsers(data.users || []);
                 setProducts(data.products || []);
                 setOrders(data.orders || []);
+                
                 if (data.settings) {
-                   const dbSettings = { ...DEFAULT_SETTINGS, ...data.settings };
-                   if (!dbSettings.categories) dbSettings.categories = DEFAULT_SETTINGS.categories;
-                   if (!dbSettings.pickupLocations) dbSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
-                   setSettings(dbSettings); 
+                   // Merge DB settings over Defaults. 
+                   // Ensure objects like defaultCapacities are taken from DB if present.
+                   const mergedSettings = { ...DEFAULT_SETTINGS, ...data.settings };
+                   
+                   // Ensure arrays are arrays
+                   if (!mergedSettings.categories) mergedSettings.categories = DEFAULT_SETTINGS.categories;
+                   if (!mergedSettings.pickupLocations) mergedSettings.pickupLocations = DEFAULT_SETTINGS.pickupLocations;
+                   
+                   // CRITICAL: Ensure capacities are not overwritten by defaults if DB has them
+                   if (data.settings.defaultCapacities) {
+                        mergedSettings.defaultCapacities = data.settings.defaultCapacities;
+                   }
+                   
+                   setSettings(mergedSettings); 
+                } else {
+                   // DB has no settings (First run?). Initialize DB with Defaults.
+                   console.log("⚠️ DB Settings empty. Initializing with Defaults...");
+                   setSettings(DEFAULT_SETTINGS);
+                   // Fire and forget save to persist defaults
+                   apiCall('/api/settings', 'POST', DEFAULT_SETTINGS);
                 }
+
                 setDiscountCodes(data.discountCodes || []);
                 setDayConfigs(data.dayConfigs || []);
                 setRides(data.rides || []);
@@ -483,10 +502,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
             setProducts(loadFromStorage('db_products', INITIAL_PRODUCTS));
             
-            // FIX: Ensure mock orders are restored if storage is empty
-            let loadedOrders = loadFromStorage<Order[]>('db_orders', MOCK_ORDERS);
+            // FIX: Force MOCK_ORDERS if storage is empty or contains empty array
+            // This ensures Preview always has data unless explicitly cleared in this session
+            let loadedOrders = loadFromStorage<Order[]>('db_orders', []);
             if (!loadedOrders || loadedOrders.length === 0) {
+                console.log("Restoring Mock Orders...");
                 loadedOrders = MOCK_ORDERS;
+                // Force save immediately to persist mock data for reload
+                try {
+                    localStorage.setItem('db_orders', JSON.stringify(MOCK_ORDERS));
+                } catch(e) { console.error(e); }
             }
             setOrders(loadedOrders);
             

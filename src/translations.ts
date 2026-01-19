@@ -180,6 +180,8 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.reset_password': 'Reset hesla',
     'admin.access_denied': 'Přístup odepřen',
     'admin.note_content': 'Obsah poznámky',
+    'admin.ingredient_delete_blocked_title': 'Nelze smazat surovinu',
+    'admin.ingredient_delete_blocked_msg': 'Tato surovina je použita v následujících produktech. Pro smazání ji musíte nejprve odebrat z receptur.',
     
     'admin.tbl_order': 'Pořadí',
     'admin.tbl_name': 'Název',
@@ -276,6 +278,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'common.total': 'Celkem',
     'common.min_qty': 'Min. odběr',
     'common.note': 'Poznámka',
+    'common.understood': 'Rozumím',
     
     'footer.contacts': 'Kontakty',
     'footer.terms': 'VOP',
@@ -504,6 +507,8 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.reset_password': 'Reset Password',
     'admin.access_denied': 'Access Denied',
     'admin.note_content': 'Note Content',
+    'admin.ingredient_delete_blocked_title': 'Cannot Delete Ingredient',
+    'admin.ingredient_delete_blocked_msg': 'This ingredient is used in the following products. You must remove it from recipes first.',
     'admin.tbl_order': 'Order',
     'admin.tbl_name': 'Name',
     'admin.tbl_id_slug': 'ID (Slug)',
@@ -599,6 +604,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'common.total': 'Total',
     'common.min_qty': 'Min. qty',
     'common.note': 'Note',
+    'common.understood': 'Understood',
     
     'footer.contacts': 'Contacts',
     'footer.terms': 'Terms',
@@ -827,6 +833,8 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'admin.reset_password': 'Passwort zurücksetzen',
     'admin.access_denied': 'Zugriff verweigert',
     'admin.note_content': 'Inhalt der Notiz',
+    'admin.ingredient_delete_blocked_title': 'Zutat kann nicht gelöscht werden',
+    'admin.ingredient_delete_blocked_msg': 'Diese Zutat wird in den folgenden Produkten verwendet. Entfernen Sie sie zuerst aus den Rezepten.',
     'admin.tbl_order': 'Bestellung',
     'admin.tbl_name': 'Name',
     'admin.tbl_id_slug': 'ID (Slug)',
@@ -922,6 +930,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     'common.total': 'Gesamt',
     'common.min_qty': 'Min. Menge',
     'common.note': 'Notiz',
+    'common.understood': 'Verstanden',
     
     'footer.contacts': 'Kontakte',
     'footer.terms': 'AGB',

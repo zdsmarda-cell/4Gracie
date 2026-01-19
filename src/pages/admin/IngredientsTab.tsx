@@ -2,15 +2,16 @@
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Ingredient, Product } from '../../types';
-import { Plus, Edit, Trash2, Check, X, ImageIcon, AlertTriangle, Wheat, Eye, Search } from 'lucide-react';
+import { Plus, Edit, Trash2, Check, X, ImageIcon, AlertTriangle, Wheat, Eye, Search, AlertCircle } from 'lucide-react';
 
-const UsageModal: React.FC<{
+const BlockedModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
     ingredient: Ingredient;
     products: Product[];
     getImageUrl: (path?: string) => string;
-}> = ({ isOpen, onClose, ingredient, products, getImageUrl }) => {
+    t: (key: string) => string;
+}> = ({ isOpen, onClose, ingredient, products, getImageUrl, t }) => {
     if (!isOpen) return null;
 
     const usedIn = products
@@ -20,38 +21,39 @@ const UsageModal: React.FC<{
     return (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
             <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
-                <div className="flex justify-between items-center mb-4 border-b pb-4">
-                    <h3 className="font-bold text-lg flex items-center">
-                        <Wheat className="mr-2 text-accent"/> {ingredient.name}
-                    </h3>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20}/></button>
+                <div className="flex flex-col items-center text-center mb-6">
+                    <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center mb-4 text-orange-600">
+                        <AlertTriangle size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-900 mb-2">{t('admin.ingredient_delete_blocked_title')}</h3>
+                    <p className="text-sm text-gray-500">{t('admin.ingredient_delete_blocked_msg')}</p>
                 </div>
                 
-                <div className="flex-grow overflow-y-auto space-y-2">
-                    {usedIn.length > 0 ? (
-                        usedIn.map(p => {
-                            const comp = p.composition?.find(c => c.ingredientId === ingredient.id);
-                            return (
-                                <div key={p.id} className="flex items-center gap-4 p-2 hover:bg-gray-50 rounded border border-transparent hover:border-gray-100">
-                                    <div className="w-10 h-10 bg-gray-100 rounded overflow-hidden flex-shrink-0">
-                                        {p.images && p.images[0] ? (
-                                            <img src={getImageUrl(p.images[0])} className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
-                                        )}
-                                    </div>
-                                    <div className="flex-grow">
-                                        <div className="font-bold text-sm">{p.name}</div>
-                                    </div>
-                                    <div className="font-mono font-bold text-sm text-primary">
-                                        {comp?.quantity} {ingredient.unit}
-                                    </div>
+                <div className="flex-grow overflow-y-auto space-y-2 border-t border-b py-4 bg-gray-50 rounded-lg px-2">
+                    {usedIn.map(p => {
+                        const comp = p.composition?.find(c => c.ingredientId === ingredient.id);
+                        return (
+                            <div key={p.id} className="flex items-center gap-4 p-2 bg-white rounded border border-gray-200">
+                                <div className="w-10 h-10 bg-gray-100 rounded overflow-hidden flex-shrink-0">
+                                    {p.images && p.images[0] ? (
+                                        <img src={getImageUrl(p.images[0])} className="w-full h-full object-cover" />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
+                                    )}
                                 </div>
-                            );
-                        })
-                    ) : (
-                        <p className="text-center text-gray-400 py-8">Tato surovina není použita v žádném produktu.</p>
-                    )}
+                                <div className="flex-grow">
+                                    <div className="font-bold text-sm">{p.name}</div>
+                                </div>
+                                <div className="font-mono font-bold text-xs text-primary bg-blue-50 px-2 py-1 rounded">
+                                    {comp?.quantity} {ingredient.unit}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+                
+                <div className="mt-6">
+                    <button onClick={onClose} className="w-full py-3 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-black transition shadow-lg">{t('common.understood')}</button>
                 </div>
             </div>
         </div>
@@ -89,7 +91,7 @@ export const IngredientsTab: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingIngredient, setEditingIngredient] = useState<Partial<Ingredient> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<Ingredient | null>(null);
-    const [usageTarget, setUsageTarget] = useState<Ingredient | null>(null);
+    const [blockedTarget, setBlockedTarget] = useState<Ingredient | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [search, setSearch] = useState('');
@@ -157,7 +159,7 @@ export const IngredientsTab: React.FC = () => {
     const requestDelete = (ing: Ingredient) => {
         const usage = getUsageCount(ing.id);
         if (usage > 0) {
-            alert(`Tuto surovinu nelze smazat, protože je použita v ${usage} produktech.`);
+            setBlockedTarget(ing);
             return;
         }
         setDeleteTarget(ing);
@@ -216,13 +218,9 @@ export const IngredientsTab: React.FC = () => {
                                     <td className="px-6 py-4 font-bold">{ing.name}</td>
                                     <td className="px-6 py-4 font-mono text-gray-500">{ing.unit}</td>
                                     <td className="px-6 py-4 text-center">
-                                        <button 
-                                            onClick={() => setUsageTarget(ing)}
-                                            className={`px-3 py-1 rounded font-bold transition ${usage > 0 ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-gray-100 text-gray-400 cursor-default'}`}
-                                            disabled={usage === 0}
-                                        >
+                                        <span className={`px-3 py-1 rounded font-bold ${usage > 0 ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-400'}`}>
                                             {usage}
-                                        </button>
+                                        </span>
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         {!ing.isHidden ? <span className="text-green-500 font-bold">Aktivní</span> : <span className="text-gray-400">Skryto</span>}
@@ -231,8 +229,8 @@ export const IngredientsTab: React.FC = () => {
                                         <button onClick={() => { setEditingIngredient(ing); setIsModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
                                         <button 
                                             onClick={() => requestDelete(ing)} 
-                                            className={`p-1 ${usage > 0 ? 'text-gray-300 cursor-not-allowed' : 'hover:text-red-500 text-gray-400'}`}
-                                            title={usage > 0 ? 'Nelze smazat (používáno)' : 'Smazat'}
+                                            className="p-1 hover:text-red-500 text-gray-400"
+                                            title="Smazat"
                                         >
                                             <Trash2 size={16}/>
                                         </button>
@@ -249,13 +247,14 @@ export const IngredientsTab: React.FC = () => {
 
             <DeleteConfirmModal isOpen={!!deleteTarget} title={`Smazat ${deleteTarget?.name}?`} onConfirm={confirmDelete} onClose={() => setDeleteTarget(null)} />
             
-            {usageTarget && (
-                <UsageModal 
-                    isOpen={!!usageTarget} 
-                    onClose={() => setUsageTarget(null)} 
-                    ingredient={usageTarget} 
+            {blockedTarget && (
+                <BlockedModal 
+                    isOpen={!!blockedTarget} 
+                    onClose={() => setBlockedTarget(null)} 
+                    ingredient={blockedTarget} 
                     products={products}
                     getImageUrl={getImageUrl}
+                    t={t}
                 />
             )}
 
@@ -285,6 +284,8 @@ export const IngredientsTab: React.FC = () => {
                                 <option value="ks">ks (Kus)</option>
                                 <option value="g">g (Gram)</option>
                                 <option value="ml">ml (Mililitr)</option>
+                                <option value="kg">kg (Kilogram)</option>
+                                <option value="l">l (Litr)</option>
                             </select>
                         </div>
 
