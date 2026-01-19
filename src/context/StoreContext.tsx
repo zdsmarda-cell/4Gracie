@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useRef } from 'react';
 import { CartItem, Language, Product, User, Order, GlobalSettings, DayConfig, OrderStatus, DiscountCode, AppliedDiscount, DeliveryRegion, PackagingType, CompanyDetails, BackupData, PickupLocation, Ride, EventSlot, CookieSettings, OrdersSearchResult, Ingredient } from '../types';
 import { MOCK_ORDERS, PRODUCTS as INITIAL_PRODUCTS, DEFAULT_SETTINGS, EMPTY_SETTINGS } from '../constants';
 import { TRANSLATIONS } from '../translations';
@@ -494,6 +494,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     const [isInitialized, setIsInitialized] = useState(false);
 
+    // Ref to track last sync
+    const lastSyncedSubscriptionRef = useRef<string | null>(null);
+
     useEffect(() => { fetchData(); }, [dataSource]);
 
     useEffect(() => {
@@ -502,12 +505,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 setSwRegistration(registration);
                 registration.pushManager.getSubscription().then(sub => {
                     setPushSubscription(sub);
+                    
                     if (sub && user && dataSource === 'api') {
-                        // Note: Using apiCall inside useEffect with implicit dependency via StoreContext 
-                        // is protected by apiCall stability (via useCallback/stable references).
-                        // If it triggers loop, it means dependencies change.
-                        // Here we invoke it once on mount/user change.
-                        apiCall('/api/notifications/subscribe', 'POST', { subscription: sub }).catch(e => console.error(e));
+                        // Check if we already synced this exact subscription for this user to avoid loop
+                        const syncKey = `${user.id}-${sub.endpoint}`;
+                        if (lastSyncedSubscriptionRef.current !== syncKey) {
+                            apiCall('/api/notifications/subscribe', 'POST', { subscription: sub })
+                                .then(() => {
+                                    // Mark as synced only on success
+                                    lastSyncedSubscriptionRef.current = syncKey;
+                                })
+                                .catch(e => console.error(e));
+                        }
                     }
                 });
             });

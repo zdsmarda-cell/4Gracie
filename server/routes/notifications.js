@@ -60,25 +60,26 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     }
 
     try {
-        // ENFORCE UNIQUE USER: If user is logged in, remove ALL their previous subscriptions.
-        // This ensures the user has only 1 active device in the DB (the last one used).
-        // This solves the issue of duplicates and stale records.
-        if (userId) {
-            await db.query('DELETE FROM push_subscriptions WHERE user_id = ?', [userId]);
-        } 
+        // CLEANUP: Remove older subscriptions for this user if they are logging in on a new device?
+        // Actually, we want multiple devices per user.
+        // But we DO want to ensure this specific endpoint is correctly mapped.
         
-        // Also remove this specific endpoint if it was assigned to someone else (cleanup)
-        await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [subscription.endpoint]);
-
-        // Insert New Record
+        // Use UPSERT logic (INSERT ... ON DUPLICATE KEY UPDATE) to prevent race conditions and ER_DUP_ENTRY errors
         await db.query(
-            `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)`,
+            `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) 
+             VALUES (?, ?, ?, ?) 
+             ON DUPLICATE KEY UPDATE 
+             user_id = VALUES(user_id), 
+             p256dh = VALUES(p256dh), 
+             auth = VALUES(auth), 
+             updated_at = NOW()`,
             [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
         );
         
         res.json({ success: true });
     } catch (e) {
         console.error("Subscription Error:", e);
+        // Even if it fails, don't crash the client loop, return 500 but log it
         res.status(500).json({ error: e.message });
     }
 }));
