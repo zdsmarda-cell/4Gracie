@@ -57,6 +57,16 @@ export const MobileNotificationsTab: React.FC = () => {
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
     
+    // --- HISTORY FILTERS STATE ---
+    const [historyFilters, setHistoryFilters] = useState({
+        dateFrom: '',
+        dateTo: '',
+        search: '', // user name
+        email: '',
+        subject: '',
+        status: ''
+    });
+
     // --- RETRY STATE ---
     const [retryLog, setRetryLog] = useState<any>(null);
     const [isRetrying, setIsRetrying] = useState(false);
@@ -81,12 +91,26 @@ export const MobileNotificationsTab: React.FC = () => {
         loadAllUsers();
     }, [page]);
 
+    // Reload history when filters change (debounce could be added for text inputs, but explicit apply/change is okay for now)
+    useEffect(() => {
+        // Debounce slightly or just load. Given it's admin, direct update is usually fine but let's reset page.
+        setPage(1);
+        const timer = setTimeout(loadHistory, 300);
+        return () => clearTimeout(timer);
+    }, [historyFilters]);
+
     const loadHistory = async () => {
         if (dataSource !== 'api') return;
         setIsHistoryLoading(true);
         try {
             const token = localStorage.getItem('auth_token');
-            const res = await fetch(getFullApiUrl(`/api/notifications/history?page=${page}&limit=20`), {
+            const q = new URLSearchParams({
+                page: page.toString(),
+                limit: '20',
+                ...historyFilters
+            }).toString();
+
+            const res = await fetch(getFullApiUrl(`/api/notifications/history?${q}`), {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await res.json();
@@ -240,7 +264,20 @@ export const MobileNotificationsTab: React.FC = () => {
         }
     };
 
+    const clearHistoryFilters = () => {
+        setHistoryFilters({
+            dateFrom: '',
+            dateTo: '',
+            search: '',
+            email: '',
+            subject: '',
+            status: ''
+        });
+    };
+
     if (dataSource !== 'api') return <div className="p-8 text-center text-gray-400">Dostupné pouze s databází.</div>;
+
+    const hasActiveFilters = Object.values(historyFilters).some(val => val !== '');
 
     return (
         <div className="animate-fade-in space-y-8">
@@ -364,12 +401,54 @@ export const MobileNotificationsTab: React.FC = () => {
 
             {/* HISTORY (Granular Logs) */}
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden mt-8">
-                <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
-                    <h3 className="font-bold text-gray-700 flex items-center">
-                        <Smartphone className="mr-2" size={18}/> Detailní historie odeslání
-                    </h3>
-                    <button onClick={loadHistory} className="p-2 hover:bg-gray-200 rounded-full"><RotateCcw size={16}/></button>
+                <div className="p-4 bg-gray-50 border-b">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-bold text-gray-700 flex items-center">
+                            <Smartphone className="mr-2" size={18}/> Detailní historie odeslání
+                        </h3>
+                        <div className="flex gap-2">
+                             {hasActiveFilters && (
+                                <button onClick={clearHistoryFilters} className="text-xs text-red-500 hover:text-red-700 font-bold flex items-center mr-2">
+                                    <X size={14} className="mr-1"/> Zrušit filtry
+                                </button>
+                            )}
+                            <button onClick={loadHistory} className="p-2 hover:bg-gray-200 rounded-full"><RotateCcw size={16}/></button>
+                        </div>
+                    </div>
+                    
+                    {/* Filters Panel */}
+                    <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Datum Od</label>
+                            <input type="date" className="w-full border rounded p-1 text-xs" value={historyFilters.dateFrom} onChange={e => setHistoryFilters({...historyFilters, dateFrom: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Datum Do</label>
+                            <input type="date" className="w-full border rounded p-1 text-xs" value={historyFilters.dateTo} onChange={e => setHistoryFilters({...historyFilters, dateTo: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Uživatel</label>
+                            <input className="w-full border rounded p-1 text-xs" placeholder="Jméno" value={historyFilters.search} onChange={e => setHistoryFilters({...historyFilters, search: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Email</label>
+                            <input className="w-full border rounded p-1 text-xs" placeholder="@" value={historyFilters.email} onChange={e => setHistoryFilters({...historyFilters, email: e.target.value})} />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Předmět</label>
+                            <input className="w-full border rounded p-1 text-xs" placeholder="Obsahuje..." value={historyFilters.subject} onChange={e => setHistoryFilters({...historyFilters, subject: e.target.value})} />
+                        </div>
+                         <div>
+                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Stav</label>
+                            <select className="w-full border rounded p-1 text-xs bg-white" value={historyFilters.status} onChange={e => setHistoryFilters({...historyFilters, status: e.target.value})}>
+                                <option value="">Vše</option>
+                                <option value="sent">Odesláno</option>
+                                <option value="error">Chyba</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
+                
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y">
                         <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
@@ -384,7 +463,9 @@ export const MobileNotificationsTab: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y text-xs">
-                            {history.map(h => (
+                            {isHistoryLoading ? (
+                                <tr><td colSpan={7} className="p-8 text-center text-gray-400"><Loader2 className="animate-spin inline mr-2"/> Načítám...</td></tr>
+                            ) : history.map(h => (
                                 <tr key={h.id} className="hover:bg-gray-50">
                                     <td className="px-6 py-4 font-mono text-gray-500 whitespace-nowrap">
                                         {new Date(h.created_at).toLocaleString()}
@@ -419,7 +500,7 @@ export const MobileNotificationsTab: React.FC = () => {
                                     </td>
                                 </tr>
                             ))}
-                            {history.length === 0 && (
+                            {!isHistoryLoading && history.length === 0 && (
                                 <tr><td colSpan={7} className="p-8 text-center text-gray-400">Žádná historie</td></tr>
                             )}
                         </tbody>
@@ -431,7 +512,7 @@ export const MobileNotificationsTab: React.FC = () => {
                     onPageChange={setPage} 
                     limit={20} 
                     onLimitChange={()=>{}} 
-                    totalItems={totalPages*20} 
+                    totalItems={totalPages*20} // Estimate
                 />
             </div>
 

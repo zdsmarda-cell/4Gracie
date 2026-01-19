@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { User } from '../../types';
-import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search, Smartphone } from 'lucide-react';
+import { User as UserIcon, Plus, Download, Ban, Check, AlertCircle, Mail, Search, Smartphone, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Pagination } from '../../components/Pagination';
 
@@ -16,7 +16,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
     const [isLoading, setIsLoading] = useState(false);
     
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
-    const [userFilters, setUserFilters] = useState({ search: '', spentMin: '', spentMax: '', ordersMin: '', ordersMax: '', marketing: '', status: '' });
+    const [userFilters, setUserFilters] = useState({ search: '', zip: '', spentMin: '', spentMax: '', ordersMin: '', ordersMax: '', marketing: '', status: '' });
     
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
@@ -31,23 +31,26 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
     const loadUsers = useCallback(async () => {
         setIsLoading(true);
         try {
-            const users = await searchUsers({ search: userFilters.search });
-            // Post-filter complex fields (spent/order count) that require order traversal
+            // Pass Search AND ZIP to server API
+            const users = await searchUsers({ 
+                search: userFilters.search,
+                zip: userFilters.zip 
+            });
             setFetchedUsers(users);
         } catch (e) {
             console.error(e);
         } finally {
             setIsLoading(false);
         }
-    }, [searchUsers, userFilters.search]);
+    }, [searchUsers, userFilters.search, userFilters.zip]);
 
-    // FIX INFINITE LOOP: depend on filters, not the function
+    // Use debounce for search/zip
     useEffect(() => {
         const timer = setTimeout(() => {
             loadUsers();
         }, 300);
         return () => clearTimeout(timer);
-    }, [userFilters.search]); // Simplified dependency to just search filter for now
+    }, [userFilters.search, userFilters.zip]);
 
     const filteredUsers = useMemo(() => {
         return fetchedUsers.filter(u => {
@@ -69,6 +72,15 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
         return filteredUsers.slice(start, start + itemsPerPage);
     }, [filteredUsers, currentPage, itemsPerPage]);
 
+    // Helper to get latest ZIP
+    const getLatestZip = (u: User) => {
+        const all = [...(u.deliveryAddresses || []), ...(u.billingAddresses || [])];
+        if (all.length === 0) return '';
+        // Assuming addresses are returned in DB order, last one is likely newest or updated.
+        // If not, we take last one in array.
+        return all[all.length - 1].zip;
+    };
+
     const handleUserExport = () => {
         const usersToExport = filteredUsers.filter(u => selectedUserIds.includes(u.id));
         const exportData = usersToExport.map(u => ({
@@ -76,6 +88,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
             Jméno: u.name,
             Email: u.email,
             Telefon: u.phone,
+            PSČ: getLatestZip(u),
             Role: u.role,
             Marketing: u.marketingConsent ? 'ANO' : 'NE',
             Push: u.hasPushSubscription ? 'ANO' : 'NE',
@@ -136,6 +149,12 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
         }
     };
 
+    const clearFilters = () => {
+        setUserFilters({ search: '', zip: '', spentMin: '', spentMax: '', ordersMin: '', ordersMax: '', marketing: '', status: '' });
+    };
+
+    const hasFilters = userFilters.search || userFilters.zip || userFilters.marketing || userFilters.status;
+
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
@@ -156,7 +175,10 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                         <div className="mb-1 font-bold text-gray-400">Hledat (Jméno, Email)</div>
                         <input type="text" className="w-full border rounded p-2" placeholder="Text..." value={userFilters.search} onChange={e => setUserFilters({...userFilters, search: e.target.value})} />
                     </div>
-                    {/* Simplified filters for now as they require deep aggregation not present in lightweight bootstrap */}
+                    <div className="w-24">
+                        <div className="mb-1 font-bold text-gray-400">PSČ</div>
+                        <input type="text" className="w-full border rounded p-2" placeholder="např. 664" value={userFilters.zip} onChange={e => setUserFilters({...userFilters, zip: e.target.value})} />
+                    </div>
                     <div>
                         <div className="mb-1 font-bold text-gray-400">Marketing</div>
                         <select className="border rounded p-2 bg-white w-24" value={userFilters.marketing} onChange={e => setUserFilters({...userFilters, marketing: e.target.value})}>
@@ -173,6 +195,11 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                             <option value="blocked">{t('common.blocked')}</option>
                         </select>
                     </div>
+                    {hasFilters && (
+                        <button onClick={clearFilters} className="text-red-500 hover:text-red-700 font-bold flex items-center mb-2">
+                            <X size={14} className="mr-1"/> Zrušit filtry
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -193,6 +220,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                         </th>
                         <th className="px-6 py-4 text-left">{t('common.name')}</th>
                         <th className="px-6 py-4 text-left">{t('common.email')}</th>
+                        <th className="px-6 py-4 text-left">PSČ (Last)</th>
                         <th className="px-6 py-4 text-left">{t('common.role')}</th>
                         <th className="px-6 py-4 text-center">Marketing</th>
                         <th className="px-6 py-4 text-center">Push</th>
@@ -213,6 +241,7 @@ export const UsersTab: React.FC<UsersTabProps> = ({ onNavigateToEmails }) => {
                             </td>
                             <td className="px-6 py-4 font-bold">{u.name}</td>
                             <td className="px-6 py-4 text-gray-600">{u.email}<br/><span className="text-[10px]">{u.phone}</span></td>
+                            <td className="px-6 py-4 text-gray-500 font-mono">{getLatestZip(u)}</td>
                             <td className="px-6 py-4 uppercase font-bold text-[10px]">{u.role}</td>
                             <td className="px-6 py-4 text-center">
                                 {u.marketingConsent ? <span className="text-green-600 font-bold">ANO</span> : <span className="text-gray-400">NE</span>}

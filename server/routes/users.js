@@ -13,15 +13,21 @@ const hashPassword = (pwd) => `hashed_${Buffer.from(pwd).toString('base64')}`;
 
 // GET USERS (Protected - Admin)
 router.get('/', withDb(async (req, res, db) => {
-    const { search, hasPush } = req.query;
+    const { search, hasPush, zip } = req.query;
     
-    // Updated query to check for push subscriptions
+    // Base query
     let query = `
-        SELECT u.*, 
+        SELECT DISTINCT u.*, 
         (SELECT COUNT(*) FROM push_subscriptions ps WHERE ps.user_id = u.id) > 0 as has_push 
         FROM users u 
-        WHERE 1=1
     `;
+    
+    // Join with addresses if filtering by ZIP to ensure we only get relevant users
+    if (zip) {
+        query += ` JOIN user_addresses ua ON u.id = ua.user_id `;
+    }
+
+    query += ` WHERE 1=1 `;
     
     const params = [];
     if (search) { query += ' AND (u.email LIKE ? OR u.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
@@ -31,7 +37,15 @@ router.get('/', withDb(async (req, res, db) => {
         query += ' AND (SELECT COUNT(*) FROM push_subscriptions ps WHERE ps.user_id = u.id) > 0';
     }
 
-    query += ' LIMIT 200'; // Increased limit for better selection in notifications tab
+    // Filter by ZIP
+    if (zip) {
+        // Remove spaces for loose matching
+        const cleanZip = zip.replace(/\s/g, '');
+        query += ' AND REPLACE(ua.zip, " ", "") LIKE ?';
+        params.push(`%${cleanZip}%`);
+    }
+
+    query += ' LIMIT 200'; // Limit results
     
     const [rows] = await db.query(query, params);
     const users = [];

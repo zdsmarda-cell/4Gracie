@@ -119,22 +119,66 @@ router.post('/unsubscribe', withDb(async (req, res, db) => {
     }
 }));
 
-// GET HISTORY (Admin) - GRANULAR LOGS
+// GET HISTORY (Admin) - GRANULAR LOGS with Filters
 router.get('/history', requireAdmin, withDb(async (req, res, db) => {
-    const { page = 1, limit = 20 } = req.query;
+    const { 
+        page = 1, limit = 20,
+        dateFrom, dateTo, search, email, status, subject
+    } = req.query;
+
     const offset = (Number(page) - 1) * Number(limit);
     
-    // Fetch granular logs joined with user info
-    const [rows] = await db.query(`
+    let query = `
         SELECT pl.*, u.name as user_name, u.email as user_email
         FROM push_logs pl
         LEFT JOIN users u ON pl.user_id = u.id
-        ORDER BY pl.created_at DESC 
-        LIMIT ? OFFSET ?`,
-        [Number(limit), Number(offset)]
-    );
+        WHERE 1=1
+    `;
+    const params = [];
+
+    // Date Filters
+    if (dateFrom) {
+        query += ' AND pl.created_at >= ?';
+        params.push(`${dateFrom} 00:00:00`);
+    }
+    if (dateTo) {
+        query += ' AND pl.created_at <= ?';
+        params.push(`${dateTo} 23:59:59`);
+    }
+
+    // User Search (Name)
+    if (search) {
+        query += ' AND u.name LIKE ?';
+        params.push(`%${search}%`);
+    }
+
+    // Email Search
+    if (email) {
+        query += ' AND u.email LIKE ?';
+        params.push(`%${email}%`);
+    }
+
+    // Subject/Title Search
+    if (subject) {
+        query += ' AND pl.title LIKE ?';
+        params.push(`%${subject}%`);
+    }
+
+    // Status Filter
+    if (status) {
+        query += ' AND pl.status = ?';
+        params.push(status);
+    }
+
+    // Clone query for count BEFORE adding limit/order
+    const countQuery = query.replace('SELECT pl.*, u.name as user_name, u.email as user_email', 'SELECT COUNT(*) as t');
+    const [count] = await db.query(countQuery, params);
+
+    // Add Order and Limit
+    query += ' ORDER BY pl.created_at DESC LIMIT ? OFFSET ?';
+    params.push(Number(limit), Number(offset));
     
-    const [count] = await db.query('SELECT COUNT(*) as t FROM push_logs');
+    const [rows] = await db.query(query, params);
     
     res.json({ 
         success: true, 
