@@ -4,12 +4,13 @@ import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Language, PaymentMethod } from '../../types';
 import { Pagination } from '../../components/Pagination';
 import { MultiSelect } from '../../components/MultiSelect';
-import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle, ArrowUp, ArrowDown, ArrowUpDown, Zap } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
 interface OrdersTabProps {
     initialDate?: string | null;
     initialEventOnly?: boolean;
+    initialActiveOnly?: boolean;
     onClearFilters?: () => void;
 }
 
@@ -79,7 +80,7 @@ const InvoiceSelectionModal: React.FC<{
     );
 };
 
-export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventOnly, onClearFilters }) => {
+export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventOnly, initialActiveOnly, onClearFilters }) => {
     const { searchOrders, t, updateOrderStatus, formatDate, settings, generateCzIban, removeDiacritics, printInvoice, updateOrder, getImageUrl, products, checkAvailability, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo, calculatePackagingFee, validateDiscount, orders, dataSource } = useStore();
     
     const [displayOrders, setDisplayOrders] = useState<Order[]>([]);
@@ -89,6 +90,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     const [currentPage, setCurrentPage] = useState(1);
     const [limit, setLimit] = useState(50);
     const [totalPages, setTotalPages] = useState(1);
+
+    const [onlyActive, setOnlyActive] = useState(initialActiveOnly || false);
 
     // Filters
     const [filters, setFilters] = useState({
@@ -101,7 +104,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         customer: '',
         isEvent: initialEventOnly ? 'yes' : 'all', 
         isPaid: 'all',
-        hasIc: 'all' // Added IC filter
+        hasIc: 'all'
     });
 
     // Sorting State: key + direction
@@ -133,26 +136,34 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     }, [editingOrder?.pickupLocationId, editingOrder?.deliveryType, settings.pickupLocations]);
 
     useEffect(() => {
-        if (initialDate || initialEventOnly) {
+        if (initialDate || initialEventOnly || initialActiveOnly !== undefined) {
             setFilters(prev => ({
                 ...prev,
                 dateFrom: initialDate || prev.dateFrom,
                 dateTo: initialDate || prev.dateTo,
                 isEvent: initialEventOnly ? 'yes' : prev.isEvent
             }));
+            if (initialActiveOnly !== undefined) {
+                setOnlyActive(initialActiveOnly);
+            }
             setCurrentPage(1);
         }
-    }, [initialDate, initialEventOnly]);
+    }, [initialDate, initialEventOnly, initialActiveOnly]);
 
     const loadData = useCallback(async () => {
         setIsLoadingOrders(true);
         try {
+            // Determine statuses to fetch
+            const activeStatuses = [OrderStatus.CREATED, OrderStatus.CONFIRMED, OrderStatus.PREPARING, OrderStatus.READY, OrderStatus.ON_WAY].join(',');
+            const statusFilter = onlyActive ? activeStatuses : filters.status;
+
             const res = await searchOrders({
                 page: currentPage,
                 limit: limit,
                 sort: sort?.key,
                 order: sort?.direction,
-                ...filters
+                ...filters,
+                status: statusFilter
             });
             setDisplayOrders(res.orders);
             setTotalRecords(res.total);
@@ -162,7 +173,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         } finally {
             setIsLoadingOrders(false);
         }
-    }, [currentPage, limit, filters, sort, searchOrders]);
+    }, [currentPage, limit, filters, sort, searchOrders, onlyActive]);
 
     useEffect(() => {
         loadData();
@@ -440,15 +451,26 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Vytvořeno Od</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.createdFrom} onChange={e => handleFilterChange('createdFrom', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Vytvořeno Do</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.createdTo} onChange={e => handleFilterChange('createdTo', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={filters.customer} onChange={e => handleFilterChange('customer', e.target.value)} /></div>
-                <div className="md:col-span-2">
-                    <MultiSelect 
-                        label="Stav"
-                        options={statusOptions}
-                        selectedValues={filters.status ? filters.status.split(',') : []}
-                        onChange={(values) => handleFilterChange('status', values.join(','))}
-                    />
-                </div>
-                {/* IC Filter Added */}
+                
+                {/* Status or Active Toggle */}
+                {onlyActive ? (
+                    <div className="md:col-span-2 flex items-center h-full pt-4">
+                        <div className="w-full bg-blue-50 border border-blue-200 text-blue-700 px-3 py-2 rounded-lg text-xs font-bold flex items-center">
+                            <Zap size={14} className="mr-2"/> Zobrazeny pouze aktivní objednávky (kapacita)
+                        </div>
+                    </div>
+                ) : (
+                    <div className="md:col-span-2">
+                        <MultiSelect 
+                            label="Stav"
+                            options={statusOptions}
+                            selectedValues={filters.status ? filters.status.split(',') : []}
+                            onChange={(values) => handleFilterChange('status', values.join(','))}
+                        />
+                    </div>
+                )}
+
+                {/* IC Filter */}
                 <div>
                     <label className="text-xs font-bold text-gray-400 block mb-1">Typ zákazníka</label>
                     <select 
@@ -461,14 +483,30 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                         <option value="no">Koncový (bez IČ)</option>
                     </select>
                 </div>
-                <div className="flex items-end gap-2 md:col-span-3 justify-end">
+                
+                {/* Active Only Toggle & Clear */}
+                <div className="flex flex-col justify-end gap-2">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-600 hover:text-primary">
+                        <input 
+                            type="checkbox" 
+                            checked={onlyActive} 
+                            onChange={e => {
+                                setOnlyActive(e.target.checked);
+                                setCurrentPage(1);
+                            }}
+                            className="rounded text-accent focus:ring-accent"
+                        />
+                        Jen aktivní (Kapacita)
+                    </label>
+                    
                     <button onClick={() => {
                         setFilters({ id: '', dateFrom: '', dateTo: '', createdFrom: '', createdTo: '', status: '', customer: '', isEvent: 'all', isPaid: 'all', hasIc: 'all' });
+                        setOnlyActive(false);
                         setCurrentPage(1);
                         setSort(null);
                         if(onClearFilters) onClearFilters();
-                    }} className="text-xs text-red-500 hover:text-red-700 font-bold flex items-center mb-2">
-                        <X size={14} className="mr-1"/> Zrušit
+                    }} className="text-xs text-red-500 hover:text-red-700 font-bold flex items-center mb-1">
+                        <X size={14} className="mr-1"/> Zrušit filtry
                     </button>
                 </div>
             </div>

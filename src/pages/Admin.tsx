@@ -43,17 +43,20 @@ export const Admin: React.FC = () => {
     
     const [filterDate, setFilterDate] = useState<string | null>(null);
     const [filterEventOnly, setFilterEventOnly] = useState(false);
+    const [filterActiveOnly, setFilterActiveOnly] = useState(false); // NEW State
     const [emailFilter, setEmailFilter] = useState<string | null>(null);
 
     const handleNavigateToDate = (date: string) => {
         setFilterDate(date);
         setFilterEventOnly(false);
+        setFilterActiveOnly(true); // Enable active filter when coming from Load tab
         setActiveTab('orders');
     };
 
     const handleNavigateToEventOrders = (date: string) => {
         setFilterDate(date);
         setFilterEventOnly(true);
+        setFilterActiveOnly(true); // Usually events care about active load too
         setActiveTab('orders');
     };
 
@@ -65,6 +68,7 @@ export const Admin: React.FC = () => {
     const clearFilters = () => {
         setFilterDate(null);
         setFilterEventOnly(false);
+        setFilterActiveOnly(false);
     };
 
     const availableTabs = [
@@ -100,7 +104,7 @@ export const Admin: React.FC = () => {
             </div>
 
             {/* Modular Tabs */}
-            {activeTab === 'orders' && <OrdersTab initialDate={filterDate} initialEventOnly={filterEventOnly} onClearFilters={clearFilters} />}
+            {activeTab === 'orders' && <OrdersTab initialDate={filterDate} initialEventOnly={filterEventOnly} initialActiveOnly={filterActiveOnly} onClearFilters={clearFilters} />}
             {activeTab === 'rides' && <RidesTab />}
             {activeTab === 'users' && <UsersTab onNavigateToEmails={handleNavigateToEmails} />}
             {activeTab === 'products' && <ProductsTab />}
