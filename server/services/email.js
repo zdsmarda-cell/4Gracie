@@ -29,7 +29,8 @@ const getImgUrl = (path) => {
     if (path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) return path;
     
     // Získání base URL bez koncového lomítka
-    let baseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
+    // Priorita: APP_URL (pro produkci/email), VITE_API_URL, localhost fallback
+    let baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
     if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
     
     // Přidání lomítka na začátek cesty, pokud chybí
@@ -162,7 +163,7 @@ export const processCustomerEmail = async (to, order, type, settings, customStat
     const html = generateOrderHtml(order, subject, message, lang, settings);
 
     // --- LOGGING ---
-    if (settings && settings.server && settings.server.consoleLogging) {
+    if (settings?.server?.consoleLogging) {
         console.log(`\n📨 EMAIL LOG [Customer] ------------------------------------------------`);
         console.log(`To: ${to}`);
         console.log(`Subject: ${subject}`);
@@ -190,7 +191,7 @@ export const processOperatorEmail = async (to, order, type, settings) => {
     const html = generateOrderHtml(order, 'Nová objednávka (Admin)', 'Přišla nová objednávka.', 'cs', settings);
     
     // --- LOGGING ---
-    if (settings && settings.server && settings.server.consoleLogging) {
+    if (settings?.server?.consoleLogging) {
         console.log(`\n📨 EMAIL LOG [Operator] ------------------------------------------------`);
         console.log(`To: ${to}`);
         console.log(`Subject: Nová objednávka #${order.id}`);
