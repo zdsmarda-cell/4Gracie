@@ -25,7 +25,7 @@ export const initEmail = async () => {
 
 const getImgUrl = (path) => {
     if (!path) return '';
-    if (path.startsWith('http')) return path;
+    if (path.startsWith('data:') || path.startsWith('http')) return path;
     const baseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
     return `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 };
