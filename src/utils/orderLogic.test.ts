@@ -192,6 +192,7 @@ describe('Event Dates Logic', () => {
 
     it('should exclude dates with full capacity', () => {
         const product = { 
+            id: 'new_p',
             category: 'warm', 
             isEventProduct: true, 
             leadTimeDays: 1, 
@@ -199,13 +200,27 @@ describe('Event Dates Logic', () => {
             minOrderQuantity: 1
         } as Product;
 
+        // Ensure the existing product in the order is correctly defined as an Event Product
+        // otherwise it falls into standard capacity, not event capacity.
+        const existingProduct = {
+            id: 'p1',
+            category: 'warm',
+            isEventProduct: true,
+            workload: 30
+        } as Product;
+
         // Mock existing orders filling the 20th
         const orders: any[] = [
-            { deliveryDate: '2025-01-20', status: OrderStatus.CONFIRMED, items: [{ id: 'p1', quantity: 2, category: 'warm', workload: 30 }] } 
+            { 
+                deliveryDate: '2025-01-20', 
+                status: OrderStatus.CONFIRMED, 
+                items: [{ id: 'p1', quantity: 2, category: 'warm' }] // Workload 30*2 = 60
+            } 
             // Load = 60. Remaining = 40. Product needs 50. -> Full.
         ];
 
-        const dates = getAvailableEventDatesLogic(product, settings, orders, [product], today);
+        // Pass existingProduct in the allProducts array so the logic knows p1 is an event product
+        const dates = getAvailableEventDatesLogic(product, settings, orders, [product, existingProduct], today);
         expect(dates).toEqual(['2025-01-25']);
     });
 });
