@@ -223,7 +223,13 @@ export const getAvailableEventDatesLogic = (
           
           if (limit <= 0) return false;
 
-          const relevantOrders = orders.filter(o => o.deliveryDate === s.date && o.status !== OrderStatus.CANCELLED);
+          // Exclude finished orders from capacity check logic as well for consistency
+          const relevantOrders = orders.filter(o => 
+              o.deliveryDate === s.date && 
+              o.status !== OrderStatus.CANCELLED &&
+              o.status !== OrderStatus.DELIVERED &&
+              o.status !== OrderStatus.NOT_PICKED_UP
+          );
           const { eventLoad } = calculateDailyLoad(relevantOrders, allProducts, settings);
           
           const currentLoad = eventLoad[catId] || 0;

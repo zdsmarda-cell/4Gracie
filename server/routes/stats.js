@@ -8,6 +8,7 @@ router.get('/load', withDb(async (req, res, db) => {
     const { date } = req.query;
     if (!date) return res.status(400).json({ error: "Missing date" });
     
+    // Updated WHERE clause to exclude finished states (delivered, not_picked_up, cancelled)
     const summaryQuery = `
         SELECT 
             COALESCE(p.category, JSON_UNQUOTE(JSON_EXTRACT(p.full_json, '$.category')), oi.category, 'unknown') as category,
@@ -17,7 +18,7 @@ router.get('/load', withDb(async (req, res, db) => {
         FROM order_items oi 
         JOIN orders o ON o.id = oi.order_id 
         LEFT JOIN products p ON oi.product_id = p.id 
-        WHERE o.delivery_date = ? AND o.status != 'cancelled'
+        WHERE o.delivery_date = ? AND o.status NOT IN ('cancelled', 'delivered', 'not_picked_up')
         GROUP BY category
     `;
 
@@ -33,7 +34,7 @@ router.get('/load', withDb(async (req, res, db) => {
         FROM order_items oi 
         JOIN orders o ON o.id = oi.order_id 
         LEFT JOIN products p ON oi.product_id = p.id 
-        WHERE o.delivery_date = ? AND o.status != 'cancelled'
+        WHERE o.delivery_date = ? AND o.status NOT IN ('cancelled', 'delivered', 'not_picked_up')
         GROUP BY category, oi.product_id, name, unit
     `;
 

@@ -927,7 +927,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const calculatePackagingFee = (items: CartItem[]) => calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
 
   const getDailyLoad = (date: string, excludeOrderId?: string) => {
-      const relevantOrders = orders.filter(o => o.deliveryDate === date && o.status !== OrderStatus.CANCELLED && o.id !== excludeOrderId);
+      const relevantOrders = orders.filter(o => 
+          o.deliveryDate === date && 
+          o.status !== OrderStatus.CANCELLED && 
+          o.status !== OrderStatus.DELIVERED && // EXCLUDE DELIVERED from Active Load
+          o.status !== OrderStatus.NOT_PICKED_UP && // EXCLUDE NOT PICKED UP
+          o.id !== excludeOrderId
+      );
       return calculateDailyLoad(relevantOrders, products, settings);
   };
 

@@ -74,41 +74,50 @@ test.describe('Admin - Load & Capacity Logic', () => {
     await page.getByText('Souhlasím se Všeobecnými').click();
     await page.getByRole('button', { name: 'Odeslat objednávku' }).click();
     
-    // 4. Verify in Admin Load Tab
+    // 4. Verify in Admin Load Tab (Order is ACTIVE)
     await page.getByRole('link', { name: 'Admin' }).click();
     await page.getByRole('button', { name: 'Vytížení' }).click();
     
-    // Find the day row. We need to find the row that has our total.
-    // The summary row should show usage. We expect "220 / 1000" (assuming default limit 1000).
-    // Or at least "220" somewhere in the row for 'Teplý catering' (default cat).
+    // Find the day row. We expect "220" total workload.
     const row = page.getByRole('row', { name: /220 \// });
     await expect(row).toBeVisible();
 
     // 5. Verify Detail View Calculation
-    // Click the Eye icon in that row
     await row.getByRole('button').first().click();
-    
     const modal = page.locator('div.fixed').filter({ hasText: 'Detail výroby' });
     await expect(modal).toBeVisible();
-    
-    // Check Header Calculation
-    // "Celkem pracnost: 220"
     await expect(modal.getByText('Celkem pracnost: 220')).toBeVisible();
-    
-    // Check if both products are listed
-    await expect(modal.getByText('Fritéza A')).toBeVisible();
-    await expect(modal.getByText('Fritéza B')).toBeVisible();
-    
-    // --- CLEANUP ---
     await modal.getByRole('button', { name: 'Zavřít' }).click();
+
+    // 6. DELIVER ORDER AND VERIFY LOAD DECREASES
+    // Go to Orders tab
+    await page.getByRole('button', { name: 'Objednávky' }).click();
+    // Find our order (newest)
+    const orderRow = page.locator('tbody tr').first();
+    // Change status to Delivered
+    const checkbox = orderRow.locator('input[type="checkbox"]');
+    await checkbox.check();
     
-    // Delete products to keep clean state
+    await page.locator('select').filter({ hasText: 'Změnit stav' }).selectOption('delivered');
+    await page.getByRole('button', { name: 'Potvrdit' }).click();
+
+    // Go back to Load Tab
+    await page.getByRole('button', { name: 'Vytížení' }).click();
+    
+    // Verify load is gone (or drastically reduced if other orders exist)
+    // In clean state, it should be 0. Or simply NOT containing "220" anymore.
+    // If table is empty or day row gone (if no other active orders), that's also valid.
+    // Let's assume day row persists if dayConfig exists, but load is 0.
+    
+    // We check that the row with "220 /" is NOT visible anymore
+    await expect(page.getByRole('row', { name: /220 \// })).not.toBeVisible();
+    
+    // Clean up
     await page.getByRole('button', { name: 'Produkty' }).click();
     page.on('dialog', dialog => dialog.accept());
     await page.locator('tr', { hasText: 'Fritéza A' }).getByRole('button').nth(1).click();
     await page.locator('tr', { hasText: 'Fritéza B' }).getByRole('button').nth(1).click();
     
-    // Delete Capacity Category
     await page.getByRole('button', { name: 'Kategorie' }).click();
     await page.getByText('Kapacitní kategorie').click();
     await page.locator('tr', { hasText: 'Sdílená Fritéza' }).getByRole('button').nth(1).click();

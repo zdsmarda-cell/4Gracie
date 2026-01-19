@@ -52,7 +52,8 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         if (settings.eventSlots) settings.eventSlots.forEach(s => dates.add(s.date)); // Add Event Slots
         
         orders.forEach(o => {
-            if (o.status !== OrderStatus.CANCELLED) {
+            // Only include dates with ACTIVE orders
+            if (o.status !== OrderStatus.CANCELLED && o.status !== OrderStatus.DELIVERED && o.status !== OrderStatus.NOT_PICKED_UP) {
                 dates.add(o.deliveryDate);
             }
         });
@@ -110,7 +111,13 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 .finally(() => setIsLoadingDetails(false));
         } else {
             // LOCAL MODE (Preview) - Logic matches StoreContext.getDailyLoad (Global Scope)
-            const relevantOrders = orders.filter(o => o.deliveryDate === selectedDate && o.status !== OrderStatus.CANCELLED);
+            // EXCLUDE Finished orders from calculation
+            const relevantOrders = orders.filter(o => 
+                o.deliveryDate === selectedDate && 
+                o.status !== OrderStatus.CANCELLED &&
+                o.status !== OrderStatus.DELIVERED &&
+                o.status !== OrderStatus.NOT_PICKED_UP
+            );
             
             const summaryMap = new Map<string, ServerLoadSummary>();
             const detailsMap = new Map<string, ServerLoadDetail>();
@@ -392,7 +399,7 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                                     Detail výroby: <span className="font-mono">{formatDate(selectedDate)}</span>
                                 </h3>
                                 <p className="text-xs text-gray-500 mt-1">
-                                    Detailní rozpad pracnosti a surovin pro vybraný den.
+                                    Detailní rozpad pracnosti a surovin pro vybraný den (pouze aktivní objednávky).
                                 </p>
                             </div>
                             <button onClick={() => setSelectedDate(null)} className="p-2 hover:bg-gray-200 rounded-full transition text-gray-500"><X size={20}/></button>
