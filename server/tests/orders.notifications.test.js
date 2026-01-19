@@ -118,7 +118,7 @@ describe('Server Notifications (Driver Actions)', () => {
         expect(webpush.default.sendNotification).toHaveBeenCalledTimes(1);
         expect(webpush.default.sendNotification).toHaveBeenCalledWith(
             expect.objectContaining({ endpoint: mockSubscription.endpoint }),
-            expect.stringContaining('delivered') // Should contain translated status or similar logic
+            expect.stringContaining('Doručena') // Czech translation for 'delivered' as mockOrder language is 'cs'
         );
 
         // Verify Email Queued
