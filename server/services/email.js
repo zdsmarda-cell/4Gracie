@@ -1,4 +1,41 @@
 
+import nodemailer from 'nodemailer';
+import { getDb } from '../db.js';
+import { generateInvoicePdf } from './pdf.js';
+
+let transporter = null;
+
+export const initEmail = async () => {
+    if (process.env.SMTP_HOST) {
+        transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT) || 465,
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+            tls: { rejectUnauthorized: false }
+        });
+        try {
+            await transporter.verify();
+            console.log('✅ Email service ready');
+        } catch (error) {
+            console.error('❌ Email service error:', error);
+        }
+    }
+};
+
+const getImgUrl = (path) => {
+    if (!path) return '';
+    if (path.startsWith('http')) return path;
+    const baseUrl = process.env.VITE_API_URL || 'http://localhost:3000';
+    return `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
+};
+
+const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('cs-CZ');
+};
+
 const STATUS_TRANSLATIONS = {
     cs: { created: 'Zadaná', confirmed: 'Potvrzená', preparing: 'Připravuje se', ready: 'Připravena', on_way: 'Na cestě', delivered: 'Doručena', not_picked_up: 'Nedoručena/Nevyzvednuta', cancelled: 'Stornována' },
     en: { created: 'Created', confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready', on_way: 'On the way', delivered: 'Delivered', not_picked_up: 'Not picked up', cancelled: 'Cancelled' },
@@ -82,4 +119,146 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
     `;
     
     return htmlContent;
+};
+
+export const processCustomerEmail = async (to, order, type, settings, customStatus) => {
+    if (!transporter) await initEmail();
+    if (!transporter) { console.error("No transporter"); return; }
+
+    const lang = order.language || 'cs';
+    const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
+    const st = STATUS_TRANSLATIONS[lang] || STATUS_TRANSLATIONS.cs;
+
+    let subject = '';
+    let message = '';
+    let attachments = [];
+
+    if (type === 'created') {
+        subject = t.created_subject;
+        const pdfBuffer = await generateInvoicePdf(order, 'proforma', settings);
+        attachments.push({ filename: `objednavka_${order.id}.pdf`, content: pdfBuffer });
+    } else if (type === 'updated') {
+        subject = t.updated_subject;
+        message = 'Vaše objednávka byla upravena.';
+    } else if (type === 'status') {
+        subject = t.status_update_subject;
+        message = `${t.status_prefix} ${st[customStatus] || customStatus}`;
+        
+        // Attach final invoice if status is delivered
+        if (customStatus === 'delivered') {
+            const pdfBuffer = await generateInvoicePdf(order, 'final', settings);
+            attachments.push({ filename: `faktura_${order.id}.pdf`, content: pdfBuffer });
+        }
+    }
+
+    const html = generateOrderHtml(order, subject, message, lang, settings);
+
+    await transporter.sendMail({
+        from: process.env.EMAIL_FROM || 'info@4gracie.cz',
+        to,
+        subject,
+        html,
+        attachments
+    });
+};
+
+export const processOperatorEmail = async (to, order, type, settings) => {
+    if (!transporter) await initEmail();
+    if (!transporter) return;
+
+    const html = generateOrderHtml(order, 'Nová objednávka (Admin)', 'Přišla nová objednávka.', 'cs', settings);
+    
+    await transporter.sendMail({
+        from: process.env.EMAIL_FROM || 'info@4gracie.cz',
+        to,
+        subject: `Nová objednávka #${order.id}`,
+        html
+    });
+};
+
+export const queueOrderEmail = async (order, type, settings, customStatus) => {
+    const db = await getDb();
+    if (!db) return;
+
+    // 1. Customer Email
+    if (order.userId) {
+        const [u] = await db.query('SELECT email FROM users WHERE id = ?', [order.userId]);
+        if (u.length > 0 && u[0].email) {
+            const payload = JSON.stringify({ order, settings, customStatus });
+            await db.query(
+                "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+                ['customer_' + type, u[0].email, `Objednávka ${order.id}`, payload]
+            );
+        }
+    }
+
+    // 2. Operator Email (Only on create)
+    if (type === 'created' && settings.companyDetails?.email) {
+        const payload = JSON.stringify({ order, settings });
+        await db.query(
+            "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+            ['operator_created', settings.companyDetails.email, `Nová objednávka ${order.id}`, payload]
+        );
+    }
+};
+
+export const startEmailWorker = () => {
+    setInterval(async () => {
+        const db = await getDb();
+        if (!db) return;
+
+        const [rows] = await db.query("SELECT * FROM email_queue WHERE status = 'pending' LIMIT 5");
+        
+        for (const row of rows) {
+            await db.query("UPDATE email_queue SET status = 'processing' WHERE id = ?", [row.id]);
+            
+            try {
+                const payload = JSON.parse(row.payload);
+                
+                if (row.type.startsWith('customer_')) {
+                    const subType = row.type.replace('customer_', '');
+                    await processCustomerEmail(row.recipient_email, payload.order, subType, payload.settings, payload.customStatus);
+                } else if (row.type === 'operator_created') {
+                    await processOperatorEmail(row.recipient_email, payload.order, 'created', payload.settings);
+                } else if (row.type === 'event_notify') {
+                    // Specific handler for event notification
+                    if (!transporter) await initEmail();
+                    await transporter.sendMail({
+                        from: process.env.EMAIL_FROM,
+                        to: row.recipient_email,
+                        subject: row.subject,
+                        html: payload.html
+                    });
+                }
+
+                await db.query("UPDATE email_queue SET status = 'sent', processed_at = NOW() WHERE id = ?", [row.id]);
+            } catch (e) {
+                console.error(`Failed to process email ${row.id}:`, e);
+                await db.query("UPDATE email_queue SET status = 'error', error_message = ? WHERE id = ?", [e.message, row.id]);
+            }
+        }
+    }, 10000); // Check every 10 seconds
+};
+
+export const sendEventNotification = async (date, products, recipients) => {
+    const db = await getDb();
+    if (!db) return;
+
+    const subject = `Speciální akce na den ${formatDate(date)}`;
+    const productList = products.map(p => `<li><strong>${p.name}</strong> - ${p.price} Kč</li>`).join('');
+    
+    const html = `
+        <h2>Speciální akce!</h2>
+        <p>Na den <strong>${formatDate(date)}</strong> jsme pro vás připravili speciální nabídku:</p>
+        <ul>${productList}</ul>
+        <p>Objednávejte na našem webu.</p>
+    `;
+
+    // Bulk insert into queue
+    for (const email of recipients) {
+        await db.query(
+            "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+            ['event_notify', email, subject, JSON.stringify({ html })]
+        );
+    }
 };
