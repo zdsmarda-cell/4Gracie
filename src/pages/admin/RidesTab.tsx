@@ -11,6 +11,9 @@ const QuickEditOrderModal: React.FC<{
     onSave: (updatedOrder: Order) => Promise<void>;
     checkAvailability: any;
     getDeliveryRegion: any;
+    settings: any;
+    getRegionInfoForDate: any;
+    getPickupPointInfo: any;
 }> = ({ order, onClose, onSave, getDeliveryRegion }) => {
     const [editingOrder, setEditingOrder] = useState<Order>(JSON.parse(JSON.stringify(order)));
     const [saveError, setSaveError] = useState<string | null>(null);
