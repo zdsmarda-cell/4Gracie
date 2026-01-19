@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Order, OrderStatus, Product } from '../types';
@@ -6,7 +5,7 @@ import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTrian
 import { calculatePackageCountLogic } from '../utils/orderLogic';
 
 export const Driver: React.FC = () => {
-    const { user, rides, orders, products, updateOrderStatus, settings, formatDate } = useStore();
+    const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment } = useStore();
     const [modalState, setModalState] = useState<{ type: 'complete' | 'fail', orderId: string } | null>(null);
     const wakeLockRef = useRef<any>(null);
 
@@ -46,15 +45,33 @@ export const Driver: React.FC = () => {
         };
     }, []);
 
-    // Identify Active Ride for current driver and today (or most recent active)
+    // Identify Active Ride for current driver
     const activeRide = useMemo(() => {
         if (!user) return null;
         const today = new Date().toISOString().split('T')[0];
-        // Priority: Active ride today -> Planned ride today -> Any active ride
-        return rides.find(r => r.driverId === user.id && r.date === today && r.status === 'active') ||
-               rides.find(r => r.driverId === user.id && r.date === today && r.status === 'planned') ||
-               rides.find(r => r.driverId === user.id && r.status === 'active');
-    }, [rides, user]);
+        
+        // 1. Priority: Ride currently marked as 'active' (regardless of date - e.g. unfinished from yesterday)
+        const active = rides.find(r => r.driverId === user.id && r.status === 'active');
+        if (active) return active;
+
+        // 2. Priority: Planned ride for TODAY
+        const todayPlanned = rides.find(r => r.driverId === user.id && r.date === today && r.status === 'planned');
+        if (todayPlanned) return todayPlanned;
+
+        // 3. Priority: Nearest FUTURE planned ride
+        const futurePlanned = rides
+            .filter(r => r.driverId === user.id && r.status === 'planned' && r.date > today)
+            .sort((a, b) => a.date.localeCompare(b.date))[0];
+        if (futurePlanned) return futurePlanned;
+
+        // 4. PREVIEW FALLBACK: In local/preview mode, show ANY planned ride found (even past) to allow testing functionality
+        if (isPreviewEnvironment) {
+             const anyPlanned = rides.find(r => r.driverId === user.id && r.status === 'planned');
+             if (anyPlanned) return anyPlanned;
+        }
+
+        return null;
+    }, [rides, user, isPreviewEnvironment]);
 
     // Determine Active Stop (First non-completed/non-cancelled delivery step)
     const activeStopId = useMemo(() => {
@@ -112,7 +129,7 @@ export const Driver: React.FC = () => {
                     <Map size={48} className="text-gray-400" />
                 </div>
                 <h2 className="text-xl font-bold text-gray-700">Žádná aktivní jízda</h2>
-                <p className="text-gray-500 mt-2">Pro dnešní den nemáte naplánované žádné jízdy.</p>
+                <p className="text-gray-500 mt-2">Nemáte naplánované žádné jízdy.</p>
             </div>
         );
     }

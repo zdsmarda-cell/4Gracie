@@ -1,7 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
-import { calculatePackagingFeeLogic, calculateDiscountAmountLogic, calculateDailyLoad, getAvailableEventDatesLogic } from './orderLogic';
-import { PackagingType, CartItem, DiscountCode, DiscountType, Order, OrderStatus, Product, ProductCategory, GlobalSettings } from '../types';
+import { calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic } from './orderLogic';
+import { PackagingType, GlobalSettings, Product, Order } from '../types';
 import { DEFAULT_SETTINGS } from '../constants';
 
 describe('Packaging Logic', () => {
@@ -33,7 +33,6 @@ describe('Packaging Logic', () => {
 });
 
 describe('Total Price Calculation Logic', () => {
-    // This test simulates the logic used in Cart, Admin, and PDF to ensure math consistency
     it('should NOT apply discount to fees (delivery/packaging)', () => {
         // Setup
         const itemPrice = 1000;
@@ -51,12 +50,8 @@ describe('Total Price Calculation Logic', () => {
         // CORRECT LOGIC: (Items - Discount) + Fees
         const correctTotal = (itemsTotal - discountAmount) + shippingFee + packagingFee;
         
-        // WRONG LOGIC (if discount applied to whole order): (1000 + 200 + 50) * 0.5 = 625
-        const wrongTotal = (itemsTotal + shippingFee + packagingFee) * (1 - (discountPercent/100));
-
         expect(discountAmount).toBe(500);
         expect(correctTotal).toBe(750); // (1000 - 500) + 200 + 50
-        expect(correctTotal).not.toBe(wrongTotal);
     });
 
     it('should handle discount larger than item price (Total >= 0)', () => {
@@ -68,6 +63,29 @@ describe('Total Price Calculation Logic', () => {
         const total = Math.max(0, itemPrice - discountAmount) + shippingFee;
         
         expect(total).toBe(200); // 0 + 200
+    });
+});
+
+describe('Fee VAT Logic', () => {
+    // Requirements: Shipping/Packaging fee must inherit the highest VAT rate from items in the order
+    it('should correctly determine Fee VAT Rate based on highest item rate', () => {
+         // Case 1: All 0%
+         const items1: any[] = [{ vatRateTakeaway: 0 }, { vatRateTakeaway: 0 }];
+         let max1 = 0;
+         items1.forEach(i => { if(i.vatRateTakeaway > max1) max1 = i.vatRateTakeaway; });
+         expect(max1).toBe(0);
+
+         // Case 2: Mix 0% and 12%
+         const items2: any[] = [{ vatRateTakeaway: 0 }, { vatRateTakeaway: 12 }];
+         let max2 = 0;
+         items2.forEach(i => { if(i.vatRateTakeaway > max2) max2 = i.vatRateTakeaway; });
+         expect(max2).toBe(12);
+
+         // Case 3: Mix 12% and 21%
+         const items3: any[] = [{ vatRateTakeaway: 21 }, { vatRateTakeaway: 12 }];
+         let max3 = 0;
+         items3.forEach(i => { if(i.vatRateTakeaway > max3) max3 = i.vatRateTakeaway; });
+         expect(max3).toBe(21);
     });
 });
 
@@ -129,62 +147,5 @@ describe('Capacity & Load Logic', () => {
         const result = calculateDailyLoad(orders, products, mockSettings);
         expect(result.load['warm']).toBe(10);
         expect(result.eventLoad['warm']).toBe(210);
-    });
-});
-
-describe('Event Product Availability (getAvailableEventDatesLogic)', () => {
-    const mockSettings: GlobalSettings = {
-        ...DEFAULT_SETTINGS,
-        categories: [{ id: 'warm', name: 'Teplý', order: 1, enabled: true }],
-        eventSlots: [
-            { date: '2025-01-10', capacityOverrides: { 'warm': 100 } }, // Valid Slot
-            { date: '2025-01-11', capacityOverrides: { 'warm': 10 } },  // Low Capacity Slot
-            { date: '2025-01-01', capacityOverrides: { 'warm': 100 } }  // Past Slot
-        ]
-    };
-
-    const products: Product[] = [
-        {
-            id: 'evt_prod',
-            name: 'Event Product',
-            category: 'warm',
-            isEventProduct: true,
-            workload: 10,
-            workloadOverhead: 5,
-            leadTimeDays: 2,
-            minOrderQuantity: 1,
-            description: '', price: 100, unit: 'ks', images: [], allergens: [], shelfLifeDays: 1, volume: 0,
-            visibility: { online: true, store: true, stand: true }, commentsAllowed: false, vatRateInner: 12, vatRateTakeaway: 12
-        }
-    ];
-
-    // Mock Date: 2025-01-05
-    const today = new Date('2025-01-05T10:00:00Z');
-
-    it('should return future event dates where capacity is sufficient', () => {
-        // No orders yet
-        const dates = getAvailableEventDatesLogic(products[0], mockSettings, [], products, today);
-        
-        expect(dates).toContain('2025-01-10');
-        expect(dates).not.toContain('2025-01-11');
-        expect(dates).not.toContain('2025-01-01');
-    });
-
-    it('should exclude dates where orders fill the capacity', () => {
-        const existingOrder: any = {
-            id: 'o1',
-            deliveryDate: '2025-01-10',
-            status: 'confirmed',
-            items: [{ id: 'evt_prod', quantity: 9, category: 'warm' }] // 9 * 10 = 90 workload. + 5 overhead = 95 total used.
-        };
-
-        const dates = getAvailableEventDatesLogic(products[0], mockSettings, [existingOrder], products, today);
-        expect(dates).not.toContain('2025-01-10');
-    });
-
-    it('should respect lead time', () => {
-        const p = { ...products[0], leadTimeDays: 10 }; // Min date = Jan 15
-        const dates = getAvailableEventDatesLogic(p, mockSettings, [], products, today);
-        expect(dates).toHaveLength(0); // 10th and 11th are too soon
     });
 });

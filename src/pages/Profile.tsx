@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Navigate, useNavigate } from 'react-router-dom';
@@ -31,6 +30,7 @@ export const Profile: React.FC = () => {
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
   const [passMsg, setPassMsg] = useState<{type: 'success'|'error', text: string} | null>(null);
+  const [passErrors, setPassErrors] = useState<{ newPass?: string; confirmPass?: string }>({});
 
   // Personal Info Edit State
   const [editName, setEditName] = useState('');
@@ -295,14 +295,24 @@ export const Profile: React.FC = () => {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPassMsg(null);
+    setPassErrors({});
     
-    if (newPass !== confirmPass) {
-      setPassMsg({ type: 'error', text: 'Nová hesla se neshodují.' });
-      return;
-    }
+    let hasError = false;
+    const errors: { newPass?: string; confirmPass?: string } = {};
+
     if (newPass.length < 4) {
-      setPassMsg({ type: 'error', text: t('validation.password_length') });
-      return;
+      errors.newPass = t('validation.password_length');
+      hasError = true;
+    }
+
+    if (newPass !== confirmPass) {
+      errors.confirmPass = 'Hesla se neshodují.';
+      hasError = true;
+    }
+
+    if (hasError) {
+        setPassErrors(errors);
+        return;
     }
 
     const result = await changePassword(oldPass, newPass);
@@ -621,10 +631,37 @@ export const Profile: React.FC = () => {
           {/* Password Change */}
           <div className="bg-white p-6 rounded-2xl border shadow-sm space-y-4">
             <h2 className="text-lg font-bold border-b pb-2 flex items-center"><Lock size={18} className="mr-2"/> Změna hesla</h2>
-            <form onSubmit={handleChangePassword} className="space-y-3">
-              <input type="password" placeholder="Staré heslo" required className="w-full border rounded p-2 text-sm" value={oldPass} onChange={e => setOldPass(e.target.value)} />
-              <input type="password" placeholder="Nové heslo" required className="w-full border rounded p-2 text-sm" value={newPass} onChange={e => setNewPass(e.target.value)} />
-              <input type="password" placeholder="Potvrdit heslo" required className="w-full border rounded p-2 text-sm" value={confirmPass} onChange={e => setConfirmPass(e.target.value)} />
+            <form onSubmit={handleChangePassword} className="space-y-3" noValidate>
+              <input 
+                type="password" 
+                placeholder="Staré heslo" 
+                className="w-full border rounded p-2 text-sm" 
+                value={oldPass} 
+                onChange={e => setOldPass(e.target.value)} 
+              />
+              
+              <div>
+                <input 
+                    type="password" 
+                    placeholder="Nové heslo" 
+                    className={`w-full border rounded p-2 text-sm ${passErrors.newPass ? 'border-red-500 bg-red-50' : ''}`}
+                    value={newPass} 
+                    onChange={e => { setNewPass(e.target.value); setPassErrors({...passErrors, newPass: undefined}); }} 
+                />
+                {passErrors.newPass && <p className="text-xs text-red-500 mt-1">{passErrors.newPass}</p>}
+              </div>
+
+              <div>
+                <input 
+                    type="password" 
+                    placeholder="Potvrdit heslo" 
+                    className={`w-full border rounded p-2 text-sm ${passErrors.confirmPass ? 'border-red-500 bg-red-50' : ''}`}
+                    value={confirmPass} 
+                    onChange={e => { setConfirmPass(e.target.value); setPassErrors({...passErrors, confirmPass: undefined}); }} 
+                />
+                {passErrors.confirmPass && <p className="text-xs text-red-500 mt-1">{passErrors.confirmPass}</p>}
+              </div>
+
               {passMsg && (
                 <div className={`text-xs p-2 rounded ${passMsg.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
                   {passMsg.text}

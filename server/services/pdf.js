@@ -1,4 +1,3 @@
-
 import { jsPDF } from 'jspdf';
 import autoTableModule from 'jspdf-autotable';
 
@@ -59,7 +58,6 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     }
 
     // --- 2. PREPARE DATA (SNAPSHOT SELECTION) ---
-    // Rule: Proforma = Snapshot at creation. Final = Snapshot at Delivery (or fallback to creation if legacy).
     let comp = {};
     if (type === 'final') {
         comp = order.deliveryCompanyDetailsSnapshot || order.companyDetailsSnapshot || settings.companyDetails || {};
@@ -127,24 +125,26 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
 
     const grossTotalsByRate = {};
     
-    // Group totals by rate
+    // Group totals by rate AND find MAX rate
+    let maxVatRate = 0;
+    
     order.items.forEach(item => {
         const rate = Number(item.vatRateTakeaway || 0);
         grossTotalsByRate[rate] = (grossTotalsByRate[rate] || 0) + (item.price * item.quantity);
+        if (rate > maxVatRate) maxVatRate = rate;
     });
 
-    let maxVatRate = 0;
-    Object.keys(grossTotalsByRate).forEach(k => { if(Number(k) > maxVatRate) maxVatRate = Number(k); });
-    const feeVatRate = maxVatRate > 0 ? maxVatRate : 21;
+    const feeVatRate = maxVatRate; // Apply highest rate found to fees
 
     if (order.packagingFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + order.packagingFee;
     if (order.deliveryFee > 0) grossTotalsByRate[feeVatRate] = (grossTotalsByRate[feeVatRate] || 0) + order.deliveryFee;
 
     const grandGrossTotal = Object.values(grossTotalsByRate).reduce((a, b) => a + b, 0);
     const totalDiscount = order.appliedDiscounts?.reduce((a, b) => a + b.amount, 0) || 0;
+    
+    // Proportional Discount Logic
     const discountRatio = grandGrossTotal > 0 ? (totalDiscount / grandGrossTotal) : 0;
 
-    const tableBody = [];
     const taxSummary = {};
 
     // Calculate Summary with proportional discount
@@ -159,6 +159,9 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
             vat: netAtRate - getBase(netAtRate, r)
         };
     });
+
+    // --- 6. TABLE GENERATION ---
+    const tableBody = [];
 
     // Items table rows
     order.items.forEach(item => {
@@ -195,9 +198,8 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         tableBody.push(row);
     });
 
-    // --- 6. TABLE GENERATION ---
     const head = isVatPayer 
-        ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem s DPH']]
+        ? [['Položka', 'Ks', 'Základ/ks', 'DPH %', 'DPH Celkem', 'Celkem']]
         : [['Položka', 'Ks', 'Cena/ks', 'Celkem']];
 
     autoTable(doc, {
@@ -226,18 +228,17 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
             const r = Number(rate);
             const s = taxSummary[r];
             if (Math.abs(s.total) < 0.01) return null;
-            return [`${r} %`, s.base.toFixed(2), s.vat.toFixed(2), s.total.toFixed(2)];
+            return [`${r}%`, s.base.toFixed(2), s.vat.toFixed(2), s.total.toFixed(2)];
         }).filter(Boolean);
 
         if (summaryBody.length > 0) {
             autoTable(doc, {
-                startY: finalY + 2,
-                head: [['Sazba', 'Základ daně', 'Výše daně', 'Celkem s DPH']],
+                startY: finalY + 5,
+                head: [['Sazba', 'Základ', 'Daň', 'Celkem']],
                 body: summaryBody,
                 theme: 'striped',
                 styles: { font: 'Roboto', fontSize: 8 },
                 headStyles: { fillColor: [100, 100, 100] },
-                columnStyles: { 0: { halign: 'center', fontStyle: 'bold' }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right', fontStyle: 'bold' } },
                 margin: { left: 14, right: 100 }
             });
             finalY = doc.lastAutoTable.finalY + 10;
@@ -249,14 +250,15 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     doc.setFont("Roboto", "bold");
     doc.setFontSize(14);
     doc.setTextColor(...brandColor);
-    doc.text(`CELKEM K ÚHRADĚ: ${grandTotal.toFixed(2)} Kč`, 196, finalY, { align: "right" });
+    doc.text(`CELKEM K ÚHRADĚ: ${grandTotal.toFixed(2)} Kč`, 190, finalY, { align: "right" });
     
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(10);
     
     if (type === 'final') {
-        doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 196, finalY + 8, { align: "right" });
+        doc.text("NEPLATIT - Již uhrazeno zálohovou fakturou.", 190, finalY + 7, { align: "right" });
     } else {
+        // QR Code without text details
         try {
             if (comp.bankAccount) {
               const vs = order.id.replace(/\D/g, '');
@@ -267,9 +269,10 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
               const qrResp = await fetch(qrUrl);
               const qrBuf = await qrResp.arrayBuffer();
               const qrBase64 = Buffer.from(qrBuf).toString('base64');
-              doc.addImage(qrBase64, "PNG", 150, finalY + 10, 40, 40);
+              
+              doc.addImage(qrBase64, "PNG", 160, finalY + 10, 30, 30);
               doc.setFontSize(8);
-              doc.text("QR Platba", 170, finalY + 53, { align: "center" });
+              doc.text("QR Platba", 175, finalY + 44, { align: "center" });
             }
         } catch (e) { console.error("QR Code generation failed:", e); }
     }
