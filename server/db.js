@@ -41,5 +41,25 @@ export const withDb = (handler) => async (req, res) => {
 };
 
 export const parseJsonCol = (row, colName = 'data') => {
-    return typeof row[colName] === 'string' ? JSON.parse(row[colName]) : (row[colName] || {});
+    const val = row[colName];
+    if (!val) return {};
+    
+    // If it's already an object (mysql2 auto-parsed JSON column), return it
+    if (typeof val === 'object') return val;
+
+    // If it's a string, try to parse it
+    if (typeof val === 'string') {
+        try {
+            const parsed = JSON.parse(val);
+            // Handle double-encoded JSON strings if necessary
+            if (typeof parsed === 'string') {
+                try { return JSON.parse(parsed); } catch(e) { return parsed; }
+            }
+            return parsed;
+        } catch (e) {
+            console.error(`JSON Parse Error for column ${colName}:`, e);
+            return {};
+        }
+    }
+    return {};
 };

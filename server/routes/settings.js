@@ -9,6 +9,9 @@ const router = express.Router();
 
 // Global Settings
 router.post('/settings', requireAdmin, withDb(async (req, res, db) => { 
+    if (!req.body || Object.keys(req.body).length === 0) {
+        return res.status(400).json({ error: 'Empty settings body' });
+    }
     await db.query('INSERT INTO app_settings (key_name, data) VALUES ("global", ?) ON DUPLICATE KEY UPDATE data=?', [JSON.stringify(req.body), JSON.stringify(req.body)]); 
     res.json({ success: true }); 
 }));
