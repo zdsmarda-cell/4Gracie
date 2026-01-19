@@ -449,9 +449,6 @@ const RideDetail: React.FC<{
                                                             const customerPhone = orderInfo?.deliveryPhone || step.customerPhone;
                                                             
                                                             // Determine previous departure
-                                                            // If idx is 0 (in filtered array, we need index in REAL array)
-                                                            // Steps includes pickups (depot). Typically depot is first step.
-                                                            // Let's assume step array is ordered.
                                                             const stepIndex = ride.steps!.indexOf(step);
                                                             const prevStep = stepIndex > 0 ? ride.steps![stepIndex - 1] : null;
                                                             const prevDeparture = prevStep ? prevStep.departureTime : ride.departureTime;
@@ -728,10 +725,28 @@ export const RidesTab: React.FC = () => {
             {activeSubTab !== 'generation' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {filteredDates.map(date => {
-                        const dayOrders = orders.filter(o => o.deliveryDate === date && o.deliveryType === DeliveryType.DELIVERY && o.status !== OrderStatus.CANCELLED);
+                        // FIX: Only count ACTIVE orders as pending/unassigned
+                        // Exclude delivered, cancelled, not_picked_up from "unassigned" calculation
+                        // But include them in "Total" maybe? Or just active.
+                        // Prompt says: "ma to byt pocet aktivnich objednavek"
+                        const dayActiveOrders = orders.filter(o => 
+                            o.deliveryDate === date && 
+                            o.deliveryType === DeliveryType.DELIVERY && 
+                            o.status !== OrderStatus.CANCELLED &&
+                            o.status !== OrderStatus.DELIVERED &&
+                            o.status !== OrderStatus.NOT_PICKED_UP
+                        );
+                        
+                        // Also get ALL relevant orders for display count if needed, but requirements say focus on active
+                        const dayTotalOrders = orders.filter(o => o.deliveryDate === date && o.deliveryType === DeliveryType.DELIVERY && o.status !== OrderStatus.CANCELLED);
+                        
                         const dayRides = rides.filter(r => r.date === date);
-                        const assignedCount = dayRides.reduce((acc, r) => acc + r.orderIds.length, 0);
-                        const unassignedCount = Math.max(0, dayOrders.length - assignedCount);
+                        
+                        // Assigned count logic: Check if ACTIVE orders are in rides
+                        const assignedOrderIds = new Set<string>();
+                        dayRides.forEach(r => r.orderIds.forEach(id => assignedOrderIds.add(id)));
+                        
+                        const unassignedCount = dayActiveOrders.filter(o => !assignedOrderIds.has(o.id)).length;
                         
                         return (
                             <div 
@@ -742,7 +757,7 @@ export const RidesTab: React.FC = () => {
                                 <div className="flex justify-between items-start mb-4">
                                     <div>
                                         <h3 className="font-mono font-bold text-lg text-primary group-hover:text-accent transition">{formatDate(date)}</h3>
-                                        <div className="text-xs text-gray-500 mt-1">{dayOrders.length} rozvozů celkem</div>
+                                        <div className="text-xs text-gray-500 mt-1">{dayTotalOrders.length} rozvozů celkem</div>
                                     </div>
                                     <div className="bg-gray-50 p-2 rounded-lg">
                                         <Truck size={20} className="text-gray-400"/>
@@ -752,10 +767,10 @@ export const RidesTab: React.FC = () => {
                                 <div className="space-y-2">
                                     <div className="flex justify-between text-sm">
                                         <span className="text-gray-600">Naplánováno:</span>
-                                        <span className="font-bold text-green-600">{assignedCount}</span>
+                                        <span className="font-bold text-green-600">{dayActiveOrders.length - unassignedCount}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
-                                        <span className="text-gray-600">Nepřiřazeno:</span>
+                                        <span className="text-gray-600">Nepřiřazeno (Aktivní):</span>
                                         <span className={`font-bold ${unassignedCount > 0 ? 'text-red-500' : 'text-gray-400'}`}>{unassignedCount}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">

@@ -4,7 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Language, PaymentMethod } from '../../types';
 import { Pagination } from '../../components/Pagination';
 import { MultiSelect } from '../../components/MultiSelect';
-import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle, ArrowUp, ArrowDown, ArrowUpDown, Zap } from 'lucide-react';
+import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle, ArrowUp, ArrowDown, ArrowUpDown, Zap, Truck, Store } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
 interface OrdersTabProps {
@@ -104,7 +104,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
         customer: '',
         isEvent: initialEventOnly ? 'yes' : 'all', 
         isPaid: 'all',
-        hasIc: 'all'
+        hasIc: 'all',
+        deliveryType: ''
     });
 
     // Sorting State: key + direction
@@ -444,13 +445,27 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
             </div>
 
             {/* Filter Bar */}
-            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
+            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-7 gap-4 mb-4">
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">ID</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Filtr ID" value={filters.id} onChange={e => handleFilterChange('id', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Dodání Od</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateFrom} onChange={e => handleFilterChange('dateFrom', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Dodání Do</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.dateTo} onChange={e => handleFilterChange('dateTo', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Vytvořeno Od</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.createdFrom} onChange={e => handleFilterChange('createdFrom', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Vytvořeno Do</label><input type="date" className="w-full border rounded p-2 text-xs" value={filters.createdTo} onChange={e => handleFilterChange('createdTo', e.target.value)} /></div>
                 <div><label className="text-xs font-bold text-gray-400 block mb-1">Zákazník</label><input type="text" className="w-full border rounded p-2 text-xs" placeholder="Jméno" value={filters.customer} onChange={e => handleFilterChange('customer', e.target.value)} /></div>
+                
+                {/* NEW: Delivery Type Filter */}
+                <div>
+                    <label className="text-xs font-bold text-gray-400 block mb-1">Doprava</label>
+                    <select 
+                        className="w-full border rounded p-2 text-xs" 
+                        value={filters.deliveryType} 
+                        onChange={e => handleFilterChange('deliveryType', e.target.value)}
+                    >
+                        <option value="">Vše</option>
+                        <option value={DeliveryType.DELIVERY}>Rozvoz</option>
+                        <option value={DeliveryType.PICKUP}>Osobní odběr</option>
+                    </select>
+                </div>
                 
                 {/* Status or Active Toggle */}
                 {onlyActive ? (
@@ -500,7 +515,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                     </label>
                     
                     <button onClick={() => {
-                        setFilters({ id: '', dateFrom: '', dateTo: '', createdFrom: '', createdTo: '', status: '', customer: '', isEvent: 'all', isPaid: 'all', hasIc: 'all' });
+                        setFilters({ id: '', dateFrom: '', dateTo: '', createdFrom: '', createdTo: '', status: '', customer: '', isEvent: 'all', isPaid: 'all', hasIc: 'all', deliveryType: '' });
                         setOnlyActive(false);
                         setCurrentPage(1);
                         setSort(null);
@@ -537,6 +552,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                             <th className="px-6 py-4 text-left">
                                 Firma / IČ
                             </th>
+                            
+                            {/* NEW Delivery Type Column */}
+                            <th className="px-6 py-4 text-center">
+                                Doprava
+                            </th>
 
                             <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('price')}>
                                 {t('common.price')} (Kč) {getSortIcon('price')}
@@ -553,7 +573,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                     </thead>
                     <tbody className="divide-y text-[11px]">
                         {isLoadingOrders ? (
-                            <tr><td colSpan={10} className="p-8 text-center text-gray-400">Načítám data...</td></tr>
+                            <tr><td colSpan={11} className="p-8 text-center text-gray-400">Načítám data...</td></tr>
                         ) : (
                             displayOrders.map(order => (
                                 <tr key={order.id} className="hover:bg-gray-50 transition">
@@ -572,6 +592,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                             </div>
                                         ) : (
                                             <span className="text-gray-400">-</span>
+                                        )}
+                                    </td>
+                                    
+                                    {/* NEW Delivery Type Icon */}
+                                    <td className="px-6 py-4 text-center">
+                                        {order.deliveryType === DeliveryType.DELIVERY ? (
+                                            <span title="Rozvoz"><Truck size={16} className="text-blue-500 mx-auto"/></span>
+                                        ) : (
+                                            <span title="Osobní odběr"><Store size={16} className="text-accent mx-auto"/></span>
                                         )}
                                     </td>
 
@@ -595,7 +624,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                             ))
                         )}
                         {!isLoadingOrders && displayOrders.length === 0 && (
-                            <tr><td colSpan={10} className="p-8 text-center text-gray-400">Žádné objednávky</td></tr>
+                            <tr><td colSpan={11} className="p-8 text-center text-gray-400">Žádné objednávky</td></tr>
                         )}
                     </tbody>
                 </table>

@@ -107,12 +107,10 @@ export const useOrderLogic = ({ dataSource, apiCall, setOrders, setRides, rides,
             if (res && res.success) return res;
             return { orders: [], total: 0, page: 1, pages: 1 };
         } else {
-            // Local fallback logic mainly used for testing/dev without running backend
-            // In real app, `setOrders` holds the state, but we need to filter `orders` which is passed in?
-            // Actually `orders` prop is the state. We can access it if we had it, but here we only have setters.
-            // However, the caller (OrdersTab) usually handles local filtering if dataSource === 'local'.
-            // This return is mostly symbolic or for hooks that rely purely on this function.
-            // For full local implementation, logic should be lifted or orders passed in.
+            // Local fallback logic mainly used for testing/dev
+            // Accessing state via closure if updated (this hook needs orders prop if we wanted full local search)
+            // Assuming this is handled via parent component logic for filtering `orders` in local mode.
+            // But we can simulate filter structure for consistency.
             return { orders: [], total: 0, page: 1, pages: 1 };
         }
     }, [dataSource, apiCall]);

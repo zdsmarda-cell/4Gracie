@@ -423,6 +423,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
               if (filters.dateTo && o.deliveryDate > filters.dateTo) return false;
               if (filters.customer && !o.userName?.toLowerCase().includes(filters.customer.toLowerCase())) return false;
               if (filters.status && !filters.status.split(',').includes(o.status)) return false;
+              if (filters.deliveryType && o.deliveryType !== filters.deliveryType) return false;
               // ... other filters if needed
               return true;
           });

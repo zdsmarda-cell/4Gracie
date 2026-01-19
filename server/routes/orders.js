@@ -53,7 +53,7 @@ router.get('/:id/invoice', authenticateToken, withDb(async (req, res, db) => {
 router.get('/', authenticateToken, withDb(async (req, res, db) => {
     const { 
         id, dateFrom, dateTo, createdFrom, createdTo, 
-        userId, status, customer, isEvent, isPaid, hasIc,
+        userId, status, customer, isEvent, isPaid, hasIc, deliveryType,
         sort, order, page = 1, limit = 50 
     } = req.query;
     
@@ -95,6 +95,9 @@ router.get('/', authenticateToken, withDb(async (req, res, db) => {
     if (hasIc === 'yes') { query += " AND billing_ic IS NOT NULL AND billing_ic != ''"; }
     if (hasIc === 'no') { query += " AND (billing_ic IS NULL OR billing_ic = '')"; }
     
+    // Delivery Type
+    if (deliveryType) { query += ' AND delivery_type = ?'; params.push(deliveryType); }
+
     // Customer Name
     if (customer) { query += ' AND user_name LIKE ?'; params.push(`%${customer}%`); }
     
