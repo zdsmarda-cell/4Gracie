@@ -1,9 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { DeliveryType, OrderStatus, Ride, User, Order, PaymentMethod, Language } from '../../types';
-import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, Navigation, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle, Download } from 'lucide-react';
-import { CustomCalendar } from '../../components/CustomCalendar';
+import { DeliveryType, OrderStatus, Ride, Order } from '../../types';
+import { Map, Truck, User as UserIcon, Calendar, Check, X, Clock, AlertTriangle, Loader2, RefreshCw, List, History, Zap, Edit, Save, AlertCircle, Download, Package } from 'lucide-react';
 
 // --- EDIT ORDER MODAL (Internal Component for RidesTab) ---
 const QuickEditOrderModal: React.FC<{
@@ -11,11 +10,8 @@ const QuickEditOrderModal: React.FC<{
     onClose: () => void;
     onSave: (updatedOrder: Order) => Promise<void>;
     checkAvailability: any;
-    settings: any;
     getDeliveryRegion: any;
-    getRegionInfoForDate: any;
-    getPickupPointInfo: any;
-}> = ({ order, onClose, onSave, checkAvailability, settings, getDeliveryRegion, getRegionInfoForDate, getPickupPointInfo }) => {
+}> = ({ order, onClose, onSave, getDeliveryRegion }) => {
     const [editingOrder, setEditingOrder] = useState<Order>(JSON.parse(JSON.stringify(order)));
     const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -100,10 +96,12 @@ const RideDetail: React.FC<{
     onEditOrder: (orderId: string) => void;
 }> = ({ date, onClose, onEditOrder }) => {
     const { orders, rides, allUsers, updateRide, deleteRide, t, formatDate, isOperationPending, refreshData, printRouteSheet } = useStore();
-    const [isRefreshing, setIsRefreshing] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false); // Initially false, managed by parent or demand
     
+    // Refresh data when modal opens to ensure we have latest ride structure
     useEffect(() => {
         const sync = async () => {
+            setIsRefreshing(true);
             await refreshData();
             setIsRefreshing(false);
         };
@@ -167,16 +165,28 @@ const RideDetail: React.FC<{
         setSelectedDriverId('');
     };
 
-    const handleRemoveOrderFromRide = async (ride: Ride, orderId: string) => {
-        const newOrderIds = ride.orderIds.filter(id => id !== orderId);
+    const handleRemoveOrderFromRide = async (rideId: string, orderIdToRemove: string) => {
+        // CRITICAL FIX: Always look up the LATEST ride state from the store/hook
+        // Do not rely on the 'ride' object passed from map(), it might be stale.
+        const currentRide = rides.find(r => r.id === rideId);
         
+        if (!currentRide) {
+            console.error("Ride not found for deletion");
+            return;
+        }
+
+        // Safe filter with String comparison
+        const newOrderIds = currentRide.orderIds.filter(id => String(id) !== String(orderIdToRemove));
+        
+        console.log(`Removing order ${orderIdToRemove}. Old count: ${currentRide.orderIds.length}, New count: ${newOrderIds.length}`);
+
         if (newOrderIds.length === 0) {
             // Delete ride if empty
-            await deleteRide(ride.id);
+            await deleteRide(currentRide.id);
         } else {
-            // Update
+            // Update with new list and RESET steps to force recalc
             const updatedRide = { 
-                ...ride, 
+                ...currentRide, 
                 orderIds: newOrderIds,
                 steps: [] 
             };
@@ -280,7 +290,7 @@ const RideDetail: React.FC<{
                                                 <div>
                                                     <h3 className="font-bold text-gray-900">{driverName}</h3>
                                                     <div className="text-xs text-gray-500 flex items-center gap-2">
-                                                        <span>{rideOrders.length} objednávek</span>
+                                                        <span>{ride.orderIds.length} objednávek</span>
                                                         <span>•</span>
                                                         <span className="flex items-center"><Clock size={10} className="mr-1"/> Výjezd {ride.departureTime}</span>
                                                     </div>
@@ -302,9 +312,26 @@ const RideDetail: React.FC<{
                                         
                                         <div className="p-0">
                                             {pendingCalc ? (
-                                                <div className="p-4 text-center text-gray-400 text-xs flex flex-col items-center animate-pulse">
-                                                    <RefreshCw size={16} className="mb-1 animate-spin-slow"/>
-                                                    Jízda vytvořena. Čekám na automatický výpočet trasy (Worker)...
+                                                <div className="p-4">
+                                                    <div className="text-center text-gray-400 text-xs flex flex-col items-center mb-4">
+                                                        <RefreshCw size={16} className="mb-1 animate-spin-slow"/>
+                                                        Jízda vytvořena. Čekám na automatický výpočet trasy (Worker)...
+                                                    </div>
+                                                    {/* Fallback List so user sees items are there */}
+                                                    <div className="space-y-1 opacity-60">
+                                                        {rideOrders.map(o => (
+                                                            <div key={o.id} className="flex justify-between items-center text-xs bg-gray-50 p-2 rounded">
+                                                                <span><span className="font-bold">#{o.id}</span> {o.deliveryName}</span>
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); handleRemoveOrderFromRide(ride.id, o.id); }}
+                                                                    className="text-red-400 hover:text-red-600 p-1"
+                                                                    title="Odebrat z jízdy"
+                                                                >
+                                                                    <X size={14}/>
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             ) : (
                                                 <table className="w-full text-left text-xs">
@@ -336,7 +363,7 @@ const RideDetail: React.FC<{
                                                                 <td className="p-3 text-gray-600">{step.customerName}</td>
                                                                 <td className="p-3 text-right">
                                                                     <button 
-                                                                        onClick={(e) => { e.stopPropagation(); handleRemoveOrderFromRide(ride, step.orderId); }}
+                                                                        onClick={(e) => { e.stopPropagation(); handleRemoveOrderFromRide(ride.id, step.orderId); }}
                                                                         className="text-red-400 hover:text-red-600 p-1"
                                                                         title="Odebrat z jízdy"
                                                                     >
@@ -375,6 +402,11 @@ export const RidesTab: React.FC = () => {
     // Edit Order State
     const [editingOrder, setEditingOrder] = useState<Order | null>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+    // Initial Load
+    useEffect(() => {
+        refreshData();
+    }, []);
 
     // Auto-refresh when checking Generation tab
     useEffect(() => {
@@ -434,7 +466,6 @@ export const RidesTab: React.FC = () => {
     const handleSaveOrder = async (updatedOrder: Order) => {
         await updateOrder(updatedOrder, false, true);
         setIsEditModalOpen(false);
-        // Automatic triggering removed.
         await refreshData();
     };
 
