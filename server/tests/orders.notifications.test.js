@@ -32,7 +32,8 @@ vi.mock('../middleware/auth.js', () => ({
 const mockQuery = vi.fn();
 vi.mock('../db.js', () => ({
     withDb: (handler) => (req, res) => handler(req, res, { query: mockQuery }),
-    parseJsonCol: (row, col) => typeof row[col] === 'string' ? JSON.parse(row[col]) : row[col]
+    // FIX: Add default value for col to match real implementation
+    parseJsonCol: (row, col = 'data') => typeof row[col] === 'string' ? JSON.parse(row[col]) : row[col]
 }));
 
 // --- APP SETUP ---
@@ -127,7 +128,7 @@ describe('Server Notifications (Driver Actions)', () => {
         expect(emailService.queueOrderEmail).toHaveBeenCalledWith(
             expect.objectContaining({ id: 'ord-123', status: 'delivered' }), // Order object
             'status', // Type
-            expect.anything(), // Settings
+            expect.anything(), // Settings (now correctly parsed as object due to fix)
             'delivered' // Custom status
         );
     });
