@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { GlobalSettings, DayConfig, DiscountCode, EventSlot, DataSourceMode } from '../types';
 import { DEFAULT_SETTINGS } from '../constants';
 
@@ -15,7 +15,7 @@ export const useSettingsLogic = ({ dataSource, apiCall, showNotify, t }: UseSett
     const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
     const [discountCodes, setDiscountCodes] = useState<DiscountCode[]>([]);
 
-    const updateSettings = async (s: GlobalSettings): Promise<boolean> => {
+    const updateSettings = useCallback(async (s: GlobalSettings): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/settings', 'POST', s);
             if (res && res.success) { setSettings(s); showNotify(t('notification.saved')); return true; }
@@ -23,9 +23,9 @@ export const useSettingsLogic = ({ dataSource, apiCall, showNotify, t }: UseSett
         } else {
             setSettings(s); return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify, t]);
 
-    const updateDayConfig = async (c: DayConfig): Promise<boolean> => {
+    const updateDayConfig = useCallback(async (c: DayConfig): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/calendar', 'POST', c);
             if (res && res.success) {
@@ -37,9 +37,9 @@ export const useSettingsLogic = ({ dataSource, apiCall, showNotify, t }: UseSett
             setDayConfigs(prev => { const exists = prev.find(d => d.date === c.date); return exists ? prev.map(d => d.date === c.date ? c : d) : [...prev, c]; });
             return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify]);
 
-    const removeDayConfig = async (date: string): Promise<boolean> => {
+    const removeDayConfig = useCallback(async (date: string): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall(`/api/calendar/${date}`, 'DELETE');
             if (res && res.success) { setDayConfigs(prev => prev.filter(d => d.date !== date)); showNotify('Výjimka smazána z DB.'); return true; }
@@ -47,31 +47,31 @@ export const useSettingsLogic = ({ dataSource, apiCall, showNotify, t }: UseSett
         } else {
             setDayConfigs(prev => prev.filter(d => d.date !== date)); return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify]);
 
-    const updateEventSlot = async (slot: EventSlot): Promise<boolean> => {
+    const updateEventSlot = useCallback(async (slot: EventSlot): Promise<boolean> => {
         const newSlots = [...(settings.eventSlots || [])];
         const idx = newSlots.findIndex(s => s.date === slot.date);
         if (idx > -1) newSlots[idx] = slot;
         else newSlots.push(slot);
         return await updateSettings({ ...settings, eventSlots: newSlots });
-    };
+    }, [settings, updateSettings]);
 
-    const removeEventSlot = async (date: string): Promise<boolean> => {
+    const removeEventSlot = useCallback(async (date: string): Promise<boolean> => {
         const newSlots = (settings.eventSlots || []).filter(s => s.date !== date);
         return await updateSettings({ ...settings, eventSlots: newSlots });
-    };
+    }, [settings, updateSettings]);
 
-    const notifyEventSubscribers = async (date: string): Promise<boolean> => {
+    const notifyEventSubscribers = useCallback(async (date: string): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/admin/notify-event', 'POST', { date });
             if (res && res.success) showNotify(`Notifikace odeslána ${res.count} odběratelům.`);
             return true;
         }
         return false;
-    };
+    }, [dataSource, apiCall, showNotify]);
 
-    const addDiscountCode = async (c: DiscountCode): Promise<boolean> => {
+    const addDiscountCode = useCallback(async (c: DiscountCode): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/discounts', 'POST', c);
             if (res && res.success) { setDiscountCodes(prev => [...prev, c]); showNotify('Slevový kód uložen do DB.'); return true; }
@@ -79,9 +79,9 @@ export const useSettingsLogic = ({ dataSource, apiCall, showNotify, t }: UseSett
         } else {
             setDiscountCodes(prev => [...prev, c]); return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify]);
 
-    const updateDiscountCode = async (c: DiscountCode): Promise<boolean> => {
+    const updateDiscountCode = useCallback(async (c: DiscountCode): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/discounts', 'POST', c);
             if (res && res.success) { setDiscountCodes(prev => prev.map(x => x.id === c.id ? c : x)); showNotify('Slevový kód aktualizován v DB.'); return true; }
@@ -89,9 +89,9 @@ export const useSettingsLogic = ({ dataSource, apiCall, showNotify, t }: UseSett
         } else {
             setDiscountCodes(prev => prev.map(x => x.id === c.id ? c : x)); return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify]);
 
-    const deleteDiscountCode = async (id: string): Promise<boolean> => {
+    const deleteDiscountCode = useCallback(async (id: string): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall(`/api/discounts/${id}`, 'DELETE');
             if (res && res.success) { setDiscountCodes(prev => prev.filter(x => x.id !== id)); showNotify('Slevový kód smazán z DB.'); return true; }
@@ -99,7 +99,7 @@ export const useSettingsLogic = ({ dataSource, apiCall, showNotify, t }: UseSett
         } else {
             setDiscountCodes(prev => prev.filter(x => x.id !== id)); return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify]);
 
     return {
         settings,

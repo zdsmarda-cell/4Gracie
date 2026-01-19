@@ -286,6 +286,136 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         updateRide, deleteRide, printRouteSheet 
     } = useRideLogic({ dataSource, apiCall, setRides, orders, products, settings, showNotify });
 
+    // --- LOGISTICS & CALC ---
+    const getDailyLoad = useCallback((date: string, excludeOrderId?: string) => {
+        const relevantOrders = orders.filter(o => 
+            o.deliveryDate === date && 
+            o.status !== OrderStatus.CANCELLED && 
+            o.status !== OrderStatus.DELIVERED && 
+            o.status !== OrderStatus.NOT_PICKED_UP && 
+            o.id !== excludeOrderId
+        );
+        return calculateDailyLoad(relevantOrders, products, settings);
+    }, [orders, products, settings]);
+
+    const checkAvailability = useCallback((date: string, cartItems: CartItem[], excludeOrderId?: string): CheckResult => {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const target = new Date(date); target.setHours(0,0,0,0);
+        if (isNaN(target.getTime())) return { allowed: false, reason: 'Invalid Date', status: 'closed' as DayStatus };
+        if (target.getTime() < today.getTime()) return { allowed: false, reason: t('error.past'), status: 'past' as DayStatus };
+        const maxLead = cartItems.length > 0 ? Math.max(...cartItems.map(i => Number(i.leadTimeDays) || 0)) : 0;
+        const minDate = new Date(today.getTime()); minDate.setDate(minDate.getDate() + maxLead);
+        if (target.getTime() < minDate.getTime()) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' as DayStatus };
+        
+        const config = dayConfigs.find(d => d.date === date);
+        if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' as DayStatus };
+
+        const { load, eventLoad } = getDailyLoad(date, excludeOrderId);
+        
+        cartItems.forEach(item => {
+            const productDef = products.find(p => String(p.id) === String(item.id));
+            const workload = Number(productDef?.workload) || Number(item.workload) || 0;
+            const overhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
+            const quantity = Number(item.quantity) || 0;
+            const cat = item.category || productDef?.category;
+            const isEvent = !!(item.isEventProduct || productDef?.isEventProduct);
+            if (cat) {
+                if (isEvent) eventLoad[cat] = (eventLoad[cat] || 0) + (workload * quantity) + overhead;
+                else load[cat] = (load[cat] || 0) + (workload * quantity) + overhead;
+            }
+        });
+
+        let anyExceeds = false;
+        const catsToCheck = new Set([...settings.categories.map(c => c.id)]);
+        for(const cat of catsToCheck) {
+            const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
+            if ((load[cat] || 0) > limit) anyExceeds = true; 
+        }
+        if (anyExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' as DayStatus };
+        
+        const hasEventItems = cartItems.some(i => i.isEventProduct);
+        if (hasEventItems) {
+            const slot = settings.eventSlots?.find(s => s.date === date);
+            if (!slot) return { allowed: false, reason: t('cart.event_only'), status: 'closed' as DayStatus }; 
+            let eventExceeds = false;
+            for(const cat of catsToCheck) {
+                const limit = slot.capacityOverrides?.[cat] ?? 0;
+                if (limit > 0 && (eventLoad[cat] || 0) > limit) eventExceeds = true;
+            }
+            if (eventExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' as DayStatus };
+        }
+        return { allowed: true, status: 'available' as DayStatus };
+    }, [dayConfigs, getDailyLoad, settings, products, t]);
+
+    const getDateStatus = (date: string, items: CartItem[]) => checkAvailability(date, items).status;
+    const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
+    const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { const ex = r.exceptions?.find(e => e.date === d); return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; };
+    const getPickupPointInfo = (loc: PickupLocation, d: string) => { const ex = loc.exceptions?.find(e => e.date === d); if (ex) return { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true }; const day = new Date(d).getDay(); const c = loc.openingHours[day]; if (!c || !c.isOpen) return { isOpen: false, isException: false }; return { isOpen: true, timeStart: c.start, timeEnd: c.end, isException: false }; };
+    const getAvailableEventDates = (p: Product) => getAvailableEventDatesLogic(p, settings, orders, products);
+    const isEventCapacityAvailable = (p: Product) => getAvailableEventDates(p).length > 0;
+    const calculatePackagingFee = (items: CartItem[]) => calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
+
+    const searchUsers = useCallback(async (filters: any) => { if(dataSource === 'api') { const q = new URLSearchParams(filters).toString(); const res = await apiCall(`/api/users?${q}`, 'GET'); if(res&&res.success) return res.users; return []; } return allUsers; }, [dataSource, apiCall, allUsers]);
+
+    // --- DISCOUNT FUNCTIONS ---
+    const validateDiscount = (code: string, currentCart: CartItem[]) => {
+        return calculateDiscountAmountLogic(code, currentCart, discountCodes, orders);
+    };
+
+    const applyDiscount = (code: string) => {
+        if (appliedDiscounts.some(d => d.code === code.toUpperCase())) {
+            return { success: false, error: t('discount.applied') };
+        }
+        const res = validateDiscount(code, cart);
+        if (res.success && res.amount !== undefined) {
+            if (appliedDiscounts.length > 0) {
+                 const newIsStackable = res.discount?.isStackable;
+                 const existingAreStackable = appliedDiscounts.every(ad => {
+                     const d = discountCodes.find(dc => dc.code === ad.code);
+                     return d?.isStackable;
+                 });
+                 if (!newIsStackable || !existingAreStackable) {
+                     return { success: false, error: t('discount.not_stackable') };
+                 }
+            }
+            setAppliedDiscounts([...appliedDiscounts, { code: res.discount!.code, amount: res.amount }]);
+            return { success: true };
+        }
+        return { success: false, error: res.error || t('discount.invalid') };
+    };
+
+    const removeAppliedDiscount = (code: string) => {
+        setAppliedDiscounts(prev => prev.filter(d => d.code !== code));
+    };
+
+    // --- DOCUMENTS ---
+    const printInvoice = async (order: Order, type: 'proforma' | 'final' = 'proforma') => {
+        if (dataSource === 'api') {
+             const token = localStorage.getItem('auth_token');
+             try {
+                 const res = await fetch(getFullApiUrl(`/api/orders/${order.id}/invoice?type=${type}`), {
+                     headers: { 'Authorization': `Bearer ${token}` }
+                 });
+                 if(res.ok) {
+                     const blob = await res.blob();
+                     const url = window.URL.createObjectURL(blob);
+                     const a = document.createElement('a');
+                     a.href = url;
+                     a.download = `faktura_${order.id}_${type}.pdf`;
+                     document.body.appendChild(a);
+                     a.click();
+                     document.body.removeChild(a);
+                 } else {
+                     showNotify('Chyba při generování faktury.', 'error');
+                 }
+             } catch(e) {
+                 showNotify('Chyba spojení.', 'error');
+             }
+        } else {
+             showNotify('Tisk faktur je dostupný pouze v online režimu (API).', 'error');
+        }
+    };
+
     // --- REFRESH USER LOGIC ---
     const refreshUser = async () => {
         if(dataSource === 'api') {
@@ -330,14 +460,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             if (isProd && !isLocalhost) { setDbConnectionError(true); return; }
   
             // LOCAL MODE
-            // Force merge INITIAL_USERS to ensure mock login credentials are correct and fresh
             const storedUsers = loadFromStorage<User[]>('db_users', []);
             const mergedUsers = [...storedUsers];
             
             INITIAL_USERS.forEach(initUser => {
                 const idx = mergedUsers.findIndex(u => u.id === initUser.id);
                 if (idx >= 0) {
-                    // Overwrite existing to ensure correct password hash and roles
                     mergedUsers[idx] = initUser;
                 } else {
                     mergedUsers.push(initUser);
@@ -375,26 +503,42 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 registration.pushManager.getSubscription().then(sub => {
                     setPushSubscription(sub);
                     if (sub && user && dataSource === 'api') {
+                        // Note: Using apiCall inside useEffect with implicit dependency via StoreContext 
+                        // is protected by apiCall stability (via useCallback/stable references).
+                        // If it triggers loop, it means dependencies change.
+                        // Here we invoke it once on mount/user change.
                         apiCall('/api/notifications/subscribe', 'POST', { subscription: sub }).catch(e => console.error(e));
                     }
                 });
             });
         }
-    }, [user, dataSource, apiCall]);
+    }, [user, dataSource, apiCall]); // Added apiCall to deps but it is stable now
+
+    // Safe Storage Helper
+    const saveToStorage = (key: string, value: any) => {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (e: any) {
+            console.error(`Storage Save Error (${key}):`, e);
+            if (e.name === 'QuotaExceededError' || e.message.includes('quota')) {
+                showNotify(`Chyba: Plná paměť prohlížeče! Položka nebyla uložena.`, 'error');
+            }
+        }
+    };
 
     // Storage Sync
     useEffect(() => localStorage.setItem('cart', JSON.stringify(cart)), [cart]);
     useEffect(() => localStorage.setItem('session_user', JSON.stringify(user)), [user]);
     useEffect(() => {
         if (dataSource === 'local' && isInitialized) {
-            localStorage.setItem('db_users', JSON.stringify(allUsers));
-            localStorage.setItem('db_orders', JSON.stringify(orders));
-            localStorage.setItem('db_products', JSON.stringify(products));
-            localStorage.setItem('db_discounts', JSON.stringify(discountCodes));
-            localStorage.setItem('db_settings', JSON.stringify(settings));
-            localStorage.setItem('db_dayconfigs', JSON.stringify(dayConfigs));
-            localStorage.setItem('db_rides', JSON.stringify(rides));
-            localStorage.setItem('db_ingredients', JSON.stringify(ingredients));
+            saveToStorage('db_users', allUsers);
+            saveToStorage('db_orders', orders);
+            saveToStorage('db_products', products);
+            saveToStorage('db_discounts', discountCodes);
+            saveToStorage('db_settings', settings);
+            saveToStorage('db_dayconfigs', dayConfigs);
+            saveToStorage('db_rides', rides);
+            saveToStorage('db_ingredients', ingredients);
         }
     }, [allUsers, orders, products, discountCodes, settings, dayConfigs, rides, ingredients, dataSource, isInitialized]);
 
@@ -458,205 +602,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const updatePwa = () => { if (swRegistration && swRegistration.waiting) { swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' }); setIsPwaUpdateAvailable(false); window.location.reload(); } };
     const subscribeToPush = async () => { if (!swRegistration || !vapidPublicKey) return; try { const sub = await swRegistration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidPublicKey }); setPushSubscription(sub); if (dataSource === 'api') await apiCall('/api/notifications/subscribe', 'POST', { subscription: sub }); } catch (e) { console.error("Push subscribe failed", e); } };
     const unsubscribeFromPush = async () => { if (!pushSubscription) return; await pushSubscription.unsubscribe(); setPushSubscription(null); if (dataSource === 'api') await apiCall('/api/notifications/unsubscribe', 'POST', { endpoint: pushSubscription.endpoint }); };
-
-    // --- MISSING FUNCTIONS IMPLEMENTATION ---
-
-    const getDailyLoad = useCallback((date: string, excludeOrderId?: string) => {
-        const relevantOrders = orders.filter(o => 
-            o.deliveryDate === date && 
-            o.status !== OrderStatus.CANCELLED &&
-            o.status !== OrderStatus.DELIVERED &&
-            o.status !== OrderStatus.NOT_PICKED_UP && 
-            o.id !== excludeOrderId
-        );
-        return calculateDailyLoad(relevantOrders, products, settings);
-    }, [orders, products, settings]);
-
-    const checkAvailability = useCallback((date: string, cartItems: CartItem[], excludeOrderId?: string): CheckResult => {
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const targetDate = new Date(date); targetDate.setHours(0, 0, 0, 0);
-        
-        if (targetDate < today) return { allowed: false, reason: t('error.past'), status: 'past' };
-        
-        const maxLeadTime = cartItems.length > 0 ? Math.max(...cartItems.map(i => i.leadTimeDays || 0)) : 0;
-        const minPossibleDate = new Date(today); 
-        minPossibleDate.setDate(minPossibleDate.getDate() + maxLeadTime);
-        
-        if (targetDate < minPossibleDate) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' };
-
-        const config = dayConfigs.find(d => d.date === date);
-        if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' };
-
-        const { load, eventLoad } = getDailyLoad(date, excludeOrderId);
-        
-        const cartLoad: Record<string, number> = {};
-        const cartEventLoad: Record<string, number> = {};
-        
-        cartItems.forEach(item => {
-             const productDef = products.find(p => String(p.id) === String(item.id)) || item;
-             const workload = Number(productDef.workload) || 0;
-             const overhead = Number(productDef.workloadOverhead) || 0;
-             const cat = productDef.category || 'unknown';
-             const isEvent = !!productDef.isEventProduct;
-             
-             if (isEvent) {
-                 cartEventLoad[cat] = (cartEventLoad[cat] || 0) + (workload * item.quantity);
-                 cartEventLoad[cat] += overhead; 
-             } else {
-                 cartLoad[cat] = (cartLoad[cat] || 0) + (workload * item.quantity);
-                 cartLoad[cat] += overhead;
-             }
-        });
-
-        for (const cat of settings.categories) {
-            const limit = config?.capacityOverrides?.[cat.id] ?? settings.defaultCapacities[cat.id] ?? 0;
-            const current = load[cat.id] || 0;
-            const added = cartLoad[cat.id] || 0;
-            if ((current + added) > limit) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
-        }
-        
-        const eventSlot = settings.eventSlots?.find(s => s.date === date);
-        if (Object.keys(cartEventLoad).length > 0) {
-             if (!eventSlot) return { allowed: false, reason: t('cart.event_only'), status: 'closed' };
-             for (const catId in cartEventLoad) {
-                 const limit = eventSlot.capacityOverrides?.[catId] ?? 0;
-                 const current = eventLoad[catId] || 0;
-                 const added = cartEventLoad[catId] || 0;
-                 if ((current + added) > limit) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' };
-             }
-        }
-
-        return { allowed: true, status: 'available' };
-    }, [dayConfigs, getDailyLoad, settings, products, t]);
-
-    const getDateStatus = (date: string, items: CartItem[]) => checkAvailability(date, items).status;
-
-    const getDeliveryRegion = (zip: string) => {
-        const cleanZip = zip.replace(/\s/g, '');
-        return settings.deliveryRegions.find(r => r.enabled && r.zips.includes(cleanZip));
-    };
-
-    const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { 
-        const ex = r.exceptions?.find(e => e.date === d); 
-        if (ex) return { 
-            isOpen: ex.isOpen, 
-            timeStart: ex.deliveryTimeStart, 
-            timeEnd: ex.deliveryTimeEnd, 
-            isException: true,
-            reason: ex.isOpen ? t('admin.exception_open') : t('admin.exception_closed')
-        };
-        return { 
-            isOpen: true, 
-            timeStart: r.deliveryTimeStart, 
-            timeEnd: r.deliveryTimeEnd, 
-            isException: false 
-        }; 
-    };
-
-    const getPickupPointInfo = (location: PickupLocation, dateStr: string) => {
-        const ex = location.exceptions?.find(e => e.date === dateStr);
-        if (ex) return {
-            isOpen: ex.isOpen,
-            timeStart: ex.deliveryTimeStart,
-            timeEnd: ex.deliveryTimeEnd,
-            isException: true,
-            reason: ex.isOpen ? t('admin.exception_open') : t('admin.exception_closed')
-        };
-
-        const date = new Date(dateStr);
-        const dayOfWeek = date.getDay();
-        const config = location.openingHours[dayOfWeek];
-
-        if (!config || !config.isOpen) return { isOpen: false, isException: false, reason: t('error.day_closed') };
-
-        return {
-            isOpen: true,
-            timeStart: config.start,
-            timeEnd: config.end,
-            isException: false
-        };
-    };
-
-    const calculatePackagingFee = (items: CartItem[]) => {
-        return calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
-    };
-
-    const applyDiscount = (code: string) => {
-        if (appliedDiscounts.some(d => d.code === code.toUpperCase())) return { success: false, error: t('discount.applied') };
-        const res = calculateDiscountAmountLogic(code, cart, discountCodes, orders);
-        if (res.success && res.amount !== undefined) {
-            if (appliedDiscounts.length > 0 && !res.discount?.isStackable) return { success: false, error: t('discount.not_stackable') };
-            const existingNonStackable = appliedDiscounts.some(ad => {
-                const d = discountCodes.find(dc => dc.code === ad.code);
-                return d && !d.isStackable;
-            });
-            if (existingNonStackable) return { success: false, error: t('discount.not_stackable') };
-
-            setAppliedDiscounts(prev => [...prev, { code: res.discount!.code, amount: res.amount! }]);
-            return { success: true };
-        }
-        return { success: false, error: res.error || t('discount.invalid') };
-    };
-
-    const removeAppliedDiscount = (code: string) => {
-        setAppliedDiscounts(prev => prev.filter(d => d.code !== code));
-    };
-
-    const validateDiscount = (code: string, currentCart: CartItem[]) => {
-        return calculateDiscountAmountLogic(code, currentCart, discountCodes, orders);
-    };
-
-    const getAvailableEventDates = (product: Product) => {
-        return getAvailableEventDatesLogic(product, settings, orders, products);
-    };
-
-    const isEventCapacityAvailable = (product: Product) => {
-        const dates = getAvailableEventDates(product);
-        return dates.length > 0;
-    };
-
-    const printInvoice = async (order: Order, type: 'proforma' | 'final' = 'proforma') => {
-        if (dataSource === 'api') {
-            try {
-                const token = localStorage.getItem('auth_token');
-                const response = await fetch(getFullApiUrl(`/api/orders/${order.id}/invoice?type=${type}`), {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                
-                if (!response.ok) throw new Error('Failed to download invoice');
-                
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `faktura_${order.id}_${type}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-            } catch (e) {
-                showNotify('Chyba při stahování faktury.', 'error');
-            }
-        } else {
-            alert('Tisk faktur je dostupný v API režimu.');
-        }
-    };
-
-    const searchUsers = useCallback(async (filters: any) => {
-        if (dataSource === 'api') {
-            const q = new URLSearchParams(filters).toString();
-            const res = await apiCall(`/api/users?${q}`, 'GET');
-            if (res && res.success) return res.users;
-            return [];
-        } else {
-            return allUsers.filter(u => {
-                if (filters.search) {
-                    const term = filters.search.toLowerCase();
-                    if (!u.name.toLowerCase().includes(term) && !u.email.toLowerCase().includes(term)) return false;
-                }
-                return true;
-            });
-        }
-    }, [dataSource, apiCall, allUsers]);
 
     return (
         <StoreContext.Provider value={{

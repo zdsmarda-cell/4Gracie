@@ -15,7 +15,7 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
 
     // --- PRODUCTS ---
 
-    const addProduct = async (p: Product): Promise<boolean> => {
+    const addProduct = useCallback(async (p: Product): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/products', 'POST', p);
             if (res && res.success) { 
@@ -28,9 +28,9 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             setProducts(prev => [...prev, p]); 
             return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify, t]);
 
-    const updateProduct = async (p: Product): Promise<boolean> => {
+    const updateProduct = useCallback(async (p: Product): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/products', 'POST', p);
             if (res && res.success) { 
@@ -43,9 +43,9 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             setProducts(prev => prev.map(x => x.id === p.id ? p : x)); 
             return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify, t]);
 
-    const deleteProduct = async (id: string): Promise<boolean> => {
+    const deleteProduct = useCallback(async (id: string): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall(`/api/products/${id}`, 'DELETE');
             if (res && res.success) { 
@@ -58,7 +58,7 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             setProducts(prev => prev.filter(x => x.id !== id)); 
             return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify, t]);
 
     const searchProducts = useCallback(async (filters: any) => {
         if (dataSource === 'api') {
@@ -67,14 +67,14 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             if (res && res.success) return res;
             return { products: [], total: 0, page: 1, pages: 1 };
         } else {
-            // Local fallback logic would go here if needed
+            // Local fallback
             return { products: products, total: products.length, page: 1, pages: 1 };
         }
     }, [dataSource, apiCall, products]);
 
     // --- INGREDIENTS ---
 
-    const addIngredient = async (ingredient: Ingredient): Promise<boolean> => {
+    const addIngredient = useCallback(async (ingredient: Ingredient): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/ingredients', 'POST', ingredient);
             if (res && res.success) {
@@ -85,11 +85,12 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             return false;
         } else {
             setIngredients(prev => [...prev, ingredient]);
+            showNotify('Surovina uložena (Lokálně).');
             return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify]);
 
-    const updateIngredient = async (ingredient: Ingredient): Promise<boolean> => {
+    const updateIngredient = useCallback(async (ingredient: Ingredient): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/ingredients', 'POST', ingredient);
             if (res && res.success) {
@@ -102,9 +103,9 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             setIngredients(prev => prev.map(i => i.id === ingredient.id ? ingredient : i));
             return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify]);
 
-    const deleteIngredient = async (id: string): Promise<boolean> => {
+    const deleteIngredient = useCallback(async (id: string): Promise<boolean> => {
         // Enforce Referential Integrity Check
         const isUsed = products.some(p => p.composition?.some(c => c.ingredientId === id));
         if (isUsed) {
@@ -124,7 +125,7 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             setIngredients(prev => prev.filter(i => i.id !== id));
             return true;
         }
-    };
+    }, [dataSource, apiCall, showNotify, products]);
 
     return {
         products,

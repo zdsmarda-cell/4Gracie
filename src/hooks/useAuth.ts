@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback } from 'react';
 import { User, DataSourceMode } from '../types';
 
@@ -15,7 +16,7 @@ export const useAuth = (
     setUser: React.Dispatch<React.SetStateAction<User | null>>
 ) => {
     
-    const login = async (email: string, password?: string) => {
+    const login = useCallback(async (email: string, password?: string) => {
         if (dataSource === 'api') {
             // Pass isPwa flag to server to request long-lived token
             const res = await apiCall('/api/users/login', 'POST', { email, password, isPwa });
@@ -44,9 +45,9 @@ export const useAuth = (
             }
             return { success: false, message: 'Nenalezen.' };
         }
-    };
+    }, [dataSource, apiCall, allUsers, isPwa, setUser]);
 
-    const register = (name: string, email: string, phone: string, password?: string) => {
+    const register = useCallback((name: string, email: string, phone: string, password?: string) => {
         if (allUsers.find(u => u.email.toLowerCase() === email.toLowerCase())) { 
             showNotify('Tento email je již registrován.', 'error');
             return; 
@@ -64,16 +65,16 @@ export const useAuth = (
             setUser(newUser);
             localStorage.setItem('session_user', JSON.stringify(newUser));
         }
-    };
+    }, [allUsers, dataSource, apiCall, showNotify, setAllUsers, setUser]);
 
-    const logout = () => { 
+    const logout = useCallback(() => { 
         setUser(null); 
         localStorage.removeItem('session_user');
         localStorage.removeItem('auth_token'); // Clear Access Token
         localStorage.removeItem('refresh_token'); // Clear Refresh Token
-    };
+    }, [setUser]);
 
-    const addUser = async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
+    const addUser = useCallback(async (name: string, email: string, phone: string, role: 'customer' | 'admin' | 'driver'): Promise<boolean> => {
         if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase())) { alert('Uživatel již existuje.'); return false; }
         const newUser: User = { id: Date.now().toString(), name, email, phone, role, billingAddresses: [], deliveryAddresses: [], isBlocked: false, passwordHash: hashPassword('1234'), marketingConsent: false };
         
@@ -88,9 +89,9 @@ export const useAuth = (
             setAllUsers(prev => [...prev, newUser]);
             return true;
         }
-    };
+    }, [allUsers, dataSource, apiCall, setAllUsers]);
 
-    const updateUser = async (u: User): Promise<boolean> => {
+    const updateUser = useCallback(async (u: User): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/users', 'POST', u);
             if (res && res.success) {
@@ -106,9 +107,9 @@ export const useAuth = (
             setAllUsers(prev => prev.map(x => x.id === u.id ? u : x));
             return true;
         }
-    };
+    }, [dataSource, apiCall, setUser, setAllUsers]);
 
-    const updateUserAdmin = async (u: User): Promise<boolean> => {
+    const updateUserAdmin = useCallback(async (u: User): Promise<boolean> => {
         if (dataSource === 'api') {
             const res = await apiCall('/api/users', 'POST', u);
             if (res && res.success) {
@@ -128,27 +129,27 @@ export const useAuth = (
             }
             return true;
         }
-    };
+    }, [dataSource, apiCall, user, setUser, setAllUsers]);
 
-    const toggleUserBlock = async (id: string): Promise<boolean> => { 
+    const toggleUserBlock = useCallback(async (id: string): Promise<boolean> => { 
         const u = allUsers.find(x => x.id === id); 
         if (u) { 
             const updated = { ...u, isBlocked: !u.isBlocked }; 
             return await updateUserAdmin(updated); 
         } 
         return false; 
-    };
+    }, [allUsers, updateUserAdmin]);
 
-    const sendPasswordReset = async (email: string) => { 
+    const sendPasswordReset = useCallback(async (email: string) => { 
         if (dataSource === 'api') { 
             const res = await apiCall('/api/auth/reset-password', 'POST', { email }); 
             if (res && res.success) { return { success: true, message: res.message }; } 
             return { success: false, message: res?.message || 'Server error' }; 
         } 
         return { success: true, message: 'Email sent (simulated)' }; 
-    };
+    }, [dataSource, apiCall]);
 
-    const resetPasswordByToken = async (token: string, newPass: string) => { 
+    const resetPasswordByToken = useCallback(async (token: string, newPass: string) => { 
         if (dataSource === 'api') { 
             const newHash = hashPassword(newPass); 
             const res = await apiCall('/api/auth/reset-password-confirm', 'POST', { token, newPasswordHash: newHash }); 
@@ -161,15 +162,15 @@ export const useAuth = (
         } else { 
             return { success: true, message: 'Heslo změněno (Lokální simulace)' }; 
         } 
-    };
+    }, [dataSource, apiCall, fetchDataTrigger]);
 
-    const changePassword = async (o: string, n: string) => { 
+    const changePassword = useCallback(async (o: string, n: string) => { 
         if (!user) return { success: false, message: 'Login required' }; 
         if (hashPassword(o) !== user.passwordHash) return { success: false, message: 'Staré heslo nesouhlasí' }; 
         const u = { ...user, passwordHash: hashPassword(n) }; 
         await updateUser(u); 
         return { success: true, message: 'Změněno' }; 
-    };
+    }, [user, updateUser]);
 
     return {
         login,
