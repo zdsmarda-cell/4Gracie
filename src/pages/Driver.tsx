@@ -2,15 +2,25 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../context/StoreContext';
 import { Order, OrderStatus, Product, Ride } from '../types';
-import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye, ArrowLeft, RefreshCw, Calendar, ChevronRight, Play, Flag, Download } from 'lucide-react';
+import { Phone, MapPin, Navigation as Map, CheckCircle, XCircle, Ban, AlertTriangle, Package, Check, Eye, ArrowLeft, RefreshCw, Calendar, ChevronRight, Play, Flag, Download, Loader2 } from 'lucide-react';
 import { calculatePackageCountLogic } from '../utils/orderLogic';
 
 export const Driver: React.FC = () => {
-    const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment, refreshData, updateRide, printRouteSheet } = useStore();
+    const { user, rides, orders, products, updateOrderStatus, settings, formatDate, isPreviewEnvironment, refreshData, updateRide, printRouteSheet, t } = useStore();
     const [modalState, setModalState] = useState<{ type: 'complete' | 'fail' | 'start' | 'finish', orderId?: string } | null>(null);
     const [selectedRideId, setSelectedRideId] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const wakeLockRef = useRef<any>(null);
+
+    // --- AUTO REFRESH ON MOUNT ---
+    useEffect(() => {
+        const load = async () => {
+            setIsRefreshing(true);
+            await refreshData();
+            setIsRefreshing(false);
+        };
+        load();
+    }, []);
 
     // --- WAKE LOCK API ---
     useEffect(() => {
@@ -112,28 +122,25 @@ export const Driver: React.FC = () => {
     // --- ACTIONS ---
 
     const handleNavigation = (address: string, orderId: string) => {
-        // Trigger Notification "Blížím se" (Approaching)
-        // We use updateOrderStatus with current status to trigger notification logic if supported, 
-        // or dedicated endpoint. Here we assume updateStatus handles it via side-effect if we had 'approaching' status.
-        // Since we don't have 'approaching' status, we just open map.
-        // Feature Request: Notify user. We will trigger update with 'on_way' again with notify=true.
-        updateOrderStatus([orderId], OrderStatus.ON_WAY, true, true);
-        
         const encoded = encodeURIComponent(address);
         window.open(`https://www.google.com/maps/dir/?api=1&destination=${encoded}`, '_blank');
     };
 
     const handleStartRide = async () => {
         if (!currentRide) return;
+        
         // 1. Update Ride Status
         const updatedRide = { ...currentRide, status: 'active' as const };
         await updateRide(updatedRide);
         
         // 2. Update All Orders to ON_WAY and Notify
+        // This triggers email/push notification to customers
         if (currentRide.orderIds.length > 0) {
             await updateOrderStatus(currentRide.orderIds, OrderStatus.ON_WAY, true, true);
         }
+        
         setModalState(null);
+        handleRefresh(); // Refresh to reflect status changes
     };
 
     const handleFinishRide = async () => {
@@ -154,8 +161,6 @@ export const Driver: React.FC = () => {
     const updateDepartureTime = async (newTime: string) => {
         if (!currentRide) return;
         // Update ride with new time - backend worker will pick it up and recalculate if planned
-        // If active, it might not recalculate automatically depending on worker logic.
-        // For now, just save it.
         const updated = { ...currentRide, departureTime: newTime, steps: [] }; // Reset steps to force recalc
         await updateRide(updated);
     };
@@ -178,6 +183,8 @@ export const Driver: React.FC = () => {
                     ) : (
                         myRides.map(ride => {
                             const stopCount = ride.steps?.filter(s => s.type === 'delivery').length || 0;
+                            const isPending = ride.status === 'planned' && (!ride.steps || ride.steps.length === 0);
+
                             return (
                                 <div key={ride.id} onClick={() => setSelectedRideId(ride.id)} className={`bg-white p-5 rounded-2xl border shadow-sm cursor-pointer hover:shadow-md transition active:scale-[0.98] ${ride.status === 'active' ? 'border-l-4 border-l-green-500 ring-1 ring-green-100' : 'border-l-4 border-l-blue-500'}`}>
                                     <div className="flex justify-between items-center">
@@ -185,7 +192,13 @@ export const Driver: React.FC = () => {
                                             <div className={`p-3 rounded-xl ${ride.status === 'active' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}><Calendar size={20} /></div>
                                             <div>
                                                 <div className="flex items-center gap-2"><span className="font-bold text-lg text-gray-900">{formatDate(ride.date)}</span></div>
-                                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5"><span>{stopCount} zastávek</span><span>•</span><span>Start: {ride.departureTime}</span></div>
+                                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                                    {isPending ? (
+                                                        <span className="text-orange-500 font-bold flex items-center animate-pulse"><Loader2 size={10} className="animate-spin mr-1"/> Čeká na výpočet trasy</span>
+                                                    ) : (
+                                                        <><span>{stopCount} zastávek</span><span>•</span><span>Start: {ride.departureTime}</span></>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                         <ChevronRight size={20} className="text-gray-300" />
@@ -204,6 +217,9 @@ export const Driver: React.FC = () => {
 
     // --- DETAIL VIEW ---
     if (!currentRide) return null;
+    
+    // Check if ride is pending calculation
+    const isPendingCalculation = currentRide.status === 'planned' && (!currentRide.steps || currentRide.steps.length === 0);
 
     return (
         <div className="max-w-2xl mx-auto pb-32 animate-in slide-in-from-right-8 duration-300">
@@ -234,7 +250,16 @@ export const Driver: React.FC = () => {
             </div>
 
             <div className="p-4 space-y-1">
-                {currentRide.steps?.map((step, idx) => {
+                {isPendingCalculation && (
+                    <div className="p-12 text-center text-gray-500 flex flex-col items-center animate-pulse">
+                        <Loader2 size={48} className="text-accent mb-4 animate-spin" />
+                        <h3 className="font-bold text-lg">Probíhá výpočet trasy...</h3>
+                        <p className="text-sm mt-2">Prosím vyčkejte. Trasa se optimalizuje na serveru.</p>
+                        <button onClick={handleRefresh} className="mt-6 text-blue-600 font-bold underline">Zkusit aktualizovat</button>
+                    </div>
+                )}
+
+                {!isPendingCalculation && currentRide.steps?.map((step, idx) => {
                         const isDepot = step.type === 'pickup';
                         if (isDepot) return null; 
                         const order = orders.find(o => o.id === step.orderId);
@@ -293,7 +318,7 @@ export const Driver: React.FC = () => {
                 {currentRide.status === 'planned' && (
                     <button 
                         onClick={() => setModalState({ type: 'start' })}
-                        disabled={hasOtherActiveRide}
+                        disabled={hasOtherActiveRide || isPendingCalculation}
                         className="bg-primary text-white w-full max-w-md py-4 rounded-xl font-bold text-lg shadow-xl flex items-center justify-center gap-2 disabled:bg-gray-400"
                     >
                         {hasOtherActiveRide ? 'Jiná jízda je aktivní' : <><Play size={24}/> Zahájit jízdu</>}
@@ -318,7 +343,7 @@ export const Driver: React.FC = () => {
                             {modalState.type === 'start' ? 'Zahájit jízdu?' : modalState.type === 'finish' ? 'Ukončit jízdu?' : 'Potvrzení'}
                         </h3>
                         <p className="text-gray-500 mb-6">
-                            {modalState.type === 'start' && 'Objednávky se přepnou do stavu "Na cestě" a odešlou se notifikace.'}
+                            {modalState.type === 'start' && 'Objednávky se přepnou do stavu "Na cestě" a odešlou se notifikace zákazníkům.'}
                             {modalState.type === 'finish' && 'Jízda bude uzavřena. Ujistěte se, že jsou všechny zastávky vyřešeny.'}
                             {(modalState.type === 'complete' || modalState.type === 'fail') && 'Opravdu chcete změnit stav objednávky?'}
                         </p>

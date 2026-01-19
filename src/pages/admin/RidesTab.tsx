@@ -117,7 +117,8 @@ const RideDetail: React.FC<{
         o.deliveryDate === date && 
         o.deliveryType === DeliveryType.DELIVERY && 
         o.status !== OrderStatus.CANCELLED &&
-        o.status !== OrderStatus.DELIVERED
+        o.status !== OrderStatus.DELIVERED &&
+        o.status !== OrderStatus.NOT_PICKED_UP
     ), [orders, date]);
 
     const assignedOrderIds = useMemo(() => {
@@ -126,6 +127,7 @@ const RideDetail: React.FC<{
         return set;
     }, [dayRides]);
 
+    // Unassigned orders should NOT show finished orders (delivered/cancelled), they are done.
     const unassignedOrders = useMemo(() => dayOrders.filter(o => !assignedOrderIds.has(o.id)), [dayOrders, assignedOrderIds]);
 
     const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
@@ -169,8 +171,6 @@ const RideDetail: React.FC<{
     };
 
     const handleRemoveOrderFromRide = async (rideId: string, orderIdToRemove: string) => {
-        // CRITICAL FIX: Always look up the LATEST ride state from the store/hook
-        // Do not rely on the 'ride' object passed from map(), it might be stale.
         const currentRide = rides.find(r => r.id === rideId);
         
         if (!currentRide) {
@@ -178,7 +178,6 @@ const RideDetail: React.FC<{
             return;
         }
 
-        // Safe filter with String comparison
         const newOrderIds = currentRide.orderIds.filter(id => String(id) !== String(orderIdToRemove));
         
         console.log(`Removing order ${orderIdToRemove}. Old count: ${currentRide.orderIds.length}, New count: ${newOrderIds.length}`);
@@ -347,34 +346,40 @@ const RideDetail: React.FC<{
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y">
-                                                        {ride.steps?.filter(s => s.type === 'delivery').map((step, idx) => (
-                                                            <tr 
-                                                                key={idx} 
-                                                                className={`hover:bg-gray-50 transition ${step.error ? 'bg-red-50 hover:bg-red-100 cursor-pointer' : ''}`}
-                                                                onClick={() => step.error && onEditOrder(step.orderId)}
-                                                                title={step.error ? 'Klikněte pro opravu adresy' : ''}
-                                                            >
-                                                                <td className="p-3 font-mono text-gray-500">{step.arrivalTime}</td>
-                                                                <td className="p-3 font-medium text-gray-700 max-w-xs truncate">
-                                                                    {step.error && (
-                                                                        <div className="flex items-center text-red-600 mb-1 font-bold">
-                                                                            <AlertTriangle size={12} className="mr-1"/> Chyba: {step.error}
-                                                                        </div>
-                                                                    )}
-                                                                    {step.address}
-                                                                </td>
-                                                                <td className="p-3 text-gray-600">{step.customerName}</td>
-                                                                <td className="p-3 text-right">
-                                                                    <button 
-                                                                        onClick={(e) => { e.stopPropagation(); handleRemoveOrderFromRide(ride.id, step.orderId); }}
-                                                                        className="text-red-400 hover:text-red-600 p-1"
-                                                                        title="Odebrat z jízdy"
-                                                                    >
-                                                                        <X size={14}/>
-                                                                    </button>
-                                                                </td>
-                                                            </tr>
-                                                        ))}
+                                                        {ride.steps?.filter(s => s.type === 'delivery').map((step, idx) => {
+                                                            const orderInfo = orders.find(o => o.id === step.orderId);
+                                                            const isFinished = orderInfo && (orderInfo.status === OrderStatus.DELIVERED || orderInfo.status === OrderStatus.CANCELLED || orderInfo.status === OrderStatus.NOT_PICKED_UP);
+                                                            const finishedStyle = isFinished ? 'opacity-50 grayscale' : '';
+                                                            
+                                                            return (
+                                                                <tr 
+                                                                    key={idx} 
+                                                                    className={`hover:bg-gray-50 transition ${step.error ? 'bg-red-50 hover:bg-red-100 cursor-pointer' : ''} ${finishedStyle}`}
+                                                                    onClick={() => step.error && onEditOrder(step.orderId)}
+                                                                    title={step.error ? 'Klikněte pro opravu adresy' : ''}
+                                                                >
+                                                                    <td className="p-3 font-mono text-gray-500">{step.arrivalTime}</td>
+                                                                    <td className="p-3 font-medium text-gray-700 max-w-xs truncate">
+                                                                        {step.error && (
+                                                                            <div className="flex items-center text-red-600 mb-1 font-bold">
+                                                                                <AlertTriangle size={12} className="mr-1"/> Chyba: {step.error}
+                                                                            </div>
+                                                                        )}
+                                                                        {step.address}
+                                                                    </td>
+                                                                    <td className="p-3 text-gray-600">{step.customerName}</td>
+                                                                    <td className="p-3 text-right">
+                                                                        <button 
+                                                                            onClick={(e) => { e.stopPropagation(); handleRemoveOrderFromRide(ride.id, step.orderId); }}
+                                                                            className="text-red-400 hover:text-red-600 p-1"
+                                                                            title="Odebrat z jízdy"
+                                                                        >
+                                                                            <X size={14}/>
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
                                                     </tbody>
                                                 </table>
                                             )}
