@@ -967,7 +967,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const printInvoice = async (o: Order, type: 'proforma' | 'final' = 'proforma') => {
       const doc = new jsPDF();
       
-      // 1. LOAD FONT (Roboto for Diacritics)
+      // 1. LOAD FONT (Roboto)
       try {
           const regularBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Regular.ttf');
           const mediumBase64 = await fetchFont('https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.66/fonts/Roboto/Roboto-Medium.ttf');
@@ -987,11 +987,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const comp = (type === 'final' ? o.deliveryCompanyDetailsSnapshot : o.companyDetailsSnapshot) || settings.companyDetails;
       const dateToUse = type === 'final' ? (o.finalInvoiceDate || o.createdAt) : o.createdAt;
       const isVatPayer = !!comp.dic && comp.dic.length > 0;
-      const brandColor = [147, 51, 234]; // Purple #9333ea
+      // FIX: Explicit typing for Color tuple
+      const brandColor: [number, number, number] = [147, 51, 234]; // Purple #9333ea
       
       // HEADER
       doc.setFontSize(20);
-      doc.setTextColor(147, 51, 234);
+      doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
       doc.setFont("Roboto", "bold");
       doc.text(type === 'final' ? (isVatPayer ? "FAKTURA - DAŇOVÝ DOKLAD" : "FAKTURA") : "ZÁLOHOVÁ FAKTURA", 105, 20, { align: "center" });
       
@@ -1155,7 +1156,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       
       doc.setFontSize(14);
       doc.setFont("Roboto", "bold");
-      doc.setTextColor(147, 51, 234);
+      doc.setTextColor(brandColor[0], brandColor[1], brandColor[2]);
       doc.text(`CELKEM K ÚHRADĚ: ${grandTotal.toFixed(2)} Kč`, 190, finalY, { align: "right" });
 
       doc.setTextColor(0, 0, 0);

@@ -1,7 +1,7 @@
 
 import { describe, it, expect } from 'vitest';
-import { calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic } from './orderLogic';
-import { PackagingType, GlobalSettings, Product, Order } from '../types';
+import { calculatePackagingFeeLogic, calculateDailyLoad, getAvailableEventDatesLogic, calculateDiscountAmountLogic } from './orderLogic';
+import { PackagingType, GlobalSettings, Product, Order, DiscountCode, DiscountType, OrderStatus, CartItem } from '../types';
 import { DEFAULT_SETTINGS } from '../constants';
 
 describe('Packaging Logic', () => {
@@ -19,6 +19,7 @@ describe('Packaging Logic', () => {
     it('should calculate correct box combination', () => {
         const items: any[] = [{ price: 100, quantity: 1, volume: 1200 }];
         const fee = calculatePackagingFeeLogic(items, boxes, 5000);
+        // 1200 vol: > 1000 (Big, 20) -> 200 remain (Small, 10) -> Total 30
         expect(fee).toBe(30);
     });
 
@@ -66,29 +67,6 @@ describe('Total Price Calculation Logic', () => {
     });
 });
 
-describe('Fee VAT Logic', () => {
-    // Requirements: Shipping/Packaging fee must inherit the highest VAT rate from items in the order
-    it('should correctly determine Fee VAT Rate based on highest item rate', () => {
-         // Case 1: All 0%
-         const items1: any[] = [{ vatRateTakeaway: 0 }, { vatRateTakeaway: 0 }];
-         let max1 = 0;
-         items1.forEach(i => { if(i.vatRateTakeaway > max1) max1 = i.vatRateTakeaway; });
-         expect(max1).toBe(0);
-
-         // Case 2: Mix 0% and 12%
-         const items2: any[] = [{ vatRateTakeaway: 0 }, { vatRateTakeaway: 12 }];
-         let max2 = 0;
-         items2.forEach(i => { if(i.vatRateTakeaway > max2) max2 = i.vatRateTakeaway; });
-         expect(max2).toBe(12);
-
-         // Case 3: Mix 12% and 21%
-         const items3: any[] = [{ vatRateTakeaway: 21 }, { vatRateTakeaway: 12 }];
-         let max3 = 0;
-         items3.forEach(i => { if(i.vatRateTakeaway > max3) max3 = i.vatRateTakeaway; });
-         expect(max3).toBe(21);
-    });
-});
-
 describe('Capacity & Load Logic', () => {
     const mockSettings: GlobalSettings = {
         ...DEFAULT_SETTINGS,
@@ -125,8 +103,8 @@ describe('Capacity & Load Logic', () => {
             { items: [{ id: 'p_evt_indep', quantity: 1, category: 'warm' }] }
         ];
         const result = calculateDailyLoad(orders, products, mockSettings);
-        expect(result.load['warm']).toBe(60);
-        expect(result.eventLoad['warm']).toBe(60);
+        expect(result.load['warm']).toBe(60); // 10 workload + 50 overhead
+        expect(result.eventLoad['warm']).toBe(60); // 10 workload + 50 overhead
     });
 
     it('should handle shared overhead in Standard group (MAX overhead wins)', () => {
@@ -134,6 +112,9 @@ describe('Capacity & Load Logic', () => {
             { items: [{ id: 'p_std_group1', quantity: 1, category: 'warm' }] },
             { items: [{ id: 'p_std_group2', quantity: 1, category: 'warm' }] }
         ];
+        // Workloads: 10 + 10 = 20
+        // Overhead: MAX(100, 200) = 200
+        // Total = 220
         const result = calculateDailyLoad(orders, products, mockSettings);
         expect(result.load['warm']).toBe(220);
         expect(result.eventLoad['warm']).toBe(0);
@@ -144,8 +125,87 @@ describe('Capacity & Load Logic', () => {
             { items: [{ id: 'p_mix_std', quantity: 1, category: 'warm' }] }, 
             { items: [{ id: 'p_mix_evt', quantity: 1, category: 'warm' }] }  
         ];
+        // Workloads: 10 (Std) + 10 (Evt)
+        // Overhead: MAX(100, 200) = 200 -> Goes to Event Load because group has Event item
         const result = calculateDailyLoad(orders, products, mockSettings);
-        expect(result.load['warm']).toBe(10);
-        expect(result.eventLoad['warm']).toBe(210);
+        expect(result.load['warm']).toBe(10); // Only workload
+        expect(result.eventLoad['warm']).toBe(210); // Workload + Shared Overhead
+    });
+});
+
+describe('Discount Logic', () => {
+    const discounts: DiscountCode[] = [
+        { id: '1', code: 'TEST10', type: DiscountType.PERCENTAGE, value: 10, enabled: true, minOrderValue: 0, isStackable: false, maxUsage: 0, usageCount: 0, totalSaved: 0, validFrom: '', validTo: '' },
+        { id: '2', code: 'FIXED50', type: DiscountType.FIXED, value: 50, enabled: true, minOrderValue: 200, isStackable: false, maxUsage: 0, usageCount: 0, totalSaved: 0, validFrom: '', validTo: '' },
+        { id: '3', code: 'WARM_ONLY', type: DiscountType.PERCENTAGE, value: 50, enabled: true, minOrderValue: 0, isStackable: false, maxUsage: 0, usageCount: 0, totalSaved: 0, validFrom: '', validTo: '', applicableCategories: ['warm'] }
+    ];
+    const orders: Order[] = [];
+
+    it('should calculate percentage discount', () => {
+        const cart: CartItem[] = [{ price: 100, quantity: 2, category: 'warm' } as CartItem];
+        const res = calculateDiscountAmountLogic('TEST10', cart, discounts, orders);
+        expect(res.success).toBe(true);
+        expect(res.amount).toBe(20); // 10% of 200
+    });
+
+    it('should fail if min order value not met', () => {
+        const cart: CartItem[] = [{ price: 100, quantity: 1, category: 'warm' } as CartItem];
+        const res = calculateDiscountAmountLogic('FIXED50', cart, discounts, orders);
+        expect(res.success).toBe(false);
+        expect(res.error).toContain('Minimální hodnota');
+    });
+
+    it('should apply discount only to specific category', () => {
+        const cart: CartItem[] = [
+            { price: 100, quantity: 1, category: 'warm' } as CartItem,
+            { price: 100, quantity: 1, category: 'cold' } as CartItem
+        ];
+        const res = calculateDiscountAmountLogic('WARM_ONLY', cart, discounts, orders);
+        expect(res.success).toBe(true);
+        expect(res.amount).toBe(50); // 50% of 100 (warm only)
+    });
+});
+
+describe('Event Dates Logic', () => {
+    const settings: GlobalSettings = {
+        ...DEFAULT_SETTINGS,
+        eventSlots: [
+            { date: '2025-01-20', capacityOverrides: { 'warm': 100 } },
+            { date: '2025-01-25', capacityOverrides: { 'warm': 100 } }
+        ]
+    };
+    
+    // Mock today = 2025-01-15
+    const today = new Date('2025-01-15');
+
+    it('should return available dates respecting lead time', () => {
+        const product = { 
+            category: 'warm', 
+            isEventProduct: true, 
+            leadTimeDays: 7, // Needs 7 days -> Earliest 2025-01-22
+            workload: 10 
+        } as Product;
+        
+        const dates = getAvailableEventDatesLogic(product, settings, [], [], today);
+        expect(dates).toEqual(['2025-01-25']); // 20th is too soon
+    });
+
+    it('should exclude dates with full capacity', () => {
+        const product = { 
+            category: 'warm', 
+            isEventProduct: true, 
+            leadTimeDays: 1, 
+            workload: 50,
+            minOrderQuantity: 1
+        } as Product;
+
+        // Mock existing orders filling the 20th
+        const orders: any[] = [
+            { deliveryDate: '2025-01-20', status: OrderStatus.CONFIRMED, items: [{ id: 'p1', quantity: 2, category: 'warm', workload: 30 }] } 
+            // Load = 60. Remaining = 40. Product needs 50. -> Full.
+        ];
+
+        const dates = getAvailableEventDatesLogic(product, settings, orders, [product], today);
+        expect(dates).toEqual(['2025-01-25']);
     });
 });
