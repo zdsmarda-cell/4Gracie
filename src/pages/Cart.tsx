@@ -345,6 +345,9 @@ export const Cart: React.FC = () => {
     const vs = submittedOrder.id.replace(/\D/g, '') || '0';
     const msg = removeDiacritics(`Objednavka ${submittedOrder.id}`);
     
+    // Fix: Calculate total from the submitted order, because 'cart' is cleared and 'total' state becomes 0
+    const finalTotal = Math.max(0, submittedOrder.totalPrice - (submittedOrder.appliedDiscounts?.reduce((acc, d) => acc + d.amount, 0) || 0)) + submittedOrder.packagingFee + (submittedOrder.deliveryFee || 0);
+    
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center animate-fade-in">
          <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6"><CheckCircle size={48} /></div>
@@ -356,12 +359,12 @@ export const Cart: React.FC = () => {
              <div className="flex items-center justify-center mb-4 text-accent"><QrCode size={48} /></div>
              <h4 className="font-bold text-gray-800 mb-2">QR Platba</h4>
              <div className="w-48 h-48 bg-gray-100 rounded-lg mx-auto flex items-center justify-center mb-4">
-               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`SPD*1.0*${acc}*AM:${total.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:${msg}`)}`} alt="QR Code" className="w-40 h-40" />
+               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`SPD*1.0*${acc}*AM:${finalTotal.toFixed(2)}*CC:CZK*X-VS:${vs}*MSG:${msg}`)}`} alt="QR Code" className="w-40 h-40" />
              </div>
              <div className="text-xs text-gray-500 space-y-1">
                <p>{t('common.bank_acc')}: <span className="font-bold text-gray-700">{settings.companyDetails.bankAccount}</span></p>
                <p>Var. symbol: <span className="font-bold text-gray-700">{submittedOrder.id}</span></p>
-               <p>{t('common.price')}: <span className="font-bold text-gray-700">{total} Kč</span></p>
+               <p>{t('common.price')}: <span className="font-bold text-gray-700">{finalTotal} Kč</span></p>
              </div>
            </div>
          )}
