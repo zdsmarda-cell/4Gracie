@@ -52,7 +52,7 @@ const MaintenancePage = () => {
 
             {/* Footer info */}
             <div className="mt-12 text-gray-500 text-xs">
-                &copy; {new Date().getFullYear()} 4Gracie
+                &copy; {new Date().getFullYear()} 4 grácie
             </div>
 
             <style>{`
@@ -278,7 +278,7 @@ const MainContent = () => {
             <footer className="bg-primary text-gray-400 py-8 text-center text-sm">
                 <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-4">
                     <div className="flex flex-col items-center md:items-start gap-1">
-                        <p>&copy; {currentYear} 4Gracie</p>
+                        <p>&copy; {currentYear} 4 grácie</p>
                         <div className="flex gap-4">
                             <Link to="/contacts" className="text-accent hover:text-white transition underline text-xs font-bold">{t('footer.contacts')}</Link>
                             <Link to="/terms" className="text-accent hover:text-white transition underline text-xs font-bold">{t('footer.terms')}</Link>
