@@ -77,12 +77,23 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
     const t = TRANSLATIONS[lang] || TRANSLATIONS.cs;
     const total = Math.max(0, order.totalPrice + order.packagingFee + (order.deliveryFee || 0) - (order.appliedDiscounts?.reduce((a,b)=>a+b.amount,0)||0));
     
+    // Delivery Address Logic
     let addressDisplay = '';
     if (order.deliveryStreet && order.deliveryCity) {
         addressDisplay = `${order.deliveryName || ''}<br>${order.deliveryStreet}<br>${order.deliveryZip} ${order.deliveryCity}`;
         if(order.deliveryPhone) addressDisplay += `<br>Tel: ${order.deliveryPhone}`;
     } else {
         addressDisplay = (order.deliveryAddress || 'Adresa neuvedena').replace(/\n/g, '<br>');
+    }
+
+    // Billing Address Logic
+    let billingDisplay = '';
+    if (order.billingStreet && order.billingCity) {
+        billingDisplay = `${order.billingName || ''}<br>${order.billingStreet}<br>${order.billingZip} ${order.billingCity}`;
+        if (order.billingIc) billingDisplay += `<br>IČ: ${order.billingIc}`;
+        if (order.billingDic) billingDisplay += `<br>DIČ: ${order.billingDic}`;
+    } else {
+        billingDisplay = (order.billingAddress || 'Totožná s dodací adresou').replace(/\n/g, '<br>');
     }
 
     let itemsHtml = order.items.map(item => `
@@ -137,8 +148,19 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
 
             <div style="margin-top: 20px; font-size: 12px; color: #666;">
                 <p><strong>Termín:</strong> ${formatDate(order.deliveryDate)}</p>
-                <p><strong>Místo dodání / odběru:</strong><br> ${addressDisplay}</p>
-                ${order.note ? `<p><strong>Poznámka:</strong><br> ${order.note}</p>` : ''}
+                
+                <table width="100%" style="margin-top: 10px;">
+                    <tr>
+                        <td valign="top" width="50%">
+                            <p style="margin-top: 0;"><strong>Místo dodání / odběru:</strong><br> ${addressDisplay}</p>
+                        </td>
+                        <td valign="top" width="50%">
+                            <p style="margin-top: 0;"><strong>Fakturační údaje:</strong><br> ${billingDisplay}</p>
+                        </td>
+                    </tr>
+                </table>
+
+                ${order.note ? `<p style="margin-top: 10px;"><strong>Poznámka:</strong><br> ${order.note}</p>` : ''}
             </div>
         </div>
     `;
