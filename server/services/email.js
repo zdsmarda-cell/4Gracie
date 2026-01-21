@@ -108,7 +108,7 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
                 ${item.quantity} ${item.unit}
             </td>
             <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">
-                ${item.price} Kc
+                ${item.price} Kč
             </td>
         </tr>
     `).join('');
@@ -135,14 +135,14 @@ const generateOrderHtml = (order, title, message, lang = 'cs', settings = {}) =>
 
             <div style="margin-top: 20px; background-color: #f9fafb; padding: 15px; border-radius: 5px;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                    <span>${t.goods}:</span> <span>${order.totalPrice} Kc</span>
+                    <span>${t.goods}:</span> <span>${order.totalPrice} Kč</span>
                 </div>
-                ${order.deliveryFee > 0 ? `<div style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span>${t.shipping}:</span> <span>${order.deliveryFee} Kc</span></div>` : ''}
-                ${order.packagingFee > 0 ? `<div style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span>${t.packaging}:</span> <span>${order.packagingFee} Kc</span></div>` : ''}
-                ${order.appliedDiscounts?.map(d => `<div style="display: flex; justify-content: space-between; margin-bottom: 5px; color: green;"><span>${t.discount} (${d.code}):</span> <span>-${d.amount} Kc</span></div>`).join('') || ''}
+                ${order.deliveryFee > 0 ? `<div style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span>${t.shipping}:</span> <span>${order.deliveryFee} Kč</span></div>` : ''}
+                ${order.packagingFee > 0 ? `<div style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span>${t.packaging}:</span> <span>${order.packagingFee} Kč</span></div>` : ''}
+                ${order.appliedDiscounts?.map(d => `<div style="display: flex; justify-content: space-between; margin-bottom: 5px; color: green;"><span>${t.discount} (${d.code}):</span> <span>-${d.amount} Kč</span></div>`).join('') || ''}
                 
                 <div style="border-top: 1px solid #ddd; margin-top: 10px; padding-top: 10px; font-size: 18px; font-weight: bold; display: flex; justify-content: space-between;">
-                    <span>${t.total}:</span> <span>${total} Kc</span>
+                    <span>${t.total}:</span> <span>${total} Kč</span>
                 </div>
             </div>
 
