@@ -87,7 +87,9 @@ const TEXTS = {
         pickup: 'Osobní odběr',
         courier: 'Rozvoz',
         date: 'Datum:',
-        address: 'Adresa:'
+        address: 'Doručovací adresa:',
+        billing_address: 'Fakturační adresa:',
+        eshop_link: 'Přejít do e-shopu'
     },
     en: {
         subject_create: 'Order Confirmation #{id}',
@@ -101,7 +103,9 @@ const TEXTS = {
         pickup: 'Pickup',
         courier: 'Courier',
         date: 'Date:',
-        address: 'Address:'
+        address: 'Delivery Address:',
+        billing_address: 'Billing Address:',
+        eshop_link: 'Go to E-shop'
     },
     de: {
         subject_create: 'Bestellbestätigung #{id}',
@@ -115,7 +119,9 @@ const TEXTS = {
         pickup: 'Abholung',
         courier: 'Lieferung',
         date: 'Datum:',
-        address: 'Adresse:'
+        address: 'Lieferadresse:',
+        billing_address: 'Rechnungsadresse:',
+        eshop_link: 'Zum E-Shop gehen'
     }
 };
 
@@ -140,13 +146,35 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
         intro = t.intro_create;
     }
 
-    const itemsHtml = order.items.map(i => `
+    const itemsHtml = order.items.map(i => {
+        const imgUrl = (i.images && i.images.length > 0) ? getImgUrl(i.images[0]) : '';
+        const imgTag = imgUrl ? `<img src="${imgUrl}" alt="${i.name}" width="50" height="50" style="border-radius: 4px; object-fit: cover; display: block;">` : '';
+        return `
         <tr>
+            <td style="padding: 8px; border-bottom: 1px solid #eee; width: 60px;">${imgTag}</td>
             <td style="padding: 8px; border-bottom: 1px solid #eee;">${i.quantity}x</td>
             <td style="padding: 8px; border-bottom: 1px solid #eee;">${i.name}</td>
             <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${i.price} Kč</td>
         </tr>
-    `).join('');
+    `}).join('');
+
+    // Prepare Addresses
+    const deliveryAddrStr = order.deliveryAddress ? order.deliveryAddress.replace(/\n/g, '<br>') : [
+        order.deliveryName,
+        order.deliveryStreet,
+        [order.deliveryZip, order.deliveryCity].filter(Boolean).join(' '),
+        order.deliveryPhone
+    ].filter(Boolean).join('<br>');
+
+    const billingAddrStr = [
+        order.billingName,
+        order.billingStreet,
+        [order.billingZip, order.billingCity].filter(Boolean).join(' '),
+        order.billingIc ? `IČ: ${order.billingIc}` : null,
+        order.billingDic ? `DIČ: ${order.billingDic}` : null
+    ].filter(Boolean).join('<br>');
+
+    const baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
 
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
@@ -155,6 +183,7 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
             <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
                 <thead>
                     <tr style="background-color: #f3f4f6;">
+                        <th style="padding: 10px; width: 60px;"></th>
                         <th style="padding: 10px; text-align: left;">Ks</th>
                         <th style="padding: 10px; text-align: left;">Název</th>
                         <th style="padding: 10px; text-align: right;">Cena</th>
@@ -163,24 +192,46 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
                 <tbody>${itemsHtml}</tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="2" style="padding: 10px; font-weight: bold; text-align: right;">${t.total}</td>
+                        <td colspan="3" style="padding: 10px; font-weight: bold; text-align: right;">${t.total}</td>
                         <td style="padding: 10px; font-weight: bold; text-align: right;">${order.totalPrice + order.packagingFee + (order.deliveryFee||0)} Kč</td>
                     </tr>
                 </tfoot>
             </table>
-            <div style="margin-top: 20px; font-size: 12px; color: #666;">
-                <p>${t.delivery} ${order.deliveryType === 'delivery' ? t.courier : t.pickup}</p>
-                <p>${t.date} ${formatDate(order.deliveryDate)}</p>
-                ${order.deliveryAddress ? `<p>${t.address} ${order.deliveryAddress.replace(/\n/g, ', ')}</p>` : ''}
+            
+            <div style="margin-top: 20px; font-size: 13px; color: #555; background-color: #f9f9f9; padding: 15px; border-radius: 8px;">
+                <p style="margin: 0 0 10px 0;"><strong>${t.delivery}</strong> ${order.deliveryType === 'delivery' ? t.courier : t.pickup}</p>
+                <p style="margin: 0 0 10px 0;"><strong>${t.date}</strong> ${formatDate(order.deliveryDate)}</p>
+                
+                <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                    <tr>
+                        <td style="width: 50%; vertical-align: top; padding-right: 10px;">
+                            <strong>${t.address}</strong><br>
+                            ${deliveryAddrStr}
+                        </td>
+                        <td style="width: 50%; vertical-align: top; padding-left: 10px; border-left: 1px solid #ddd;">
+                            <strong>${t.billing_address}</strong><br>
+                            ${billingAddrStr || '-'}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="${baseUrl}" style="display: inline-block; background-color: #9333ea; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold;">
+                    ${t.eshop_link}
+                </a>
             </div>
         </div>
     `;
 
     const mailOptions = {
-        from: `"${settings?.companyDetails?.name || '4Gracie'}" <${process.env.EMAIL_FROM}>`,
+        from: `"${settings?.companyDetails?.name || '4Gracie'}>" <${process.env.EMAIL_FROM}>`,
         to: email,
         subject: subject,
-        html: html,
+        html: {
+            content: html,
+            encoding: 'base64'
+        },
         attachments: []
     };
 
@@ -218,7 +269,10 @@ export const processOperatorEmail = async (operatorEmail, order, type, settings)
         from: process.env.EMAIL_FROM,
         to: operatorEmail,
         subject: `Nová objednávka #${order.id}`,
-        html: html
+        html: {
+            content: html,
+            encoding: 'base64'
+        }
     });
     return true;
 };
@@ -249,7 +303,10 @@ export const startEmailWorker = () => {
                                 from: process.env.EMAIL_FROM,
                                 to: job.recipient_email,
                                 subject: job.subject,
-                                html: payload.html
+                                html: {
+                                    content: payload.html,
+                                    encoding: 'base64'
+                                }
                             });
                             success = true;
                         }
@@ -304,9 +361,6 @@ export const sendEventNotification = async (date, products, recipients) => {
 
     let baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
     if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-    if (process.env.PORT && !baseUrl.includes(`:${process.env.PORT}`) && !baseUrl.startsWith('https')) {
-         baseUrl = `${baseUrl}:${process.env.PORT}`;
-    }
     
     const formattedDate = formatDate(date);
     const subject = `Speciální akce na den ${formattedDate}`;
