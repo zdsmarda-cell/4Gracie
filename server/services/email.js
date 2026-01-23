@@ -146,6 +146,7 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
         intro = t.intro_create;
     }
 
+    // Generate Items HTML with Images
     const itemsHtml = order.items.map(i => {
         const imgUrl = (i.images && i.images.length > 0) ? getImgUrl(i.images[0]) : '';
         const imgTag = imgUrl ? `<img src="${imgUrl}" alt="${i.name}" width="50" height="50" style="border-radius: 4px; object-fit: cover; display: block;">` : '';
@@ -156,7 +157,7 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
             <td style="padding: 8px; border-bottom: 1px solid #eee;">${i.name}</td>
             <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${i.price} Kč</td>
         </tr>
-    `}).join('');
+    `;}).join('');
 
     // Prepare Addresses
     const deliveryAddrStr = order.deliveryAddress ? order.deliveryAddress.replace(/\n/g, '<br>') : [
@@ -225,7 +226,7 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
     `;
 
     const mailOptions = {
-        from: `"${settings?.companyDetails?.name || '4Gracie'}>" <${process.env.EMAIL_FROM}>`,
+        from: `"${settings?.companyDetails?.name || '4Gracie'}" <${process.env.EMAIL_FROM}>`,
         to: email,
         subject: subject,
         html: {
