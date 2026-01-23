@@ -129,6 +129,8 @@ const NotificationToast = () => {
   );
 };
 
+const dayLabels: Record<number, string> = { 1: 'Po', 2: 'Út', 3: 'St', 4: 'Čt', 5: 'Pá', 6: 'So', 0: 'Ne' };
+
 const DeliveryRegionsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const { settings } = useStore();
   const regions = settings.deliveryRegions.filter(r => r.enabled);
@@ -148,19 +150,30 @@ const DeliveryRegionsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
                   <div className="flex justify-between items-start mb-2">
                     <div>
                         <h3 className="font-bold text-lg">{region.name}</h3>
-                        {/* OPENING HOURS SUMMARY */}
-                        <div className="mt-2 text-xs text-gray-500 space-y-1">
-                            {[1, 5, 0].map(d => { // Preview Mon, Fri, Sun
-                                const dayName = d===1?'Po':d===5?'Pá':'Ne';
-                                const conf = region.openingHours?.[d];
-                                return (
-                                    <div key={d} className="flex gap-2">
-                                        <span className="w-6 font-bold">{dayName}:</span> 
-                                        <span>{conf?.isOpen ? `${conf.start}-${conf.end}` : 'Nerozváží se'}</span>
-                                    </div>
-                                );
-                            })}
-                            <div className="text-[9px] italic pt-1">... a další dny dle kalendáře v košíku.</div>
+                        {/* OPENING HOURS SUMMARY - 2 COLUMNS */}
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500 mt-3 border-t pt-2 border-gray-200">
+                            <div className="space-y-1 border-r border-gray-200 pr-2">
+                                 {[1, 2, 3, 4].map(d => {
+                                    const conf = region.openingHours?.[d];
+                                    return (
+                                        <div key={d} className="flex justify-between">
+                                            <span className="font-bold">{dayLabels[d]}:</span> 
+                                            <span className={conf?.isOpen ? "text-gray-700" : "text-gray-300"}>{conf?.isOpen ? `${conf.start}-${conf.end}` : 'Nerozváží se'}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="space-y-1">
+                                 {[5, 6, 0].map(d => {
+                                    const conf = region.openingHours?.[d];
+                                    return (
+                                        <div key={d} className="flex justify-between">
+                                            <span className="font-bold">{dayLabels[d]}:</span> 
+                                            <span className={conf?.isOpen ? "text-gray-700" : "text-gray-300"}>{conf?.isOpen ? `${conf.start}-${conf.end}` : 'Nerozváží se'}</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
                     </div>
                     <div className="text-right"><span className="block font-bold text-accent">{region.price} Kč</span><span className="text-[10px] text-gray-400">Zdarma od {region.freeFrom} Kč</span></div>
@@ -208,14 +221,30 @@ const PickupLocationsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
                   <div className="mb-4"><h3 className="font-bold text-lg text-primary">{loc.name}</h3><p className="text-sm text-gray-600">{loc.street}, {loc.city}, {loc.zip}</p></div>
                   <div>
                     <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Otevírací doba</h4>
-                    <div className="space-y-1 text-xs">
-                        {[1, 2, 3, 4, 5, 6, 0].map(day => {
-                            const dayName = day === 0 ? 'Neděle' : day === 1 ? 'Pondělí' : day === 2 ? 'Úterý' : day === 3 ? 'Středa' : day === 4 ? 'Čtvrtek' : day === 5 ? 'Pátek' : 'Sobota';
-                            const config = loc.openingHours[day];
-                            return (
-                                <div key={day} className="flex justify-between border-b border-gray-100 last:border-0 py-1"><span className="font-medium text-gray-600">{dayName}</span>{config?.isOpen ? <span className="font-bold">{config.start} - {config.end}</span> : <span className="text-gray-400 italic">Zavřeno</span>}</div>
-                            );
-                        })}
+                    {/* OPENING HOURS - 2 COLUMNS */}
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500">
+                        <div className="space-y-1 border-r border-gray-200 pr-2">
+                             {[1, 2, 3, 4].map(d => {
+                                const conf = loc.openingHours?.[d];
+                                return (
+                                    <div key={d} className="flex justify-between">
+                                        <span className="font-bold">{dayLabels[d]}:</span> 
+                                        <span className={conf?.isOpen ? "text-gray-700" : "text-gray-300"}>{conf?.isOpen ? `${conf.start}-${conf.end}` : 'Zavřeno'}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="space-y-1">
+                             {[5, 6, 0].map(d => {
+                                const conf = loc.openingHours?.[d];
+                                return (
+                                    <div key={d} className="flex justify-between">
+                                        <span className="font-bold">{dayLabels[d]}:</span> 
+                                        <span className={conf?.isOpen ? "text-gray-700" : "text-gray-300"}>{conf?.isOpen ? `${conf.start}-${conf.end}` : 'Zavřeno'}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </div>
                   </div>
                   {loc.exceptions && loc.exceptions.length > 0 && (
