@@ -86,8 +86,15 @@ export const useApi = (
       }
       
       if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || `API Error: ${res.status}`);
+          // Try to parse the specific error message from the backend
+          let errMsg = `API Error: ${res.status}`;
+          try {
+             const errData = await res.json();
+             if (errData.error) errMsg = errData.error;
+          } catch (e) {
+             // Failed to parse JSON error, use default
+          }
+          throw new Error(errMsg);
       }
       
       setDbConnectionError(false);
@@ -98,17 +105,23 @@ export const useApi = (
       const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       
       if (e.message === 'Session expired') {
-          // Handled by logout above, just suppress notify if needed or allow generic error
+          // Handled by logout above
       } else if ((isProd && !isLocalhost) || e.message === 'TIMEOUT_LIMIT_REACHED' || e.message.includes('fetch failed')) {
          setDbConnectionError(true);
       } 
       
       console.warn(`[API] Call to ${endpoint} failed:`, e);
+      
+      // SHOW NOTIFICATION FOR THE USER
+      if (e.message !== 'Session expired') {
+        showNotify(e.message || 'Neznámá chyba serveru', 'error');
+      }
+
       return null;
     } finally {
         setIsOperationPending(false); 
     }
-  }, [getFullApiUrl, logout]);
+  }, [getFullApiUrl, logout, showNotify]);
 
   return {
     dataSource,

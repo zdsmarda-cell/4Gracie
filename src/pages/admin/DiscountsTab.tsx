@@ -2,13 +2,14 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DiscountCode, DiscountType } from '../../types';
-import { Plus, Edit, Trash2, AlertCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertCircle, Loader2 } from 'lucide-react';
 
 export const DiscountsTab: React.FC = () => {
     const { discountCodes, addDiscountCode, updateDiscountCode, deleteDiscountCode, settings, t } = useStore();
     const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
     const [editingDiscount, setEditingDiscount] = useState<Partial<DiscountCode> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
     const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
     const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
@@ -59,8 +60,16 @@ export const DiscountsTab: React.FC = () => {
 
     const confirmDelete = async () => {
         if (deleteTarget) {
-            await deleteDiscountCode(deleteTarget);
-            setDeleteTarget(null);
+            setIsDeleting(true);
+            const success = await deleteDiscountCode(deleteTarget);
+            setIsDeleting(false);
+            
+            // Only close modal if success. 
+            // If failed, the API hook shows the error toast, and we keep the modal open
+            // so the user knows the action didn't happen.
+            if (success) {
+                setDeleteTarget(null);
+            }
         }
     };
 
@@ -130,8 +139,10 @@ export const DiscountsTab: React.FC = () => {
                         <h3 className="text-lg font-bold mb-2">{t('confirm.delete_title')}</h3>
                         <p className="text-sm text-gray-500 mb-6">{t('confirm.delete_message')}</p>
                         <div className="flex gap-2">
-                            <button onClick={() => setDeleteTarget(null)} className="flex-1 py-2 bg-gray-100 rounded">{t('common.cancel')}</button>
-                            <button onClick={confirmDelete} className="flex-1 py-2 bg-red-600 text-white rounded">{t('common.delete')}</button>
+                            <button onClick={() => setDeleteTarget(null)} disabled={isDeleting} className="flex-1 py-2 bg-gray-100 rounded disabled:opacity-50">{t('common.cancel')}</button>
+                            <button onClick={confirmDelete} disabled={isDeleting} className="flex-1 py-2 bg-red-600 text-white rounded disabled:opacity-50 flex justify-center items-center">
+                                {isDeleting ? <Loader2 className="animate-spin" size={16}/> : t('common.delete')}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -165,8 +176,8 @@ export const DiscountsTab: React.FC = () => {
                             <div>
                                 <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.type')}</label>
                                 <select className="w-full border rounded p-2" value={editingDiscount?.type} onChange={e => setEditingDiscount({...editingDiscount, type: e.target.value as DiscountType})}>
-                                    <option value={DiscountType.PERCENTAGE}>%</option>
-                                    <option value={DiscountType.FIXED}>Kč</option>
+                                    <option value={DiscountType.PERCENTAGE}>Procenta (%)</option>
+                                    <option value={DiscountType.FIXED}>Částka (Kč)</option>
                                 </select>
                             </div>
                             <div>
@@ -195,10 +206,9 @@ export const DiscountsTab: React.FC = () => {
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.limit_usage')} (ks)</label>
-                                <input type="number" className="w-full border rounded p-2" value={editingDiscount?.maxUsage || ''} onChange={e => setEditingDiscount({...editingDiscount, maxUsage: Number(e.target.value)})} placeholder="0 = ∞" />
+                                <input type="number" className="w-full border rounded p-2" value={editingDiscount?.maxUsage || ''} onChange={e => setEditingDiscount({...editingDiscount, maxUsage: Number(e.target.value)})} placeholder="0 = neomezeně" />
                             </div>
                         </div>
-
                         <div className="grid grid-cols-2 gap-2">
                             <div>
                                 <label className="text-xs font-bold text-gray-400 block mb-1">{t('admin.valid_from')}</label>
