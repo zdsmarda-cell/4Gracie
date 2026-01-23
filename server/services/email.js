@@ -1,13 +1,238 @@
 
+import nodemailer from 'nodemailer';
+import { getDb } from '../db.js';
+import { generateInvoicePdf } from './pdf.js';
+
+let transporter = null;
+
+export const initEmail = async () => {
+    if (transporter) return;
+    if (!process.env.SMTP_HOST) return;
+
+    try {
+        transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT) || 465,
+            secure: process.env.SMTP_SECURE === 'true',
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS
+            },
+            tls: {
+                rejectUnauthorized: false
+            }
+        });
+        await transporter.verify();
+        console.log("📧 Email service initialized");
+    } catch (err) {
+        console.error("❌ Email init failed:", err);
+    }
+};
+
+const getImgUrl = (path) => {
+    if (!path) return '';
+    if (path.startsWith('http')) return path;
+    const baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
+    return `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+};
+
+const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    return new Date(dateStr).toLocaleDateString('cs-CZ');
+};
+
+const STATUS_TRANSLATIONS = {
+    'created': 'Zadaná',
+    'confirmed': 'Potvrzená',
+    'preparing': 'Připravuje se',
+    'ready': 'Připravena',
+    'on_way': 'Na cestě',
+    'delivered': 'Doručena',
+    'not_picked_up': 'Nedoručena/Nevyzvednuta',
+    'cancelled': 'Stornována'
+};
+
+export const processCustomerEmail = async (email, order, type, settings, statusOverride) => {
+    if (!transporter) await initEmail();
+    if (!transporter) return false;
+
+    const status = statusOverride || order.status;
+    const statusText = STATUS_TRANSLATIONS[status] || status;
+    
+    let subject = `Objednávka #${order.id} - ${statusText}`;
+    let title = `Stav objednávky: ${statusText}`;
+    let intro = `Dobrý den,<br>stav Vaší objednávky <strong>#${order.id}</strong> byl změněn.`;
+
+    if (type === 'created') {
+        subject = `Potvrzení objednávky #${order.id}`;
+        title = `Potvrzení objednávky`;
+        intro = `Dobrý den,<br>děkujeme za Vaši objednávku. Níže naleznete její shrnutí.`;
+    }
+
+    const itemsHtml = order.items.map(i => `
+        <tr>
+            <td style="padding: 8px; border-bottom: 1px solid #eee;">${i.quantity}x</td>
+            <td style="padding: 8px; border-bottom: 1px solid #eee;">${i.name}</td>
+            <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${i.price} Kč</td>
+        </tr>
+    `).join('');
+
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h1 style="color: #9333ea;">${title}</h1>
+            <p>${intro}</p>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                <thead>
+                    <tr style="background-color: #f3f4f6;">
+                        <th style="padding: 10px; text-align: left;">Ks</th>
+                        <th style="padding: 10px; text-align: left;">Název</th>
+                        <th style="padding: 10px; text-align: right;">Cena</th>
+                    </tr>
+                </thead>
+                <tbody>${itemsHtml}</tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="2" style="padding: 10px; font-weight: bold; text-align: right;">Celkem:</td>
+                        <td style="padding: 10px; font-weight: bold; text-align: right;">${order.totalPrice + order.packagingFee + (order.deliveryFee||0)} Kč</td>
+                    </tr>
+                </tfoot>
+            </table>
+            <div style="margin-top: 20px; font-size: 12px; color: #666;">
+                <p>Způsob dopravy: ${order.deliveryType === 'delivery' ? 'Rozvoz' : 'Osobní odběr'}</p>
+                <p>Datum: ${formatDate(order.deliveryDate)}</p>
+                ${order.deliveryAddress ? `<p>Adresa: ${order.deliveryAddress.replace(/\n/g, ', ')}</p>` : ''}
+            </div>
+        </div>
+    `;
+
+    const mailOptions = {
+        from: `"${settings?.companyDetails?.name || '4Gracie'}" <${process.env.EMAIL_FROM}>`,
+        to: email,
+        subject: subject,
+        html: html,
+        attachments: []
+    };
+
+    if (type === 'created' || status === 'delivered') {
+        try {
+            const pdfType = status === 'delivered' ? 'final' : 'proforma';
+            const buffer = await generateInvoicePdf(order, pdfType, settings);
+            mailOptions.attachments.push({
+                filename: `faktura_${order.id}.pdf`,
+                content: buffer
+            });
+        } catch (e) {
+            console.error("PDF attachment error:", e);
+        }
+    }
+
+    await transporter.sendMail(mailOptions);
+    return true;
+};
+
+export const processOperatorEmail = async (operatorEmail, order, type, settings) => {
+    if (!transporter) await initEmail();
+    if (!transporter) return false;
+
+    const html = `
+        <div style="font-family: Arial, sans-serif;">
+            <h2>Nová objednávka #${order.id}</h2>
+            <p>Zákazník: ${order.userName} (${order.userId})</p>
+            <p>Celkem: ${order.totalPrice} Kč</p>
+            <p><a href="${process.env.APP_URL || 'http://localhost:5173'}/#/admin">Přejít do administrace</a></p>
+        </div>
+    `;
+
+    await transporter.sendMail({
+        from: process.env.EMAIL_FROM,
+        to: operatorEmail,
+        subject: `Nová objednávka #${order.id}`,
+        html: html
+    });
+    return true;
+};
+
+export const startEmailWorker = () => {
+    const runWorker = async () => {
+        const db = await getDb();
+        if (!db) return;
+
+        try {
+            const [rows] = await db.query("SELECT * FROM email_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 5");
+            
+            for (const job of rows) {
+                await db.query("UPDATE email_queue SET status = 'processing', processed_at = NOW() WHERE id = ?", [job.id]);
+                
+                try {
+                    const payload = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
+                    let success = false;
+
+                    if (job.type === 'order_customer') {
+                        success = await processCustomerEmail(job.recipient_email, payload.order, payload.type, payload.settings, payload.statusOverride);
+                    } else if (job.type === 'order_operator') {
+                        success = await processOperatorEmail(job.recipient_email, payload.order, payload.type, payload.settings);
+                    } else if (job.type === 'event_notify') {
+                        if (!transporter) await initEmail();
+                        if (transporter && payload.html) {
+                            await transporter.sendMail({
+                                from: process.env.EMAIL_FROM,
+                                to: job.recipient_email,
+                                subject: job.subject,
+                                html: payload.html
+                            });
+                            success = true;
+                        }
+                    }
+
+                    if (success) {
+                        await db.query("UPDATE email_queue SET status = 'sent' WHERE id = ?", [job.id]);
+                    } else {
+                        await db.query("UPDATE email_queue SET status = 'error', error_message = 'Transporter not ready or send failed' WHERE id = ?", [job.id]);
+                    }
+                } catch (err) {
+                    console.error(`Email Job ${job.id} failed:`, err);
+                    await db.query("UPDATE email_queue SET status = 'error', error_message = ? WHERE id = ?", [err.message, job.id]);
+                }
+            }
+        } catch (e) {
+            console.error("Email Worker Error:", e);
+        }
+    };
+
+    setInterval(runWorker, 10000); // 10s interval
+};
+
+export const queueOrderEmail = async (order, type, settings, statusOverride = null) => {
+    const db = await getDb();
+    if (!db) return;
+
+    let userEmail = null;
+    if (order.userId) {
+        const [users] = await db.query('SELECT email FROM users WHERE id = ?', [order.userId]);
+        if (users.length > 0) userEmail = users[0].email;
+    }
+    
+    if (userEmail) {
+        await db.query(
+            "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+            ['order_customer', userEmail, `Objednávka #${order.id}`, JSON.stringify({ order, type, settings, statusOverride })]
+        );
+    }
+
+    if (type === 'created' && settings.companyDetails?.email) {
+        await db.query(
+            "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+            ['order_operator', settings.companyDetails.email, `Nová objednávka #${order.id}`, JSON.stringify({ order, type, settings })]
+        );
+    }
+};
+
 export const sendEventNotification = async (date, products, recipients) => {
     const db = await getDb();
     if (!db) return;
 
-    // Get Base URL for images and links
     let baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
     if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-    
-    // Try to attach port if missing and available in env (common in node hosting)
     if (process.env.PORT && !baseUrl.includes(`:${process.env.PORT}`) && !baseUrl.startsWith('https')) {
          baseUrl = `${baseUrl}:${process.env.PORT}`;
     }
@@ -15,7 +240,6 @@ export const sendEventNotification = async (date, products, recipients) => {
     const formattedDate = formatDate(date);
     const subject = `Speciální akce na den ${formattedDate}`;
 
-    // Generate Product Rows
     const itemsHtml = products.map(p => {
         const imageUrl = p.images && p.images[0] ? getImgUrl(p.images[0]) : '';
         return `
@@ -36,34 +260,25 @@ export const sendEventNotification = async (date, products, recipients) => {
     
     const html = `
         <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-            <!-- Header -->
             <div style="text-align: center; padding: 30px 0; background-color: #1f2937; border-bottom: 4px solid #9333ea;">
                 <img src="${baseUrl}/logo.png" alt="4Gracie Catering" width="120" style="display: block; margin: 0 auto;">
                 <h1 style="color: #ffffff; margin: 20px 0 0 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px;">Speciální Akce</h1>
             </div>
-
-            <!-- Content -->
             <div style="padding: 30px 20px;">
                 <p style="font-size: 16px; color: #374151; line-height: 1.5; margin-bottom: 25px; text-align: center;">
                     Dobrý den,<br><br>
                     Na den <strong style="color: #9333ea;">${formattedDate}</strong> jsme pro vás připravili tuto speciální nabídku. <br>
                     Neváhejte a objednejte si včas, kapacity jsou omezené!
                 </p>
-
                 <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
-                    <tbody>
-                        ${itemsHtml}
-                    </tbody>
+                    <tbody>${itemsHtml}</tbody>
                 </table>
-
                 <div style="text-align: center; margin-top: 40px;">
                     <a href="${baseUrl}" style="background-color: #9333ea; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(147, 51, 234, 0.25);">
                         Objednat nyní na e-shopu
                     </a>
                 </div>
             </div>
-
-            <!-- Footer -->
             <div style="background-color: #f3f4f6; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af;">
                 <p style="margin: 0;">&copy; ${new Date().getFullYear()} 4Gracie Catering</p>
                 <p style="margin: 5px 0 0 0;">Toto je automaticky generovaná zpráva.</p>
@@ -71,9 +286,6 @@ export const sendEventNotification = async (date, products, recipients) => {
         </div>
     `;
 
-    // Bulk insert into queue
-    // Note: We use a loop here for simplicity with our queue structure.
-    // Ideally bulk insert query for performance if 1000s of users.
     for (const email of recipients) {
         await db.query(
             "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
