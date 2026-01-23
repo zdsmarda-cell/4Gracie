@@ -585,7 +585,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     useEffect(() => { fetchData(); }, [dataSource]);
 
     useEffect(() => {
-        if ('serviceWorker' in navigator) {
+        // Feature detection for Push Notifications
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+            setIsPushSupported(true); // Enable support flag if browser capable
+            
             navigator.serviceWorker.ready.then(registration => {
                 setSwRegistration(registration);
                 registration.pushManager.getSubscription().then(sub => {
@@ -605,6 +608,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                     }
                 });
             });
+        } else {
+            setIsPushSupported(false);
         }
     }, [user, dataSource, apiCall]); // Added apiCall to deps but it is stable now
 

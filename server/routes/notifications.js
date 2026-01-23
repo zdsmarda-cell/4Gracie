@@ -65,18 +65,19 @@ router.post('/subscribe', withDb(async (req, res, db) => {
     }
 
     try {
-        // CLEANUP: Remove older subscriptions for this user if they are logging in on a new device?
-        // Actually, we want multiple devices per user.
-        // But we DO want to ensure this specific endpoint is correctly mapped.
-        
-        // Use UPSERT logic (INSERT ... ON DUPLICATE KEY UPDATE) to prevent race conditions and ER_DUP_ENTRY errors
+        // MULTI-DEVICE SUPPORT FIX:
+        // We do NOT delete records by user_id anymore.
+        // We rely on 'endpoint' being unique in the DB schema.
+        // If the device exists, we update it. If not, we insert it.
+        // This allows one user_id to have multiple rows (multiple devices).
+
         await db.query(
             `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) 
-             VALUES (?, ?, ?, ?) 
+             VALUES (?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE 
-             user_id = VALUES(user_id), 
-             p256dh = VALUES(p256dh), 
-             auth = VALUES(auth), 
+             user_id = VALUES(user_id),
+             p256dh = VALUES(p256dh),
+             auth = VALUES(auth),
              updated_at = NOW()`,
             [userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
         );
@@ -111,13 +112,8 @@ router.post('/unsubscribe', withDb(async (req, res, db) => {
     if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
 
     try {
-        if (userId) {
-            // CASE A: Logged in user - Only delete THEIR record for this endpoint.
-            await db.query('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?', [userId, endpoint]);
-        } else {
-            // CASE B: Guest/Anonymous - Fallback to endpoint match only
-            await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [endpoint]);
-        }
+        // Delete only the specific subscription for this device (endpoint)
+        await db.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [endpoint]);
         res.json({ success: true });
     } catch (e) {
         console.error("Unsubscribe Error:", e);
