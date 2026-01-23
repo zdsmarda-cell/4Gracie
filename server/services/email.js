@@ -53,6 +53,58 @@ const formatDate = (dateStr) => {
     return new Date(dateStr).toLocaleDateString('cs-CZ');
 };
 
+// Helper to generate Event HTML (moved from sendEventNotification)
+const generateEventEmailHtml = (date, products) => {
+    const baseUrl = getBaseUrl();
+    const formattedDate = formatDate(date);
+    
+    const itemsHtml = products.map(p => {
+        const imageUrl = p.images && p.images[0] ? getImgUrl(p.images[0]) : '';
+        return `
+        <tr>
+            <td style="padding: 15px; border-bottom: 1px solid #eee; width: 60px;">
+                ${imageUrl ? `<img src="${imageUrl}" alt="${p.name}" width="60" height="60" style="border-radius: 8px; object-fit: cover; display: block;">` : ''}
+            </td>
+            <td style="padding: 15px; border-bottom: 1px solid #eee; vertical-align: middle;">
+                <div style="font-size: 16px; font-weight: bold; color: #1f2937; margin-bottom: 4px;">${p.name}</div>
+                <div style="font-size: 12px; color: #6b7280;">${p.description ? p.description.substring(0, 60) + (p.description.length > 60 ? '...' : '') : ''}</div>
+            </td>
+            <td style="padding: 15px; border-bottom: 1px solid #eee; text-align: right; vertical-align: middle; white-space: nowrap;">
+                <span style="font-size: 16px; font-weight: bold; color: #9333ea;">${p.price} Kč</span>
+            </td>
+        </tr>
+        `;
+    }).join('');
+
+    return `
+        <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+            <div style="text-align: center; padding: 30px 0; background-color: #1f2937; border-bottom: 4px solid #9333ea;">
+                <img src="${baseUrl}/logo.png" alt="4Gracie Catering" width="120" style="display: block; margin: 0 auto;">
+                <h1 style="color: #ffffff; margin: 20px 0 0 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px;">Speciální Akce</h1>
+            </div>
+            <div style="padding: 30px 20px;">
+                <p style="font-size: 16px; color: #374151; line-height: 1.5; margin-bottom: 25px; text-align: center;">
+                    Dobrý den,<br><br>
+                    Na den <strong style="color: #9333ea;">${formattedDate}</strong> jsme pro vás připravili tuto speciální nabídku. <br>
+                    Neváhejte a objednejte si včas, kapacity jsou omezené!
+                </p>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+                    <tbody>${itemsHtml}</tbody>
+                </table>
+                <div style="text-align: center; margin-top: 40px;">
+                    <a href="${baseUrl}" style="background-color: #9333ea; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(147, 51, 234, 0.25);">
+                        Objednat nyní na e-shopu
+                    </a>
+                </div>
+            </div>
+            <div style="background-color: #f3f4f6; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af;">
+                <p style="margin: 0;">&copy; ${new Date().getFullYear()} 4Gracie Catering</p>
+                <p style="margin: 5px 0 0 0;">Toto je automaticky generovaná zpráva.</p>
+            </div>
+        </div>
+    `;
+};
+
 const STATUS_TRANSLATIONS = {
     cs: {
         'created': 'Zadaná',
@@ -307,12 +359,19 @@ export const startEmailWorker = () => {
                         success = await processOperatorEmail(job.recipient_email, payload.order, payload.type, payload.settings);
                     } else if (job.type === 'event_notify') {
                         if (!transporter) await initEmail();
-                        if (transporter && payload.html) {
+                        
+                        // Handle both old format (HTML in payload) and new format (Data in payload)
+                        let htmlContent = payload.html;
+                        if (!htmlContent && payload.products && payload.date) {
+                            htmlContent = generateEventEmailHtml(payload.date, payload.products);
+                        }
+
+                        if (transporter && htmlContent) {
                             await transporter.sendMail({
                                 from: process.env.EMAIL_FROM,
                                 to: job.recipient_email,
                                 subject: job.subject,
-                                html: payload.html
+                                html: htmlContent
                             });
                             success = true;
                         }
@@ -364,62 +423,21 @@ export const queueOrderEmail = async (order, type, settings, statusOverride = nu
 export const sendEventNotification = async (date, products, recipients) => {
     const db = await getDb();
     if (!db) return;
-
-    let baseUrl = getBaseUrl();
     
     const formattedDate = formatDate(date);
     const subject = `Speciální akce na den ${formattedDate}`;
 
-    const itemsHtml = products.map(p => {
-        const imageUrl = p.images && p.images[0] ? getImgUrl(p.images[0]) : '';
-        return `
-        <tr>
-            <td style="padding: 15px; border-bottom: 1px solid #eee; width: 60px;">
-                ${imageUrl ? `<img src="${imageUrl}" alt="${p.name}" width="60" height="60" style="border-radius: 8px; object-fit: cover; display: block;">` : ''}
-            </td>
-            <td style="padding: 15px; border-bottom: 1px solid #eee; vertical-align: middle;">
-                <div style="font-size: 16px; font-weight: bold; color: #1f2937; margin-bottom: 4px;">${p.name}</div>
-                <div style="font-size: 12px; color: #6b7280;">${p.description ? p.description.substring(0, 60) + (p.description.length > 60 ? '...' : '') : ''}</div>
-            </td>
-            <td style="padding: 15px; border-bottom: 1px solid #eee; text-align: right; vertical-align: middle; white-space: nowrap;">
-                <span style="font-size: 16px; font-weight: bold; color: #9333ea;">${p.price} Kč</span>
-            </td>
-        </tr>
-        `;
-    }).join('');
-    
-    const html = `
-        <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-            <div style="text-align: center; padding: 30px 0; background-color: #1f2937; border-bottom: 4px solid #9333ea;">
-                <img src="${baseUrl}/logo.png" alt="4Gracie Catering" width="120" style="display: block; margin: 0 auto;">
-                <h1 style="color: #ffffff; margin: 20px 0 0 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px;">Speciální Akce</h1>
-            </div>
-            <div style="padding: 30px 20px;">
-                <p style="font-size: 16px; color: #374151; line-height: 1.5; margin-bottom: 25px; text-align: center;">
-                    Dobrý den,<br><br>
-                    Na den <strong style="color: #9333ea;">${formattedDate}</strong> jsme pro vás připravili tuto speciální nabídku. <br>
-                    Neváhejte a objednejte si včas, kapacity jsou omezené!
-                </p>
-                <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
-                    <tbody>${itemsHtml}</tbody>
-                </table>
-                <div style="text-align: center; margin-top: 40px;">
-                    <a href="${baseUrl}" style="background-color: #9333ea; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(147, 51, 234, 0.25);">
-                        Objednat nyní na e-shopu
-                    </a>
-                </div>
-            </div>
-            <div style="background-color: #f3f4f6; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af;">
-                <p style="margin: 0;">&copy; ${new Date().getFullYear()} 4Gracie Catering</p>
-                <p style="margin: 5px 0 0 0;">Toto je automaticky generovaná zpráva.</p>
-            </div>
-        </div>
-    `;
+    // Store DATA ONLY in payload, not rendered HTML. 
+    // The worker will generate HTML to allow Admin UI to show pure JSON data.
+    const payloadData = {
+        date: date,
+        products: products
+    };
 
     for (const email of recipients) {
         await db.query(
             "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
-            ['event_notify', email, subject, JSON.stringify({ html })]
+            ['event_notify', email, subject, JSON.stringify(payloadData)]
         );
     }
 };
