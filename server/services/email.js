@@ -1,5 +1,7 @@
 
 import nodemailer from 'nodemailer';
+import fs from 'fs';
+import path from 'path';
 import { getDb } from '../db.js';
 import { generateInvoicePdf } from './pdf.js';
 
@@ -297,12 +299,31 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
         attachments: []
     };
 
+    // Attach VOP if available and order is created
+    if (type === 'created' && process.env.VOP_PATH) {
+        const vopFullPath = path.resolve(process.cwd(), process.env.VOP_PATH);
+        if (fs.existsSync(vopFullPath)) {
+            mailOptions.attachments.push({
+                filename: 'VOP.pdf',
+                path: vopFullPath
+            });
+        } else {
+            console.warn("⚠️ VOP file defined in .env but not found:", vopFullPath);
+        }
+    }
+
     if (type === 'created' || status === 'delivered') {
         try {
             const pdfType = status === 'delivered' ? 'final' : 'proforma';
             const buffer = await generateInvoicePdf(order, pdfType, settings);
+            
+            // Name includes Order ID for both proforma and final
+            const invoiceName = pdfType === 'proforma' 
+                ? `zalohova_faktura_${order.id}.pdf` 
+                : `faktura_${order.id}.pdf`;
+
             mailOptions.attachments.push({
-                filename: `faktura_${order.id}.pdf`,
+                filename: invoiceName,
                 content: buffer
             });
         } catch (e) {
