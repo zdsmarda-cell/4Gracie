@@ -229,10 +229,7 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
         from: `"${settings?.companyDetails?.name || '4Gracie'}" <${process.env.EMAIL_FROM}>`,
         to: email,
         subject: subject,
-        html: {
-            content: html,
-            encoding: 'base64'
-        },
+        html: html,
         attachments: []
     };
 
@@ -270,10 +267,7 @@ export const processOperatorEmail = async (operatorEmail, order, type, settings)
         from: process.env.EMAIL_FROM,
         to: operatorEmail,
         subject: `Nová objednávka #${order.id}`,
-        html: {
-            content: html,
-            encoding: 'base64'
-        }
+        html: html
     });
     return true;
 };
@@ -304,10 +298,7 @@ export const startEmailWorker = () => {
                                 from: process.env.EMAIL_FROM,
                                 to: job.recipient_email,
                                 subject: job.subject,
-                                html: {
-                                    content: payload.html,
-                                    encoding: 'base64'
-                                }
+                                html: payload.html
                             });
                             success = true;
                         }
