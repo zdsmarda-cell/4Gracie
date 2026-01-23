@@ -42,31 +42,102 @@ const formatDate = (dateStr) => {
 };
 
 const STATUS_TRANSLATIONS = {
-    'created': 'Zadaná',
-    'confirmed': 'Potvrzená',
-    'preparing': 'Připravuje se',
-    'ready': 'Připravena',
-    'on_way': 'Na cestě',
-    'delivered': 'Doručena',
-    'not_picked_up': 'Nedoručena/Nevyzvednuta',
-    'cancelled': 'Stornována'
+    cs: {
+        'created': 'Zadaná',
+        'confirmed': 'Potvrzená',
+        'preparing': 'Připravuje se',
+        'ready': 'Připravena',
+        'on_way': 'Na cestě',
+        'delivered': 'Doručena',
+        'not_picked_up': 'Nedoručena/Nevyzvednuta',
+        'cancelled': 'Stornována'
+    },
+    en: {
+        'created': 'Created',
+        'confirmed': 'Confirmed',
+        'preparing': 'Preparing',
+        'ready': 'Ready',
+        'on_way': 'On the way',
+        'delivered': 'Delivered',
+        'not_picked_up': 'Not picked up',
+        'cancelled': 'Cancelled'
+    },
+    de: {
+        'created': 'Erstellt',
+        'confirmed': 'Bestätigt',
+        'preparing': 'In Vorbereitung',
+        'ready': 'Bereit',
+        'on_way': 'Unterwegs',
+        'delivered': 'Geliefert',
+        'not_picked_up': 'Nicht abgeholt',
+        'cancelled': 'Storniert'
+    }
+};
+
+const TEXTS = {
+    cs: {
+        subject_create: 'Potvrzení objednávky #{id}',
+        subject_update: 'Objednávka #{id} - {status}',
+        title_create: 'Potvrzení objednávky',
+        title_update: 'Stav objednávky: {status}',
+        intro_create: 'Dobrý den,<br>děkujeme za Vaši objednávku. Níže naleznete její shrnutí.',
+        intro_update: 'Dobrý den,<br>stav Vaší objednávky <strong>#{id}</strong> byl změněn.',
+        total: 'Celkem:',
+        delivery: 'Způsob dopravy:',
+        pickup: 'Osobní odběr',
+        courier: 'Rozvoz',
+        date: 'Datum:',
+        address: 'Adresa:'
+    },
+    en: {
+        subject_create: 'Order Confirmation #{id}',
+        subject_update: 'Order Status Update #{id} - {status}',
+        title_create: 'Order Confirmation',
+        title_update: 'Order Status: {status}',
+        intro_create: 'Hello,<br>thank you for your order. Below is the summary.',
+        intro_update: 'Hello,<br>status of your order <strong>#{id}</strong> has been updated.',
+        total: 'Total:',
+        delivery: 'Delivery Method:',
+        pickup: 'Pickup',
+        courier: 'Courier',
+        date: 'Date:',
+        address: 'Address:'
+    },
+    de: {
+        subject_create: 'Bestellbestätigung #{id}',
+        subject_update: 'Bestellstatus-Update #{id} - {status}',
+        title_create: 'Bestellbestätigung',
+        title_update: 'Bestellstatus: {status}',
+        intro_create: 'Hallo,<br>vielen Dank für Ihre Bestellung. Zusammenfassung unten.',
+        intro_update: 'Hallo,<br>der Status Ihrer Bestellung <strong>#{id}</strong> wurde aktualisiert.',
+        total: 'Gesamt:',
+        delivery: 'Liefermethode:',
+        pickup: 'Abholung',
+        courier: 'Lieferung',
+        date: 'Datum:',
+        address: 'Adresse:'
+    }
 };
 
 export const processCustomerEmail = async (email, order, type, settings, statusOverride) => {
     if (!transporter) await initEmail();
     if (!transporter) return false;
 
+    const lang = order.language || 'cs';
+    const t = TEXTS[lang] || TEXTS.cs;
+    const statusDict = STATUS_TRANSLATIONS[lang] || STATUS_TRANSLATIONS.cs;
+
     const status = statusOverride || order.status;
-    const statusText = STATUS_TRANSLATIONS[status] || status;
+    const statusText = statusDict[status] || status;
     
-    let subject = `Objednávka #${order.id} - ${statusText}`;
-    let title = `Stav objednávky: ${statusText}`;
-    let intro = `Dobrý den,<br>stav Vaší objednávky <strong>#${order.id}</strong> byl změněn.`;
+    let subject = t.subject_update.replace('{id}', order.id).replace('{status}', statusText);
+    let title = t.title_update.replace('{status}', statusText);
+    let intro = t.intro_update.replace('{id}', order.id);
 
     if (type === 'created') {
-        subject = `Potvrzení objednávky #${order.id}`;
-        title = `Potvrzení objednávky`;
-        intro = `Dobrý den,<br>děkujeme za Vaši objednávku. Níže naleznete její shrnutí.`;
+        subject = t.subject_create.replace('{id}', order.id);
+        title = t.title_create;
+        intro = t.intro_create;
     }
 
     const itemsHtml = order.items.map(i => `
@@ -92,15 +163,15 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
                 <tbody>${itemsHtml}</tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="2" style="padding: 10px; font-weight: bold; text-align: right;">Celkem:</td>
+                        <td colspan="2" style="padding: 10px; font-weight: bold; text-align: right;">${t.total}</td>
                         <td style="padding: 10px; font-weight: bold; text-align: right;">${order.totalPrice + order.packagingFee + (order.deliveryFee||0)} Kč</td>
                     </tr>
                 </tfoot>
             </table>
             <div style="margin-top: 20px; font-size: 12px; color: #666;">
-                <p>Způsob dopravy: ${order.deliveryType === 'delivery' ? 'Rozvoz' : 'Osobní odběr'}</p>
-                <p>Datum: ${formatDate(order.deliveryDate)}</p>
-                ${order.deliveryAddress ? `<p>Adresa: ${order.deliveryAddress.replace(/\n/g, ', ')}</p>` : ''}
+                <p>${t.delivery} ${order.deliveryType === 'delivery' ? t.courier : t.pickup}</p>
+                <p>${t.date} ${formatDate(order.deliveryDate)}</p>
+                ${order.deliveryAddress ? `<p>${t.address} ${order.deliveryAddress.replace(/\n/g, ', ')}</p>` : ''}
             </div>
         </div>
     `;
