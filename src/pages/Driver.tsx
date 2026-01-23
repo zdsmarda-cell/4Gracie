@@ -159,7 +159,17 @@ export const Driver: React.FC = () => {
         if (!region) return false;
         
         const ex = region.exceptions?.find(e => e.date === order.deliveryDate);
-        const endTime = (ex && ex.isOpen) ? ex.deliveryTimeEnd : region.deliveryTimeEnd;
+        
+        let endTime: string | undefined;
+        if (ex && ex.isOpen) {
+            endTime = ex.deliveryTimeEnd;
+        } else {
+             const dayOfWeek = new Date(order.deliveryDate).getDay();
+             const hours = region.openingHours?.[dayOfWeek];
+             if (hours && hours.isOpen) {
+                 endTime = hours.end;
+             }
+        }
         
         return endTime ? arrivalTime > endTime : false;
     };
