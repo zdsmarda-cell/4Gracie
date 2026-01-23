@@ -1,4 +1,3 @@
-
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Ride, Order, Product, GlobalSettings } from '../types';
@@ -94,7 +93,18 @@ export const generateRoutePdf = async (
                         const region = settings.deliveryRegions.find(r => r.enabled && r.zips.includes(fullOrder.deliveryZip!.replace(/\s/g, '')));
                         if (region) {
                             const ex = region.exceptions?.find(e => e.date === ride.date);
-                            const regionEndTime = (ex && ex.isOpen) ? ex.deliveryTimeEnd : region.deliveryTimeEnd;
+                            
+                            let regionEndTime: string | undefined;
+                            
+                            if (ex && ex.isOpen) {
+                                regionEndTime = ex.deliveryTimeEnd;
+                            } else {
+                                const dayOfWeek = new Date(ride.date).getDay();
+                                const hours = region.openingHours?.[dayOfWeek];
+                                if (hours && hours.isOpen) {
+                                    regionEndTime = hours.end;
+                                }
+                            }
                             
                             if (regionEndTime && step.arrivalTime > regionEndTime) {
                                 arrivalCell = { 

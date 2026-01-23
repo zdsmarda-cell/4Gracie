@@ -91,6 +91,16 @@ const DEFAULT_OPENING_HOURS = {
   0: { isOpen: false, start: '09:00', end: '12:00' }, // Sun
 };
 
+const DEFAULT_DELIVERY_HOURS = {
+    1: { isOpen: true, start: '10:00', end: '14:00' },
+    2: { isOpen: true, start: '10:00', end: '14:00' },
+    3: { isOpen: true, start: '10:00', end: '14:00' },
+    4: { isOpen: true, start: '10:00', end: '14:00' },
+    5: { isOpen: true, start: '10:00', end: '14:00' },
+    6: { isOpen: false, start: '10:00', end: '14:00' },
+    0: { isOpen: false, start: '10:00', end: '14:00' }
+};
+
 export const DEFAULT_SETTINGS: GlobalSettings = {
   categories: [
     { id: ProductCategory.WARM, name: 'Teplý catering', order: 1, enabled: true },
@@ -124,7 +134,15 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
     { id: PaymentMethod.CASH, label: 'Hotovost / Karta na místě', description: 'Platba při převzetí na prodejně.', enabled: true }
   ],
   deliveryRegions: [
-    { id: '1', name: 'Praha Centrum', zips: ['11000', '12000'], price: 150, freeFrom: 2000, enabled: true, deliveryTimeStart: '10:00', deliveryTimeEnd: '14:00' },
+    { 
+        id: '1', 
+        name: 'Praha Centrum', 
+        zips: ['11000', '12000'], 
+        price: 150, 
+        freeFrom: 2000, 
+        enabled: true, 
+        openingHours: DEFAULT_DELIVERY_HOURS
+    },
   ],
   pickupLocations: [
     {

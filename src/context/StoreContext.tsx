@@ -367,7 +367,32 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     const getDateStatus = (date: string, items: CartItem[]) => checkAvailability(date, items).status;
     const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
-    const getRegionInfoForDate = (r: DeliveryRegion, d: string) => { const ex = r.exceptions?.find(e => e.date === d); return ex ? { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true } : { isOpen: true, timeStart: r.deliveryTimeStart, timeEnd: r.deliveryTimeEnd, isException: false }; };
+    
+    // UPDATED: Check openingHours (per day)
+    const getRegionInfoForDate = (r: DeliveryRegion, d: string): RegionDateInfo => { 
+        // 1. Exceptions
+        const ex = r.exceptions?.find(e => e.date === d); 
+        if (ex) {
+            return { 
+                isOpen: ex.isOpen, 
+                timeStart: ex.deliveryTimeStart, 
+                timeEnd: ex.deliveryTimeEnd, 
+                isException: true,
+                reason: ex.isOpen ? 'Výjimka: Jiný čas' : 'Výjimka: Nerozváží se'
+            };
+        }
+        
+        // 2. Standard Day Check
+        const day = new Date(d).getDay(); // 0-6 (Sun-Sat)
+        const config = r.openingHours[day];
+
+        if (!config || !config.isOpen) {
+             return { isOpen: false, isException: false, reason: 'Mimo dny rozvozu' };
+        }
+
+        return { isOpen: true, timeStart: config.start, timeEnd: config.end, isException: false }; 
+    };
+
     const getPickupPointInfo = (loc: PickupLocation, d: string) => { const ex = loc.exceptions?.find(e => e.date === d); if (ex) return { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true }; const day = new Date(d).getDay(); const c = loc.openingHours[day]; if (!c || !c.isOpen) return { isOpen: false, isException: false }; return { isOpen: true, timeStart: c.start, timeEnd: c.end, isException: false }; };
     const getAvailableEventDates = (p: Product) => getAvailableEventDatesLogic(p, settings, orders, products);
     const isEventCapacityAvailable = (p: Product) => getAvailableEventDates(p).length > 0;
@@ -613,7 +638,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     // --- CART DISCOUNTS ---
     useEffect(() => {
+        // Fix: Do not check discounts if cart is empty. 
+        // This prevents the error notification "Code removed" when cart is cleared after order submission.
+        if (cart.length === 0) {
+            if (appliedDiscounts.length > 0) setAppliedDiscounts([]);
+            return;
+        }
+
         if (appliedDiscounts.length === 0) return;
+        
         let updatedDiscounts: AppliedDiscount[] = [];
         let removedCodes: string[] = [];
         

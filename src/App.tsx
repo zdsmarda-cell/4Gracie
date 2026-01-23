@@ -146,10 +146,28 @@ const DeliveryRegionsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
               {regions.map(region => (
                 <div key={region.id} className="border rounded-xl p-4 bg-gray-50">
                   <div className="flex justify-between items-start mb-2">
-                    <div><h3 className="font-bold text-lg">{region.name}</h3><p className="text-xs text-gray-500">Standardní čas rozvozu: <strong>{region.deliveryTimeStart || '?'} - {region.deliveryTimeEnd || '?'}</strong></p></div>
+                    <div>
+                        <h3 className="font-bold text-lg">{region.name}</h3>
+                        {/* OPENING HOURS SUMMARY */}
+                        <div className="mt-2 text-xs text-gray-500 space-y-1">
+                            {[1, 5, 0].map(d => { // Preview Mon, Fri, Sun
+                                const dayName = d===1?'Po':d===5?'Pá':'Ne';
+                                const conf = region.openingHours?.[d];
+                                return (
+                                    <div key={d} className="flex gap-2">
+                                        <span className="w-6 font-bold">{dayName}:</span> 
+                                        <span>{conf?.isOpen ? `${conf.start}-${conf.end}` : 'Nerozváží se'}</span>
+                                    </div>
+                                );
+                            })}
+                            <div className="text-[9px] italic pt-1">... a další dny dle kalendáře v košíku.</div>
+                        </div>
+                    </div>
                     <div className="text-right"><span className="block font-bold text-accent">{region.price} Kč</span><span className="text-[10px] text-gray-400">Zdarma od {region.freeFrom} Kč</span></div>
                   </div>
-                  <div className="mb-4"><h4 className="text-xs font-bold uppercase text-gray-400 mb-1">Doručovací PSČ</h4><p className="text-xs font-mono text-gray-600 leading-relaxed">{region.zips.join(', ')}</p></div>
+                  
+                  <div className="mb-4 mt-2 border-t pt-2"><h4 className="text-xs font-bold uppercase text-gray-400 mb-1">Doručovací PSČ</h4><p className="text-xs font-mono text-gray-600 leading-relaxed">{region.zips.join(', ')}</p></div>
+                  
                   {region.exceptions && region.exceptions.length > 0 && (
                     <div className="bg-white border rounded-lg p-3">
                       <h4 className="text-xs font-bold uppercase text-red-500 mb-2">Výjimky v kalendáři</h4>

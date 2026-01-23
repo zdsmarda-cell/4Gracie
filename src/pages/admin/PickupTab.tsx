@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { PickupLocation, RegionException, OrderStatus } from '../../types';
+import { PickupLocation, RegionException, OrderStatus, OpeningHoursDay } from '../../types';
 import { Plus, Edit, Trash2, X, Store } from 'lucide-react';
 
 // Reusing a similar component structure for Delete Modal inside this file to keep it self-contained
@@ -140,6 +140,8 @@ export const PickupTab: React.FC = () => {
         setIsPickupModalOpen(true); 
     };
 
+    const dayLabels: Record<number, string> = { 1: 'Po', 2: 'Út', 3: 'St', 4: 'Čt', 5: 'Pá', 6: 'So', 0: 'Ne' };
+
     return (
         <div className="animate-fade-in space-y-6">
             <div className="flex justify-between items-center">
@@ -169,10 +171,30 @@ export const PickupTab: React.FC = () => {
                                 <button onClick={() => setDeleteTargetId(loc.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 size={16}/></button>
                             </div>
                         </div>
-                        <div className="space-y-1 text-[10px] text-gray-500 border-t pt-2">
-                            <div className="flex justify-between"><span>Po:</span> <strong>{loc.openingHours[1]?.isOpen ? `${loc.openingHours[1].start}-${loc.openingHours[1].end}` : 'Zavřeno'}</strong></div>
-                            <div className="flex justify-between"><span>Pá:</span> <strong>{loc.openingHours[5]?.isOpen ? `${loc.openingHours[5].start}-${loc.openingHours[5].end}` : 'Zavřeno'}</strong></div>
-                            <div className="flex justify-between"><span>Ne:</span> <strong>{loc.openingHours[0]?.isOpen ? `${loc.openingHours[0].start}-${loc.openingHours[0].end}` : 'Zavřeno'}</strong></div>
+
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[10px] text-gray-500 border-t pt-2 border-b pb-2 mb-2">
+                            <div className="space-y-1 border-r pr-2">
+                                 {[1, 2, 3, 4].map(d => {
+                                    const conf = loc.openingHours?.[d];
+                                    return (
+                                        <div key={d} className="flex justify-between">
+                                            <span>{dayLabels[d]}:</span> 
+                                            <strong className={conf?.isOpen ? "text-gray-700" : "text-gray-300"}>{conf?.isOpen ? `${conf.start}-${conf.end}` : '---'}</strong>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="space-y-1">
+                                 {[5, 6, 0].map(d => {
+                                    const conf = loc.openingHours?.[d];
+                                    return (
+                                        <div key={d} className="flex justify-between">
+                                            <span>{dayLabels[d]}:</span> 
+                                            <strong className={conf?.isOpen ? "text-gray-700" : "text-gray-300"}>{conf?.isOpen ? `${conf.start}-${conf.end}` : '---'}</strong>
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
 
                         {/* Display Exceptions in List View */}
@@ -302,7 +324,7 @@ export const PickupTab: React.FC = () => {
                         </label>
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsPickupModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">Zrušit</button>
-                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('admin.save_changes')}</button>
+                            <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">Uložit</button>
                         </div>
                     </form>
                 </div>

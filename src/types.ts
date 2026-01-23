@@ -1,3 +1,4 @@
+
 export type DataSourceMode = 'local' | 'api';
 
 export enum Language {
@@ -59,6 +60,12 @@ export interface RegionException {
   deliveryTimeEnd?: string;
 }
 
+export interface OpeningHoursDay {
+  isOpen: boolean;
+  start: string;
+  end: string;
+}
+
 export interface DeliveryRegion {
   id: string;
   name: string;
@@ -66,15 +73,8 @@ export interface DeliveryRegion {
   price: number;
   freeFrom: number;
   enabled: boolean;
-  deliveryTimeStart?: string;
-  deliveryTimeEnd?: string;
+  openingHours: { [key: number]: OpeningHoursDay }; // 0 = Sunday...
   exceptions?: RegionException[];
-}
-
-export interface OpeningHoursDay {
-  isOpen: boolean;
-  start: string;
-  end: string;
 }
 
 export interface PickupLocation {

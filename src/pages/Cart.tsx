@@ -457,9 +457,7 @@ export const Cart: React.FC = () => {
                           <Clock size={16} className="mr-2 flex-shrink-0" />
                           <span>
                              {t('cart.time_window_delivery')}: <strong>
-                               {date ? (regionInfo.timeStart || region.deliveryTimeStart) : region.deliveryTimeStart} 
-                               {' - '} 
-                               {date ? (regionInfo.timeEnd || region.deliveryTimeEnd) : region.deliveryTimeEnd}
+                               {date ? (regionInfo.isOpen ? `${regionInfo.timeStart} - ${regionInfo.timeEnd}` : 'Nerozváží se') : t('cart.date_selection')}
                              </strong>
                           </span>
                        </div>
