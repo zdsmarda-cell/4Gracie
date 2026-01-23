@@ -1,63 +1,77 @@
 
 import { test, expect } from '@playwright/test';
 
-test.describe('Admin - Logistics (Delivery & Pickup)', () => {
+test.describe('Admin - Logistics (Comprehensive)', () => {
   
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     const mockAdminBtn = page.getByRole('button', { name: /Admin \(Heslo: 1234\)/i });
-    if (await mockAdminBtn.isVisible()) {
-        await mockAdminBtn.click();
-    }
+    if (await mockAdminBtn.isVisible()) await mockAdminBtn.click();
     await page.getByRole('link', { name: 'Admin' }).click();
   });
 
-  test('should manage delivery regions', async ({ page }) => {
+  test('Delivery Region: Should validate and save all fields', async ({ page }) => {
     await page.getByRole('button', { name: 'Rozvoz' }).click();
-    
-    // Create Region
     await page.getByRole('button', { name: 'Nová zóna' }).click();
-    await page.fill('input[placeholder="Název"]', 'Test Zóna');
-    await page.fill('input[placeholder="Cena dopravy"]', '150');
-    await page.fill('input[placeholder="Zdarma od"]', '2000');
     
-    // Add ZIP
-    await page.fill('input[placeholder="PSČ"]', '99999');
-    await page.getByRole('button', { name: '+' }).first().click(); // Add zip button
+    // Validation Check
+    await page.getByRole('button', { name: 'Uložit' }).click();
+    await expect(page.getByText('Vyplňte název')).toBeVisible();
+    await expect(page.getByText('Vyplňte cenu')).toBeVisible();
+
+    // Fill Data
+    await page.locator('input[placeholder="Název"]').fill('E2E Region');
+    await page.locator('input[placeholder="Cena dopravy"]').fill('99');
+    await page.locator('input[placeholder="Zdarma od"]').fill('1000');
     
+    // Opening Hours (Check Mon and set times)
+    const monRow = page.locator('div.flex.items-center.gap-2').filter({ hasText: 'Po' });
+    if (!await monRow.getByRole('checkbox').isChecked()) {
+        await monRow.getByRole('checkbox').check();
+    }
+    // Set Time
+    await monRow.locator('input[type="time"]').first().fill('09:00');
+    await monRow.locator('input[type="time"]').last().fill('17:00');
+
+    // Add Zip
+    await page.locator('input[placeholder="Např. 66401"]').fill('11111');
+    await page.getByRole('button', { name: '+' }).first().click();
+
+    // Add Exception
+    const excDiv = page.locator('div.bg-white.border.rounded-xl.p-3').filter({ hasText: 'Výjimky' });
+    await excDiv.locator('input[type="date"]').fill('2025-12-24');
+    await excDiv.getByRole('button', { name: '+' }).click(); // Add closed exception
+
     await page.getByRole('button', { name: 'Uložit' }).click();
     
     // Verify
-    await expect(page.getByText('Test Zóna')).toBeVisible();
-    await expect(page.getByText('99999')).toBeVisible();
-    
-    // Delete
-    // Need to handle confirm modal inside the React component (our custom modal, not window.confirm)
-    await page.locator('div').filter({ hasText: 'Test Zóna' }).getByRole('button').nth(1).click(); // Trash icon
-    await page.getByRole('button', { name: 'Smazat' }).click(); // Confirm in modal
-    
-    await expect(page.getByText('Test Zóna')).not.toBeVisible();
+    await expect(page.getByText('E2E Region')).toBeVisible();
+    await expect(page.getByText('11111')).toBeVisible();
+    await expect(page.getByText('2025-12-24')).toBeVisible(); // Exception visible
+
+    // Cleanup
+    page.on('dialog', d => d.accept());
+    await page.locator('div').filter({ hasText: 'E2E Region' }).getByRole('button').nth(1).click();
+    await page.getByRole('button', { name: 'Smazat' }).click(); // Confirm custom modal
   });
 
-  test('should manage pickup locations', async ({ page }) => {
+  test('Pickup Location: Should validate and save', async ({ page }) => {
     await page.getByRole('button', { name: 'Odběr' }).click();
-    
-    // Create Location
     await page.getByRole('button', { name: 'Nové místo' }).click();
-    await page.locator('input').nth(0).fill('Test Pobočka'); // Name
-    await page.locator('input').nth(1).fill('Testovací Ulice 1'); // Street
-    await page.locator('input').nth(2).fill('Brno'); // City
-    await page.locator('input').nth(3).fill('60200'); // ZIP
+    
+    // Fill Data
+    const name = `Pobočka ${Date.now()}`;
+    await page.locator('div').filter({ hasText: /^Název místa/ }).getByRole('textbox').fill(name);
+    await page.locator('div').filter({ hasText: /^Ulice/ }).getByRole('textbox').fill('Ulice 1');
+    await page.locator('div').filter({ hasText: /^Město/ }).getByRole('textbox').fill('Město');
+    await page.locator('div').filter({ hasText: /^PSČ/ }).getByRole('textbox').fill('10000');
     
     await page.getByRole('button', { name: 'Uložit' }).click();
     
-    // Verify
-    await expect(page.getByText('Test Pobočka')).toBeVisible();
+    await expect(page.getByText(name)).toBeVisible();
     
-    // Delete
-    await page.locator('div').filter({ hasText: 'Test Pobočka' }).getByRole('button').nth(1).click();
+    // Cleanup
+    await page.locator('div').filter({ hasText: name }).getByRole('button').nth(1).click();
     await page.getByRole('button', { name: 'Smazat' }).click();
-    
-    await expect(page.getByText('Test Pobočka')).not.toBeVisible();
   });
 });
