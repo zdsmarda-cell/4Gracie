@@ -40,13 +40,11 @@ export const ProductsTab: React.FC = () => {
     const [search, setSearch] = useState('');
     const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
     const [isUploading, setIsUploading] = useState(false);
-    const [isTranslating, setIsTranslating] = useState(false);
 
     // CSS class for number inputs to hide spinners
     const noSpinnerClass = "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
     const getCategoryName = (id: string) => settings.categories.find(c => c.id === id)?.name || id;
-    const getCapacityName = (id?: string) => settings.capacityCategories?.find(c => c.id === id)?.name || '-';
 
     const sortedProducts = useMemo(() => {
         let filtered = products;
@@ -113,6 +111,9 @@ export const ProductsTab: React.FC = () => {
             p.vatRateTakeaway = Number(p.vatRateTakeaway ?? 0);
             p.workload = Number(p.workload ?? 0);
             p.workloadOverhead = Number(p.workloadOverhead ?? 0);
+            
+            // Ensure noPackaging is boolean
+            p.noPackaging = !!p.noPackaging;
 
             if (products.some(prod => prod.id === p.id)) {
                 await updateProduct(p);
