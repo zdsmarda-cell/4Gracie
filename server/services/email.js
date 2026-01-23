@@ -290,7 +290,7 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
     `;
 
     const mailOptions = {
-        from: `"${settings?.companyDetails?.name || '4Gracie'}" <${process.env.EMAIL_FROM}>`,
+        from: process.env.EMAIL_FROM, // Use EMAIL_FROM directly from .env without extra formatting
         to: email,
         subject: subject,
         html: html,
