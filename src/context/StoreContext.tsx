@@ -628,7 +628,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const isDifferent = JSON.stringify(updatedDiscounts) !== JSON.stringify(appliedDiscounts);
         if (isDifferent) {
           setAppliedDiscounts(updatedDiscounts);
-          if (removedCodes.length > 0) showNotify(`${t('discount.invalid')}: ${removedCodes.join(', ')}`, 'error');
+          if (removedCodes.length > 0) showNotify(`Pro slevový kupón ${removedCodes.join(', ')} nejsou splněny podmínky, proto byl odstraněn z košíku.`, 'error');
         }
     }, [cart]);
 

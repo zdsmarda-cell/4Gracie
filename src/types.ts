@@ -1,104 +1,4 @@
-
-export interface RideStep {
-  orderId: string;
-  type: 'pickup' | 'delivery';
-  arrivalTime: string; // HH:MM
-  departureTime: string; // HH:MM
-  address: string;
-  distanceKm?: number;
-  note?: string;
-  isPaid?: boolean;
-  itemsCount?: number;
-  customerName?: string;
-  customerPhone?: string;
-  error?: string; // NEW: Error message for invalid address
-  
-  // Frontend calculated breakdown for debugging
-  breakdown?: {
-    prevDeparture: string;
-    travelTimeMinutes: number;
-    baseStopMinutes: number;
-    itemsMinutes: number;
-    paymentMinutes: number;
-    totalServiceMinutes: number;
-    calcDeparture: string;
-  };
-}
-
-export interface Ride {
-  id: string;
-  date: string;
-  driverId: string;
-  orderIds: string[];
-  departureTime: string; // HH:MM
-  status: 'planned' | 'active' | 'completed';
-  steps?: RideStep[]; // Calculated route
-}
-
-export interface GlobalSettings {
-  categories: Category[]; 
-  capacityCategories: CapacityCategory[]; 
-  defaultCapacities: CategoryCapacities;
-  eventSlots: EventSlot[]; 
-  companyDetails: CompanyDetails;
-  paymentMethods: PaymentMethodConfig[];
-  deliveryRegions: DeliveryRegion[];
-  pickupLocations: PickupLocation[]; 
-  packaging: {
-    types: PackagingType[];
-    freeFrom: number;
-  };
-  logistics: LogisticsSettings; // NEW FIELD
-  enabledLanguages: Language[]; 
-  enableAiTranslation: boolean;
-  sqlDebug: boolean;
-  server?: ServerSettings; 
-}
-
-export interface BackupData {
-  users?: User[];
-  orders?: Order[];
-  products?: Product[];
-  discountCodes?: DiscountCode[];
-  dayConfigs?: DayConfig[];
-  settings?: GlobalSettings;
-  rides?: Ride[];
-  ingredients?: Ingredient[]; // NEW
-}
-
-export interface CookieSettings {
-  essential: boolean; 
-  analytics: boolean;
-  marketing: boolean;
-  timestamp: string;
-}
-
-export interface OrdersSearchResult {
-  orders: Order[];
-  total: number;
-  page: number;
-  pages: number;
-}
-
 export type DataSourceMode = 'local' | 'api';
-
-export interface ImportResult {
-  success: boolean;
-  collisions?: string[];
-  message?: string;
-}
-
-export interface EmailLog {
-    id: number;
-    type: string;
-    recipient_email: string;
-    subject: string;
-    status: 'pending' | 'processing' | 'sent' | 'error';
-    error_message?: string;
-    created_at: string;
-    processed_at?: string;
-    payload?: any; // Added payload for inspection
-}
 
 export enum Language {
   CS = 'cs',
@@ -140,25 +40,16 @@ export enum DiscountType {
   FIXED = 'fixed'
 }
 
-// Support for translations in data objects
-export interface LocalizedContent {
-  [key: string]: string | undefined; 
-}
-
-export interface Translations {
-  en?: LocalizedContent;
-  de?: LocalizedContent;
-}
-
 export interface Address {
   id: string;
   name: string;
   street: string;
   city: string;
   zip: string;
-  phone: string; 
+  phone: string;
   ic?: string;
   dic?: string;
+  type?: 'billing' | 'delivery';
 }
 
 export interface RegionException {
@@ -175,16 +66,15 @@ export interface DeliveryRegion {
   price: number;
   freeFrom: number;
   enabled: boolean;
-  deliveryTimeStart?: string; // Format HH:MM
-  deliveryTimeEnd?: string;   // Format HH:MM
+  deliveryTimeStart?: string;
+  deliveryTimeEnd?: string;
   exceptions?: RegionException[];
-  translations?: Translations; 
 }
 
 export interface OpeningHoursDay {
   isOpen: boolean;
-  start: string; // HH:MM
-  end: string;   // HH:MM
+  start: string;
+  end: string;
 }
 
 export interface PickupLocation {
@@ -194,9 +84,8 @@ export interface PickupLocation {
   city: string;
   zip: string;
   enabled: boolean;
-  openingHours: { [key: number]: OpeningHoursDay }; // 0 = Sunday, 1 = Monday, ... 6 = Saturday
+  openingHours: { [key: number]: OpeningHoursDay };
   exceptions?: RegionException[];
-  translations?: Translations; 
 }
 
 export interface DiscountCode {
@@ -212,7 +101,8 @@ export interface DiscountCode {
   usageCount: number;
   totalSaved: number;
   enabled: boolean;
-  applicableCategories?: string[]; 
+  applicableCategories?: string[];
+  isEventOnly?: boolean;
 }
 
 export interface AppliedDiscount {
@@ -231,24 +121,29 @@ export interface PackagingType {
   name: string;
   volume: number;
   price: number;
-  enabled?: boolean;
   translations?: Translations;
 }
 
 export interface Subcategory {
-  id: string; // Slug/ID
+  id: string;
   name: string;
   order: number;
   enabled: boolean;
 }
 
+export interface Translations {
+  en?: Record<string, string>;
+  de?: Record<string, string>;
+  [key: string]: any;
+}
+
 export interface Category {
-  id: string; // slug, e.g. 'warm', 'burgers'
-  name: string; // Display name
+  id: string;
+  name: string;
   order: number;
   enabled: boolean;
+  subcategories?: (Subcategory | string)[]; // string for legacy support
   translations?: Translations;
-  subcategories?: Subcategory[]; // CHANGED: Now an array of objects
 }
 
 export interface CapacityCategory {
@@ -257,16 +152,6 @@ export interface CapacityCategory {
   translations?: Translations;
 }
 
-// NEW: Ingredient Interface
-export interface Ingredient {
-  id: string;
-  name: string;
-  unit: string; // 'ks' | 'g' | 'ml' etc.
-  imageUrl?: string;
-  isHidden: boolean;
-}
-
-// NEW: Link between Product and Ingredient
 export interface ProductIngredient {
   ingredientId: string;
   quantity: number;
@@ -278,29 +163,38 @@ export interface Product {
   description: string;
   price: number;
   unit: 'ks' | 'kg';
-  category: string; 
-  subcategory?: string; // Stores the Subcategory ID (slug)
-  capacityCategoryId?: string; // LINK TO CAPACITY GROUP
+  category: string;
+  subcategory?: string;
   images: string[];
   allergens: number[];
   leadTimeDays: number;
   shelfLifeDays: number;
   workload: number;
-  workloadOverhead?: number;
+  workloadOverhead: number;
+  capacityCategoryId?: string;
   volume: number;
-  noPackaging?: boolean;
-  isEventProduct?: boolean; // NEW: Flag for event products
-  minOrderQuantity?: number;
+  minOrderQuantity: number;
   visibility: {
     online: boolean;
     store: boolean;
     stand: boolean;
   };
-  commentsAllowed: boolean;
+  commentsAllowed?: boolean;
   vatRateInner: number;
   vatRateTakeaway: number;
+  isEventProduct?: boolean;
+  noPackaging?: boolean;
+  composition?: ProductIngredient[];
   translations?: Translations;
-  composition?: ProductIngredient[]; // NEW: List of ingredients
+}
+
+export interface Ingredient {
+  id: string;
+  name: string;
+  unit: string;
+  imageUrl?: string;
+  isHidden?: boolean;
+  full_json?: any;
 }
 
 export interface CartItem extends Product {
@@ -311,14 +205,14 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  phone: string; 
+  phone: string;
   role: 'customer' | 'admin' | 'driver';
   billingAddresses: Address[];
   deliveryAddresses: Address[];
   isBlocked?: boolean;
   passwordHash?: string;
   marketingConsent?: boolean;
-  hasPushSubscription?: boolean; // NEW FIELD
+  hasPushSubscription?: boolean;
 }
 
 export interface OrderStatusHistory {
@@ -348,23 +242,26 @@ export interface Order {
   packagingFee: number;
   deliveryFee: number;
   appliedDiscounts?: AppliedDiscount[];
-  
   deliveryType: DeliveryType;
   deliveryDate: string;
   
+  // Structured Address Data
   deliveryName?: string;
   deliveryStreet?: string;
   deliveryCity?: string;
   deliveryZip?: string;
   deliveryPhone?: string;
-  deliveryAddress?: string;
-
+  
   billingName?: string;
   billingStreet?: string;
   billingCity?: string;
   billingZip?: string;
   billingIc?: string;
   billingDic?: string;
+
+  // Legacy blob address (kept for compatibility)
+  deliveryAddress?: string;
+  billingAddress?: string;
 
   status: OrderStatus;
   statusHistory?: OrderStatusHistory[];
@@ -373,21 +270,22 @@ export interface Order {
   createdAt: string;
   note?: string;
   invoiceUrl?: string;
-  companyDetailsSnapshot?: CompanyDetails; // Snapshot at creation (Proforma)
-  deliveryCompanyDetailsSnapshot?: CompanyDetails; // Snapshot at delivery (Final Invoice)
+  companyDetailsSnapshot?: CompanyDetails;
+  deliveryCompanyDetailsSnapshot?: CompanyDetails;
   language: Language;
-  pickupLocationId?: string; 
-  finalInvoiceDate?: string; 
+  pickupLocationId?: string;
+  
+  finalInvoiceDate?: string;
 }
 
-export type CategoryCapacities = Record<string, number>; 
+export type CategoryCapacities = Record<string, number>;
 
 export interface PaymentMethodConfig {
   id: PaymentMethod;
   label: string;
   description: string;
   enabled: boolean;
-  translations?: Translations; 
+  translations?: Translations;
 }
 
 export interface DayConfig {
@@ -397,17 +295,99 @@ export interface DayConfig {
 }
 
 export interface EventSlot {
-  date: string; // YYYY-MM-DD
-  capacityOverrides: CategoryCapacities; // Specific capacities for this event day
+  date: string;
+  capacityOverrides?: Partial<CategoryCapacities>;
+}
+
+export interface LogisticsSettings {
+  stopTimeMinutes: number;
+  loadingSecondsPerItem: number;
+  unloadingPaidSeconds: number;
+  unloadingUnpaidSeconds: number;
 }
 
 export interface ServerSettings {
   consoleLogging: boolean;
 }
 
-export interface LogisticsSettings {
-  stopTimeMinutes: number;
-  loadingSecondsPerItem: number;
-  unloadingPaidSeconds: number; // For already paid orders (fast drop)
-  unloadingUnpaidSeconds: number; // For cash/collect orders (slow drop)
+export interface GlobalSettings {
+  categories: Category[];
+  capacityCategories?: CapacityCategory[];
+  defaultCapacities: CategoryCapacities;
+  eventSlots?: EventSlot[];
+  companyDetails: CompanyDetails;
+  paymentMethods: PaymentMethodConfig[];
+  deliveryRegions: DeliveryRegion[];
+  pickupLocations: PickupLocation[];
+  packaging: {
+    types: PackagingType[];
+    freeFrom: number;
+  };
+  logistics?: LogisticsSettings;
+  enabledLanguages?: Language[];
+  enableAiTranslation?: boolean;
+  sqlDebug?: boolean;
+  server?: ServerSettings;
+}
+
+export interface BackupData {
+  users?: User[];
+  orders?: Order[];
+  products?: Product[];
+  discountCodes?: DiscountCode[];
+  dayConfigs?: DayConfig[];
+  settings?: GlobalSettings;
+  rides?: Ride[];
+  ingredients?: Ingredient[];
+}
+
+export interface RideStep {
+  orderId: string;
+  type: 'pickup' | 'delivery';
+  address: string;
+  arrivalTime: string;
+  departureTime: string;
+  distanceKm?: number;
+  customerName?: string;
+  customerPhone?: string;
+  note?: string;
+  isPaid?: boolean;
+  itemsCount?: number;
+  error?: string;
+}
+
+export interface Ride {
+  id: string;
+  date: string;
+  driverId: string;
+  status: 'planned' | 'active' | 'completed';
+  departureTime: string;
+  orderIds: string[];
+  steps?: RideStep[];
+}
+
+export interface EmailLog {
+  id: number;
+  type: string;
+  recipient_email: string;
+  subject: string;
+  status: 'pending' | 'processing' | 'sent' | 'error';
+  error_message?: string;
+  created_at: string;
+  processed_at?: string;
+  payload: any;
+}
+
+export interface CookieSettings {
+  essential: boolean;
+  analytics: boolean;
+  marketing: boolean;
+  timestamp: string;
+}
+
+export interface OrdersSearchResult {
+  orders: Order[];
+  total: number;
+  page: number;
+  pages: number;
 }
