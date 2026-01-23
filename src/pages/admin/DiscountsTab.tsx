@@ -2,13 +2,14 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { DiscountCode, DiscountType } from '../../types';
-import { Plus, Edit, Trash2, AlertCircle, Loader2 } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertCircle, Loader2, AlertTriangle, ArrowLeft } from 'lucide-react';
 
 export const DiscountsTab: React.FC = () => {
     const { discountCodes, addDiscountCode, updateDiscountCode, deleteDiscountCode, settings, t } = useStore();
     const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
     const [editingDiscount, setEditingDiscount] = useState<Partial<DiscountCode> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
@@ -64,13 +65,19 @@ export const DiscountsTab: React.FC = () => {
             const success = await deleteDiscountCode(deleteTarget);
             setIsDeleting(false);
             
-            // Only close modal if success. 
-            // If failed, the API hook shows the error toast, and we keep the modal open
-            // so the user knows the action didn't happen.
             if (success) {
                 setDeleteTarget(null);
+                setDeleteError(null);
+            } else {
+                // If API call fails (returns false), show inline error instead of closing
+                setDeleteError("Tento slevový kód nelze smazat, protože již byl použit v jedné nebo více objednávkách.");
             }
         }
+    };
+
+    const openDeleteModal = (id: string) => {
+        setDeleteTarget(id);
+        setDeleteError(null);
     };
 
     const openModal = (discount?: Partial<DiscountCode>) => {
@@ -122,7 +129,7 @@ export const DiscountsTab: React.FC = () => {
                                 </td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
                                     <button onClick={() => openModal(d)} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                    <button onClick={() => setDeleteTarget(d.id)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                    <button onClick={() => openDeleteModal(d.id)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
                                 </td>
                             </tr>
                         ))}
@@ -134,16 +141,36 @@ export const DiscountsTab: React.FC = () => {
             </div>
 
             {deleteTarget && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm">
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in duration-200">
                     <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
-                        <h3 className="text-lg font-bold mb-2">{t('confirm.delete_title')}</h3>
-                        <p className="text-sm text-gray-500 mb-6">{t('confirm.delete_message')}</p>
-                        <div className="flex gap-2">
-                            <button onClick={() => setDeleteTarget(null)} disabled={isDeleting} className="flex-1 py-2 bg-gray-100 rounded disabled:opacity-50">{t('common.cancel')}</button>
-                            <button onClick={confirmDelete} disabled={isDeleting} className="flex-1 py-2 bg-red-600 text-white rounded disabled:opacity-50 flex justify-center items-center">
-                                {isDeleting ? <Loader2 className="animate-spin" size={16}/> : t('common.delete')}
-                            </button>
-                        </div>
+                        {deleteError ? (
+                            <div className="text-center">
+                                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mb-4 mx-auto text-red-600">
+                                    <AlertTriangle size={24} />
+                                </div>
+                                <h3 className="text-lg font-bold mb-2 text-gray-900">{t('error.delete_title')}</h3>
+                                <div className="bg-red-50 p-4 rounded-xl mb-6 text-xs text-red-700 font-bold border border-red-100">
+                                    {deleteError}
+                                </div>
+                                <button 
+                                    onClick={() => setDeleteTarget(null)} 
+                                    className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold flex items-center justify-center transition"
+                                >
+                                    <ArrowLeft size={16} className="mr-2"/> Zpět
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <h3 className="text-lg font-bold mb-2">{t('confirm.delete_title')}</h3>
+                                <p className="text-sm text-gray-500 mb-6">{t('confirm.delete_message')}</p>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setDeleteTarget(null)} disabled={isDeleting} className="flex-1 py-2 bg-gray-100 rounded disabled:opacity-50">{t('common.cancel')}</button>
+                                    <button onClick={confirmDelete} disabled={isDeleting} className="flex-1 py-2 bg-red-600 text-white rounded disabled:opacity-50 flex justify-center items-center">
+                                        {isDeleting ? <Loader2 className="animate-spin" size={16}/> : t('common.delete')}
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
