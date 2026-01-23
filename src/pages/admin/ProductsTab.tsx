@@ -1,12 +1,9 @@
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../../context/StoreContext';
-import { Product } from '../../types';
+import { Product, Ingredient, ProductIngredient } from '../../types';
 import { ALLERGENS } from '../../constants';
-import { generateTranslations } from '../../utils/aiTranslator';
-import { Plus, Edit, Trash2, Check, X, ImageIcon, AlertTriangle, Filter, ArrowUp, ArrowDown, ArrowUpDown, Wheat, ChevronDown, ChevronUp, Save } from 'lucide-react';
-import { Pagination } from '../../components/Pagination';
-import { MultiSelect } from '../../components/MultiSelect';
+import { Plus, Edit, Trash2, Check, X, ImageIcon, Search, AlertCircle, Languages, Wheat } from 'lucide-react';
 
 const DeleteConfirmModal: React.FC<{
     isOpen: boolean;
@@ -36,111 +33,99 @@ const DeleteConfirmModal: React.FC<{
 };
 
 export const ProductsTab: React.FC = () => {
-    const { addProduct, updateProduct, deleteProduct, settings, t, uploadImage, getImageUrl, searchProducts, products: allLocalProducts, ingredients } = useStore();
-    
-    // --- TABLE STATE ---
-    const [displayProducts, setDisplayProducts] = useState<Product[]>([]);
-    const [totalItems, setTotalItems] = useState(0);
-    const [page, setPage] = useState(1);
-    const [limit, setLimit] = useState(50);
-    const [totalPages, setTotalPages] = useState(1);
-    const [isLoading, setIsLoading] = useState(false);
-
-    // Filters
-    const [showFilters, setShowFilters] = useState(false);
-    const [filters, setFilters] = useState({
-        name: '',
-        minPrice: '',
-        maxPrice: '',
-        categories: [] as string[],
-        visibility: [] as string[]
-    });
-
-    // Sort
-    const [sort, setSort] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
-
-    // --- MODAL STATE ---
+    const { products, addProduct, updateProduct, deleteProduct, settings, t, tData, uploadImage, getImageUrl, ingredients } = useStore();
     const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
-    const [deleteTarget, setDeleteTarget] = useState<{id: string, name: string} | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+    const [search, setSearch] = useState('');
+    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
     const [isUploading, setIsUploading] = useState(false);
     const [isTranslating, setIsTranslating] = useState(false);
-    const [saveError, setSaveError] = useState<string | null>(null);
-    const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
-    
-    // Ingredient Editor State
-    const [expandedIngredientsId, setExpandedIngredientsId] = useState<string | null>(null);
-    const [addingIngredientId, setAddingIngredientId] = useState<string>(''); // Currently selected ing to add
-    const [ingredientQty, setIngredientQty] = useState<string>('1');
 
+    // CSS class for number inputs to hide spinners
     const noSpinnerClass = "[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
-    const sortedCategories = useMemo(() => [...settings.categories].sort((a, b) => a.order - b.order), [settings.categories]);
-    const capCategories = useMemo(() => settings.capacityCategories || [], [settings.capacityCategories]);
 
-    const getCategoryName = (id: string) => sortedCategories.find(c => c.id === id)?.name || id;
+    const getCategoryName = (id: string) => settings.categories.find(c => c.id === id)?.name || id;
+    const getCapacityName = (id?: string) => settings.capacityCategories?.find(c => c.id === id)?.name || '-';
 
-    // Load Data
-    const loadData = useCallback(async () => {
-        setIsLoading(true);
-        try {
-            const res = await searchProducts({
-                page,
-                limit,
-                sort: sort?.key,
-                order: sort?.direction,
-                search: filters.name,
-                minPrice: filters.minPrice,
-                maxPrice: filters.maxPrice,
-                categories: filters.categories,
-                visibility: filters.visibility
-            });
-            setDisplayProducts(res.products);
-            setTotalItems(res.total);
-            setTotalPages(res.pages);
-        } catch (e) {
-            console.error("Load products failed", e);
-        } finally {
-            setIsLoading(false);
+    const sortedProducts = useMemo(() => {
+        let filtered = products;
+        if (search) {
+            filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
         }
-    }, [page, limit, sort, filters, searchProducts, allLocalProducts]);
+        // Sort by Category order then Name
+        return filtered.sort((a, b) => {
+            const catA = settings.categories.find(c => c.id === a.category)?.order || 999;
+            const catB = settings.categories.find(c => c.id === b.category)?.order || 999;
+            if (catA !== catB) return catA - catB;
+            return a.name.localeCompare(b.name);
+        });
+    }, [products, search, settings.categories]);
 
-    // Initial Load & Refresh
-    useEffect(() => {
-        loadData();
-    }, [loadData]);
+    // Subcategories for current editing product's category
+    const availableSubcategories = useMemo(() => {
+        if (!editingProduct?.category) return [];
+        const cat = settings.categories.find(c => c.id === editingProduct.category);
+        if (!cat || !cat.subcategories) return [];
+        return cat.subcategories.map(s => typeof s === 'string' ? { id: s, name: s } : s);
+    }, [editingProduct?.category, settings.categories]);
 
-    const handleSort = (key: string) => {
-        setSort(prev => {
-            if (prev?.key === key) {
-                if (prev.direction === 'asc') return { key, direction: 'desc' };
-                return null; // Reset
+    const handleSave = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setValidationErrors({});
+        if (!editingProduct) return;
+
+        const errors: Record<string, string> = {};
+        if (!editingProduct.name) errors.name = 'Vyplňte název.';
+        if (editingProduct.price === undefined) errors.price = 'Vyplňte cenu.';
+        if (!editingProduct.unit) errors.unit = 'Vyberte jednotku.';
+        if (!editingProduct.category) errors.category = 'Vyberte kategorii.';
+
+        if (Object.keys(errors).length > 0) {
+            setValidationErrors(errors);
+            return;
+        }
+
+        setIsUploading(true);
+        try {
+            const p = { ...editingProduct } as Product;
+            if (!p.id) p.id = Date.now().toString();
+            
+            // Image Upload Handling
+            if (p.images && p.images.length > 0) {
+                const newImages = [];
+                for (const img of p.images) {
+                    if (img.startsWith('data:')) {
+                        // It's a new base64 image, upload it
+                        const url = await uploadImage(img, `prod-${p.id}-${Date.now()}.jpg`);
+                        newImages.push(url);
+                    } else {
+                        newImages.push(img);
+                    }
+                }
+                p.images = newImages;
             }
-            return { key, direction: 'asc' };
-        });
-        setPage(1);
-    };
 
-    const handleFilterChange = (key: string, value: any) => {
-        setFilters(prev => ({ ...prev, [key]: value }));
-        setPage(1);
-    };
+            // Defaults
+            if (!p.visibility) p.visibility = { online: true, store: true, stand: true };
+            if (!p.allergens) p.allergens = [];
+            p.vatRateInner = Number(p.vatRateInner ?? 0);
+            p.vatRateTakeaway = Number(p.vatRateTakeaway ?? 0);
+            p.workload = Number(p.workload ?? 0);
+            p.workloadOverhead = Number(p.workloadOverhead ?? 0);
 
-    const clearFilters = () => {
-        setFilters({
-            name: '',
-            minPrice: '',
-            maxPrice: '',
-            categories: [],
-            visibility: []
-        });
-        setPage(1);
-    };
-
-    const getSortIcon = (key: string) => {
-        if (sort?.key !== key) return <ArrowUpDown size={14} className="text-gray-300 ml-1" />;
-        return sort.direction === 'asc' 
-            ? <ArrowUp size={14} className="text-primary ml-1" />
-            : <ArrowDown size={14} className="text-primary ml-1" />;
+            if (products.some(prod => prod.id === p.id)) {
+                await updateProduct(p);
+            } else {
+                await addProduct(p);
+            }
+            setIsProductModalOpen(false);
+        } catch (e) {
+            console.error(e);
+            alert('Chyba při ukládání.');
+        } finally {
+            setIsUploading(false);
+        }
     };
 
     const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,587 +144,363 @@ export const ProductsTab: React.FC = () => {
         if (deleteTarget) {
             await deleteProduct(deleteTarget.id);
             setDeleteTarget(null);
-            loadData();
         }
     };
 
-    // --- INGREDIENT LOGIC ---
-
-    const handleAddIngredient = async (product: Product) => {
-        if (!addingIngredientId) return;
-        const qty = parseFloat(ingredientQty);
-        if (isNaN(qty) || qty <= 0) {
-            alert('Množství musí být kladné číslo.');
-            return;
-        }
-
-        const newComposition = [...(product.composition || [])];
-        // Check duplicate
-        if (newComposition.some(i => i.ingredientId === addingIngredientId)) {
-            alert('Tato surovina již je přidána.');
-            return;
-        }
-
-        newComposition.push({ ingredientId: addingIngredientId, quantity: qty });
-        
-        // Update product in DB immediately
-        await updateProduct({ ...product, composition: newComposition });
-        
-        // Update local state to reflect change
-        setDisplayProducts(prev => prev.map(p => p.id === product.id ? { ...p, composition: newComposition } : p));
-        setAddingIngredientId('');
-        setIngredientQty('1');
-    };
-
-    const handleUpdateIngredientQty = async (product: Product, ingId: string, newQty: number) => {
-        if (newQty <= 0) return;
-        const newComposition = (product.composition || []).map(i => 
-            i.ingredientId === ingId ? { ...i, quantity: newQty } : i
-        );
-        await updateProduct({ ...product, composition: newComposition });
-        setDisplayProducts(prev => prev.map(p => p.id === product.id ? { ...p, composition: newComposition } : p));
-    };
-
-    const handleRemoveIngredient = async (product: Product, ingId: string) => {
-        const newComposition = (product.composition || []).filter(i => i.ingredientId !== ingId);
-        await updateProduct({ ...product, composition: newComposition });
-        setDisplayProducts(prev => prev.map(p => p.id === product.id ? { ...p, composition: newComposition } : p));
-    };
-
-    const saveProduct = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setSaveError(null);
-        setValidationErrors({});
-        
+    const handleAddIngredient = (ingredientId: string) => {
         if (!editingProduct) return;
+        const currentComp = editingProduct.composition || [];
+        if (currentComp.some(c => c.ingredientId === ingredientId)) return;
         
-        const prod = { ...editingProduct } as Product;
-        const errors: Record<string, string> = {};
-
-        // Validations...
-        if (!prod.name || prod.name.trim().length === 0) errors.name = 'Vyplňte název.';
-        if (!prod.description || prod.description.trim().length === 0) errors.description = 'Vyplňte popis.';
-        const validateNum = (val: number | undefined, key: string, label: string) => {
-             if (val === undefined || val === null || isNaN(Number(val)) || String(val).trim() === '') errors[key] = `Vyplňte ${label}.`;
-             else if (Number(val) < 0) errors[key] = `Hodnota musí být 0 nebo větší.`;
-        };
-        validateNum(prod.price, 'price', 'cenu');
-        validateNum(prod.leadTimeDays, 'leadTimeDays', 'lhůtu');
-        validateNum(prod.shelfLifeDays, 'shelfLifeDays', 'trvanlivost');
-        validateNum(prod.minOrderQuantity, 'minOrderQuantity', 'min. odběr');
-        validateNum(prod.volume, 'volume', 'objem');
-        validateNum(prod.workload, 'workload', 'pracnost');
-        validateNum(prod.workloadOverhead, 'workloadOverhead', 'režii');
-        validateNum(prod.vatRateInner, 'vatRateInner', 'DPH prodejna');
-        validateNum(prod.vatRateTakeaway, 'vatRateTakeaway', 'DPH s sebou');
-
-        const catDef = sortedCategories.find(c => c.id === prod.category);
-        const subCats = catDef?.subcategories || [];
-        if (subCats.length > 0) {
-            const validIds = subCats.map(s => typeof s === 'string' ? s : s.id);
-            if (!prod.subcategory || !validIds.includes(prod.subcategory)) {
-                errors.subcategory = `Pro kategorii "${catDef?.name}" je nutné vybrat podkategorii.`;
-            }
-        } else {
-            prod.subcategory = undefined;
-        }
-
-        if (Object.keys(errors).length > 0) {
-            setValidationErrors(errors);
-            setSaveError('Zkontrolujte povinná pole.');
-            return;
-        }
-
-        setIsUploading(true); 
-        
-        try {
-            if (!prod.id) prod.id = Date.now().toString();
-            
-            if (prod.images && prod.images.length > 0) {
-                const processedImages = await Promise.all(prod.images.map(async (img, index) => {
-                    if (img.startsWith('data:')) {
-                        try {
-                            const fileName = `prod-${prod.id}-${Date.now()}-${index}.jpg`;
-                            return await uploadImage(img, fileName);
-                        } catch (err) {
-                            return img; 
-                        }
-                    }
-                    return img;
-                }));
-                prod.images = processedImages;
-            } else {
-                prod.images = [];
-            }
-
-            if (!prod.category && sortedCategories.length > 0) prod.category = sortedCategories[0].id;
-            if (!prod.unit) prod.unit = 'ks';
-            if (!prod.visibility) prod.visibility = { online: true, store: true, stand: true };
-            if (!prod.allergens) prod.allergens = [];
-            
-            prod.price = Number(prod.price);
-            prod.vatRateInner = Number(prod.vatRateInner);
-            prod.vatRateTakeaway = Number(prod.vatRateTakeaway);
-            prod.workload = Number(prod.workload);
-            prod.workloadOverhead = Number(prod.workloadOverhead);
-            prod.volume = Number(prod.volume);
-            prod.minOrderQuantity = Number(prod.minOrderQuantity);
-            prod.leadTimeDays = Number(prod.leadTimeDays);
-            prod.shelfLifeDays = Number(prod.shelfLifeDays);
-            
-            if (settings.enableAiTranslation) {
-                setIsTranslating(true);
-                const translations = await generateTranslations({ name: prod.name, description: prod.description });
-                prod.translations = translations;
-                setIsTranslating(false);
-            }
-
-            if (allLocalProducts.some(p => p.id === prod.id)) await updateProduct(prod);
-            else await addProduct(prod);
-            
-            loadData(); // Refresh list
-            setIsProductModalOpen(false);
-        } catch (e) {
-            setSaveError("Chyba při ukládání produktu.");
-        } finally {
-            setIsUploading(false);
-            setIsTranslating(false);
-        }
+        setEditingProduct({
+            ...editingProduct,
+            composition: [...currentComp, { ingredientId, quantity: 0 }]
+        });
     };
 
-    const categoryOptions = sortedCategories.map(c => ({ value: c.id, label: c.name }));
-    const visibilityOptions = [
-        { value: 'online', label: 'E-shop' },
-        { value: 'store', label: 'Prodejna' },
-        { value: 'stand', label: 'Stánek' }
-    ];
+    const handleRemoveIngredient = (ingredientId: string) => {
+        if (!editingProduct) return;
+        setEditingProduct({
+            ...editingProduct,
+            composition: editingProduct.composition?.filter(c => c.ingredientId !== ingredientId)
+        });
+    };
+
+    const handleIngredientQuantityChange = (ingredientId: string, qty: number) => {
+        if (!editingProduct) return;
+        setEditingProduct({
+            ...editingProduct,
+            composition: editingProduct.composition?.map(c => 
+                c.ingredientId === ingredientId ? { ...c, quantity: qty } : c
+            )
+        });
+    };
 
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center gap-4">
                     <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
-                    <button 
-                        onClick={() => setShowFilters(!showFilters)} 
-                        className={`p-2 rounded-lg transition border ${showFilters ? 'bg-primary text-white border-primary' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
-                        title="Filtry"
-                    >
-                        <Filter size={18} />
-                    </button>
+                    <div className="relative">
+                        <Search size={16} className="absolute left-3 top-2.5 text-gray-400"/>
+                        <input 
+                            className="pl-9 p-2 border rounded-lg text-sm w-64 focus:ring-accent outline-none" 
+                            placeholder="Hledat produkt..." 
+                            value={search} 
+                            onChange={e => setSearch(e.target.value)}
+                        />
+                    </div>
                 </div>
-                <button onClick={() => { setEditingProduct({}); setIsProductModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
+                <button onClick={() => { setEditingProduct({ visibility: { online: true, store: true, stand: true }, allergens: [], images: [], composition: [] }); setIsProductModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-black transition"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
             </div>
-            
-            {/* FILTERS PANEL */}
-            {showFilters && (
-                <div className="bg-white p-4 rounded-xl border shadow-sm mb-4 animate-in slide-in-from-top-2">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">Název</label>
-                            <input 
-                                className="w-full border rounded p-2 text-xs" 
-                                placeholder="Hledat..." 
-                                value={filters.name}
-                                onChange={e => handleFilterChange('name', e.target.value)} 
-                            />
-                        </div>
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Od - Do)</label>
-                            <div className="flex gap-2">
-                                <input 
-                                    type="number" 
-                                    className="w-full border rounded p-2 text-xs" 
-                                    placeholder="0" 
-                                    value={filters.minPrice}
-                                    onChange={e => handleFilterChange('minPrice', e.target.value)} 
-                                />
-                                <input 
-                                    type="number" 
-                                    className="w-full border rounded p-2 text-xs" 
-                                    placeholder="Max" 
-                                    value={filters.maxPrice}
-                                    onChange={e => handleFilterChange('maxPrice', e.target.value)} 
-                                />
-                            </div>
-                        </div>
-                        <div>
-                            <MultiSelect 
-                                label="Kategorie"
-                                options={categoryOptions}
-                                selectedValues={filters.categories}
-                                onChange={(vals) => handleFilterChange('categories', vals)}
-                            />
-                        </div>
-                        <div>
-                            <MultiSelect 
-                                label="Viditelnost"
-                                options={visibilityOptions}
-                                selectedValues={filters.visibility}
-                                onChange={(vals) => handleFilterChange('visibility', vals)}
-                            />
-                        </div>
-                    </div>
-                    {/* Clear Filters Button */}
-                    <div className="flex justify-end mt-4 pt-2 border-t border-gray-100">
-                        <button onClick={clearFilters} className="text-red-500 hover:text-red-700 text-xs font-bold flex items-center transition">
-                            <X size={14} className="mr-1"/> Zrušit filtry
-                        </button>
-                    </div>
-                </div>
-            )}
 
-            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col">
-                <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y">
-                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                            <tr>
-                                <th className="px-6 py-4 text-left w-10"></th> {/* Expand Toggle */}
-                                <th className="px-6 py-4 text-left w-20">Foto</th>
-                                <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('name')}>
-                                    <div className="flex items-center">Název {getSortIcon('name')}</div>
-                                </th>
-                                <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('category')}>
-                                    <div className="flex items-center">Kategorie {getSortIcon('category')}</div>
-                                </th>
-                                <th className="px-6 py-4 text-left cursor-pointer hover:bg-gray-100" onClick={() => handleSort('price')}>
-                                    <div className="flex items-center">Cena {getSortIcon('price')}</div>
-                                </th>
-                                <th className="px-6 py-4 text-center">Viditelnost (Online)</th>
-                                <th className="px-6 py-4 text-right">Akce</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y text-xs">
-                            {isLoading ? (
-                                <tr><td colSpan={7} className="p-8 text-center text-gray-400">Načítám produkty...</td></tr>
-                            ) : displayProducts.map(p => (
-                                <React.Fragment key={p.id}>
-                                    <tr className="hover:bg-gray-50 group">
-                                        <td className="px-6 py-4 text-center cursor-pointer relative" onClick={() => setExpandedIngredientsId(expandedIngredientsId === p.id ? null : p.id)}>
-                                            <div className="flex items-center gap-1">
-                                                {expandedIngredientsId === p.id ? <ChevronUp size={16} className="text-gray-400"/> : <ChevronDown size={16} className="text-gray-400 group-hover:text-primary"/>}
-                                                <span className="text-[10px] font-bold text-gray-400">({p.composition?.length || 0})</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            {p.images?.[0] ? <img src={getImageUrl(p.images[0])} className="w-10 h-10 object-cover rounded" /> : <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center"><ImageIcon size={16} className="text-gray-400"/></div>}
-                                        </td>
-                                        <td className="px-6 py-4 font-bold">{p.name}</td>
-                                        <td className="px-6 py-4">{getCategoryName(p.category)}</td>
-                                        <td className="px-6 py-4">{p.price} Kč / {p.unit}</td>
-                                        <td className="px-6 py-4 text-center">
-                                            <div className="flex justify-center gap-2">
-                                                <span title="E-shop">{p.visibility?.online ? <Check size={14} className="text-green-500"/> : <X size={14} className="text-gray-300"/>}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                            <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                            <button onClick={() => setDeleteTarget({id: p.id, name: p.name})} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
-                                        </td>
-                                    </tr>
-
-                                    {/* EXPANDED INGREDIENTS ROW */}
-                                    {expandedIngredientsId === p.id && (
-                                        <tr className="bg-gray-50 border-b border-gray-200">
-                                            <td colSpan={7} className="px-16 py-4">
-                                                <div className="flex items-start gap-8">
-                                                    {/* Product Image */}
-                                                    {p.images?.[0] && (
-                                                        <img src={getImageUrl(p.images[0])} className="w-24 h-24 object-cover rounded-lg border shadow-sm" />
-                                                    )}
-                                                    
-                                                    <div className="flex-grow">
-                                                        <h4 className="font-bold text-gray-600 mb-3 flex items-center gap-2">
-                                                            <Wheat size={16} className="text-accent"/> Receptura (Suroviny)
-                                                        </h4>
-                                                        
-                                                        {/* Ingredients List */}
-                                                        <div className="space-y-2 mb-4">
-                                                            {(p.composition || []).map(ci => {
-                                                                const ing = ingredients.find(i => i.id === ci.ingredientId);
-                                                                if (!ing) return null;
-                                                                return (
-                                                                    <div key={ci.ingredientId} className="flex items-center gap-3 bg-white p-2 rounded border border-gray-200">
-                                                                        <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center overflow-hidden">
-                                                                            {ing.imageUrl ? <img src={getImageUrl(ing.imageUrl)} className="w-full h-full object-cover"/> : <ImageIcon size={14} className="text-gray-300"/>}
-                                                                        </div>
-                                                                        <div className="flex-grow font-bold text-sm">{ing.name}</div>
-                                                                        <input 
-                                                                            type="number" 
-                                                                            min="0.01" 
-                                                                            step="0.01"
-                                                                            className={`w-20 border rounded p-1 text-right font-mono ${noSpinnerClass}`}
-                                                                            value={ci.quantity}
-                                                                            onChange={(e) => handleUpdateIngredientQty(p, ci.ingredientId, parseFloat(e.target.value))}
-                                                                        />
-                                                                        <span className="text-xs text-gray-500 w-8">{ing.unit}</span>
-                                                                        <button onClick={() => handleRemoveIngredient(p, ci.ingredientId)} className="text-red-400 hover:text-red-600 p-1"><X size={14}/></button>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                            {(!p.composition || p.composition.length === 0) && (
-                                                                <p className="text-xs text-gray-400 italic">Žádné suroviny nebyly přidány.</p>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Add Ingredient */}
-                                                        <div className="flex items-center gap-2 pt-2 border-t border-gray-200">
-                                                            <select 
-                                                                className="border rounded p-1.5 text-xs bg-white flex-grow" 
-                                                                value={addingIngredientId} 
-                                                                onChange={e => setAddingIngredientId(e.target.value)}
-                                                            >
-                                                                <option value="">-- Vybrat surovinu --</option>
-                                                                {ingredients
-                                                                    .filter(i => !i.isHidden)
-                                                                    .sort((a,b) => a.name.localeCompare(b.name))
-                                                                    .map(i => (
-                                                                    <option key={i.id} value={i.id} disabled={p.composition?.some(c => c.ingredientId === i.id)}>
-                                                                        {i.name} ({i.unit})
-                                                                    </option>
-                                                                ))}
-                                                            </select>
-                                                            <input 
-                                                                type="number" 
-                                                                min="0.01" 
-                                                                step="0.01"
-                                                                className="w-20 border rounded p-1.5 text-xs text-right"
-                                                                placeholder="Množství"
-                                                                value={ingredientQty}
-                                                                onChange={e => setIngredientQty(e.target.value)}
-                                                            />
-                                                            <button 
-                                                                onClick={() => handleAddIngredient(p)}
-                                                                className="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-green-700"
-                                                                disabled={!addingIngredientId}
-                                                            >
-                                                                Přidat
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                        </tr>
+            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+                <table className="min-w-full divide-y">
+                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                        <tr>
+                            <th className="px-6 py-4 text-left w-20">Foto</th>
+                            <th className="px-6 py-4 text-left">{t('admin.tbl_name')}</th>
+                            <th className="px-6 py-4 text-left">{t('admin.tbl_category')}</th>
+                            <th className="px-6 py-4 text-left">{t('admin.tbl_price')}</th>
+                            <th className="px-6 py-4 text-center">{t('admin.tbl_visibility')}</th>
+                            <th className="px-6 py-4 text-right">{t('admin.tbl_actions')}</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y text-xs">
+                        {sortedProducts.map(p => (
+                            <tr key={p.id} className="hover:bg-gray-50">
+                                <td className="px-6 py-4">
+                                    {p.images?.[0] ? (
+                                        <img src={getImageUrl(p.images[0], 'small')} className="w-10 h-10 object-cover rounded" loading="lazy" />
+                                    ) : (
+                                        <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
                                     )}
-                                </React.Fragment>
-                            ))}
-                            {!isLoading && displayProducts.length === 0 && (
-                                <tr><td colSpan={7} className="p-8 text-center text-gray-400">Žádné produkty.</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-                
-                <Pagination 
-                    currentPage={page}
-                    totalPages={totalPages}
-                    onPageChange={setPage}
-                    limit={limit}
-                    onLimitChange={(l) => { setLimit(l); setPage(1); }}
-                    totalItems={totalItems}
-                />
+                                </td>
+                                <td className="px-6 py-4 font-bold text-gray-900">
+                                    {tData(p, 'name')}
+                                    {p.isEventProduct && <span className="ml-2 bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider">AKCE</span>}
+                                </td>
+                                <td className="px-6 py-4 text-gray-600">{getCategoryName(p.category)}</td>
+                                <td className="px-6 py-4 font-mono">{p.price} Kč / {p.unit}</td>
+                                <td className="px-6 py-4 text-center">
+                                    {p.visibility?.online ? <Check size={16} className="inline text-green-500"/> : <X size={16} className="inline text-gray-300"/>}
+                                </td>
+                                <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                    <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                    <button onClick={() => setDeleteTarget(p)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                {sortedProducts.length === 0 && (
+                    <div className="p-12 text-center text-gray-400">Žádné produkty k zobrazení</div>
+                )}
             </div>
 
             <DeleteConfirmModal 
                 isOpen={!!deleteTarget} 
-                title={`Smazat ${deleteTarget?.name}?`} 
+                title={`Smazat produkt ${deleteTarget?.name}?`} 
                 onConfirm={confirmDelete} 
                 onClose={() => setDeleteTarget(null)} 
             />
 
             {isProductModalOpen && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4">
-                <form onSubmit={saveProduct} className="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-2xl">
-                    <h3 className="font-bold text-lg">{editingProduct?.id ? t('admin.edit_product') : t('admin.add_product')}</h3>
-                    
-                    {saveError && (
-                        <div className="bg-red-50 text-red-600 p-3 rounded-lg text-xs font-bold flex items-center">
-                            <AlertTriangle size={16} className="mr-2 flex-shrink-0"/>
-                            {saveError}
-                        </div>
-                    )}
-
-                    <div className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="col-span-2">
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Název produktu {validationErrors.name && <span className="text-red-500">*</span>}</label>
-                                <input className={`w-full border rounded p-2 ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`} value={editingProduct?.name || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, name: e.target.value} : null)} />
+                    <form onSubmit={handleSave} className="bg-white rounded-2xl w-full max-w-4xl p-6 space-y-6 max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
+                        <h3 className="font-bold text-lg border-b pb-4 sticky top-0 bg-white z-10 flex justify-between items-center">
+                            <span>{editingProduct?.id && !editingProduct.id.startsWith('Date') ? t('admin.edit_product') : t('admin.add_product')}</span>
+                            <div className="flex items-center gap-2">
+                                {isUploading && <span className="text-xs text-blue-600 animate-pulse font-bold mr-2">Ukládám...</span>}
+                                <button type="button" onClick={() => setIsProductModalOpen(false)} className="p-1 hover:bg-gray-100 rounded-full"><X size={20}/></button>
                             </div>
-                            <div className="col-span-2">
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Popis {validationErrors.description && <span className="text-red-500">*</span>}</label>
-                                <textarea className={`w-full border rounded p-2 h-20 ${validationErrors.description ? 'border-red-500 bg-red-50' : ''}`} value={editingProduct?.description || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, description: e.target.value} : null)} />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč) {validationErrors.price && <span className="text-red-500">*</span>}</label>
-                                <input type="number" className={`w-full border rounded p-2 ${validationErrors.price ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.price || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, price: Number(e.target.value)} : null)} />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie</label>
-                                <select className="w-full border rounded p-2" value={editingProduct?.category} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, category: e.target.value, subcategory: undefined} : null)}>
-                                    {sortedCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                </select>
-                            </div>
-                            
-                            {/* Subcategory Selector */}
-                            {sortedCategories.find(c => c.id === editingProduct?.category)?.subcategories && (sortedCategories.find(c => c.id === editingProduct?.category)?.subcategories?.length ?? 0) > 0 && (
-                                <div className="col-span-2">
-                                    <label className="text-xs font-bold text-gray-400 block mb-1">Podkategorie {validationErrors.subcategory && <span className="text-red-500">*</span>}</label>
-                                    <select 
-                                        className={`w-full border rounded p-2 ${validationErrors.subcategory ? 'border-red-500 bg-red-50' : ''}`} 
-                                        value={editingProduct?.subcategory || ''} 
-                                        onChange={e => setEditingProduct(editingProduct ? {...editingProduct, subcategory: e.target.value} : null)}
-                                    >
-                                        <option value="">-- Vyberte podkategorii --</option>
-                                        {sortedCategories.find(c => c.id === editingProduct?.category)?.subcategories?.map((s: any) => {
-                                            // Handle both object and string (legacy)
-                                            const subId = typeof s === 'string' ? s : s.id;
-                                            const subName = typeof s === 'string' ? s : s.name;
-                                            return <option key={subId} value={subId}>{subName}</option>;
-                                        })}
-                                    </select>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
-                            <h4 className="font-bold text-sm text-gray-500 uppercase">Logistika a Časování</h4>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Objednat předem (dny) {validationErrors.leadTimeDays && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.leadTimeDays ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.leadTimeDays || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, leadTimeDays: Number(e.target.value)} : null)} />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Trvanlivost (dny) {validationErrors.shelfLifeDays && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.shelfLifeDays ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.shelfLifeDays || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, shelfLifeDays: Number(e.target.value)} : null)} />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks) {validationErrors.minOrderQuantity && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.minOrderQuantity ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.minOrderQuantity || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, minOrderQuantity: Number(e.target.value)} : null)} />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml/g) {validationErrors.volume && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.volume ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.volume || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, volume: Number(e.target.value)} : null)} />
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
-                            <h4 className="font-bold text-sm text-gray-500 uppercase">Ekonomika a Kapacity</h4>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Pracnost (body) {validationErrors.workload && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" min="0" className={`w-full border rounded p-2 text-sm ${validationErrors.workload ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.workload ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, workload: Number(e.target.value)} : null)} />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Režie přípravy {validationErrors.workloadOverhead && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" min="0" className={`w-full border rounded p-2 text-sm ${validationErrors.workloadOverhead ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.workloadOverhead ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, workloadOverhead: Number(e.target.value)} : null)} />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">DPH Prodejna (%) {validationErrors.vatRateInner && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.vatRateInner ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.vatRateInner ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, vatRateInner: Number(e.target.value)} : null)} />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-gray-400 block mb-1">DPH S sebou (%) {validationErrors.vatRateTakeaway && <span className="text-red-500">*</span>}</label>
-                                    <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.vatRateTakeaway ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.vatRateTakeaway ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, vatRateTakeaway: Number(e.target.value)} : null)} />
-                                </div>
-                            </div>
-                            
-                            {/* Capacity Category Selector */}
-                            <div className="pt-2 border-t border-gray-200 mt-2">
-                                <label className="text-[10px] font-bold text-gray-400 block mb-1">Kapacitní skupina (volitelné)</label>
-                                <select 
-                                    className="w-full border rounded p-2 text-sm bg-white"
-                                    value={editingProduct?.capacityCategoryId || ''}
-                                    onChange={e => setEditingProduct(editingProduct ? {...editingProduct, capacityCategoryId: e.target.value || undefined} : null)}
-                                >
-                                    <option value="">-- Žádná (Samostatný produkt) --</option>
-                                    {capCategories.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
-                                </select>
-                                <p className="text-[9px] text-gray-400 mt-1">Přiřazení do skupiny způsobí, že "Režie přípravy" se počítá pouze jednou pro celou skupinu v rámci dne.</p>
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-2">Viditelnost</label>
-                            <div className="flex gap-4">
-                                <label className="flex items-center space-x-2 text-sm">
-                                    <input type="checkbox" checked={editingProduct?.visibility?.online ?? true} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, visibility: { ...editingProduct?.visibility || { online: true, store: true, stand: true }, online: e.target.checked }} : null)} />
-                                    <span>E-shop (Online)</span>
-                                </label>
-                                <label className="flex items-center space-x-2 text-sm">
-                                    <input type="checkbox" checked={editingProduct?.visibility?.store ?? true} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, visibility: { ...editingProduct?.visibility || { online: true, store: true, stand: true }, store: e.target.checked }} : null)} />
-                                    <span>Prodejna (Kasa)</span>
-                                </label>
-                                <label className="flex items-center space-x-2 text-sm">
-                                    <input type="checkbox" checked={editingProduct?.visibility?.stand ?? true} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, visibility: { ...editingProduct?.visibility || { online: true, store: true, stand: true }, stand: e.target.checked }} : null)} />
-                                    <span>Stánek</span>
-                                </label>
-                            </div>
-                        </div>
+                        </h3>
                         
-                        <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
-                            <label className="flex items-center space-x-2 text-sm cursor-pointer">
-                                <input 
-                                    type="checkbox" 
-                                    checked={editingProduct?.isEventProduct ?? false} 
-                                    onChange={e => setEditingProduct(editingProduct ? {...editingProduct, isEventProduct: e.target.checked} : null)}
-                                    className="text-purple-600 focus:ring-purple-500 rounded"
-                                />
-                                <span className="font-bold text-purple-900">Event produkt (Akční nabídka)</span>
-                            </label>
-                            <p className="text-xs text-purple-700 mt-1 ml-6">
-                                Produkt bude dostupný pouze ve dnech definovaných v záložce "Akce".
-                            </p>
-                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 flex-grow overflow-y-auto">
+                            {/* LEFT COLUMN: BASIC INFO */}
+                            <div className="space-y-4">
+                                <h4 className="font-bold text-sm text-primary uppercase border-b pb-1 mb-3">Základní informace</h4>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 block mb-1">Název {validationErrors.name && <span className="text-red-500">*</span>}</label>
+                                    <input required className={`w-full border rounded p-2 text-sm font-bold ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`} value={editingProduct?.name || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, name: e.target.value} : null)} />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 block mb-1">Popis</label>
+                                    <textarea className="w-full border rounded p-2 h-20 text-sm" value={editingProduct?.description || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, description: e.target.value} : null)} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč) {validationErrors.price && <span className="text-red-500">*</span>}</label>
+                                        <input type="number" required className={`w-full border rounded p-2 text-sm font-mono ${validationErrors.price ? 'border-red-500 bg-red-50' : ''}`} value={editingProduct?.price ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, price: Number(e.target.value)} : null)} />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-400 block mb-1">Jednotka</label>
+                                        <select className="w-full border rounded p-2 text-sm bg-white" value={editingProduct?.unit} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, unit: e.target.value as any} : null)}>
+                                            <option value="ks">ks</option>
+                                            <option value="kg">kg</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie {validationErrors.category && <span className="text-red-500">*</span>}</label>
+                                        <select className={`w-full border rounded p-2 text-sm bg-white ${validationErrors.category ? 'border-red-500' : ''}`} value={editingProduct?.category} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, category: e.target.value, subcategory: undefined} : null)}>
+                                            <option value="">-- Vyberte --</option>
+                                            {settings.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-400 block mb-1">Podkategorie</label>
+                                        <select className="w-full border rounded p-2 text-sm bg-white" value={editingProduct?.subcategory || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, subcategory: e.target.value} : null)} disabled={availableSubcategories.length === 0}>
+                                            <option value="">-- Žádná --</option>
+                                            {availableSubcategories.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
 
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-2">Alergeny</label>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
-                                {ALLERGENS.map(a => (
-                                    <label key={a.id} className={`flex flex-col items-center justify-center p-2 border rounded cursor-pointer transition hover:bg-gray-50 min-h-[80px] text-center ${editingProduct?.allergens?.includes(a.id) ? 'bg-orange-100 border-orange-300 text-orange-700' : 'bg-white border-gray-200'}`}>
+                                <div className="pt-2">
+                                    <label className="flex items-center gap-2 p-2 border rounded bg-purple-50 cursor-pointer hover:bg-purple-100 transition">
                                         <input 
                                             type="checkbox" 
-                                            className="sr-only"
-                                            checked={editingProduct?.allergens?.includes(a.id) ?? false}
-                                            onChange={e => {
-                                                const current = editingProduct?.allergens || [];
-                                                const updated = e.target.checked ? [...current, a.id] : current.filter(id => id !== a.id);
-                                                setEditingProduct(editingProduct ? {...editingProduct, allergens: updated} : null);
-                                            }}
+                                            checked={editingProduct?.isEventProduct ?? false} 
+                                            onChange={e => setEditingProduct(editingProduct ? {...editingProduct, isEventProduct: e.target.checked} : null)} 
+                                            className="rounded text-purple-600 focus:ring-purple-600"
                                         />
-                                        <span className="font-bold text-lg leading-none mb-1">{a.code}</span>
-                                        <span className="text-[9px] leading-tight text-gray-600 line-clamp-2">{a.name}</span>
+                                        <span className="text-sm font-bold text-purple-900">Produkt pouze pro AKCE (Eventy)</span>
                                     </label>
-                                ))}
-                            </div>
-                        </div>
+                                </div>
 
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 block mb-2">{t('common.images')}</label>
-                            <div className="flex flex-wrap gap-2">
-                                {editingProduct?.images?.map((img, idx) => (
-                                    <div key={idx} className="relative w-20 h-20 group rounded-lg overflow-hidden border">
-                                        <img src={img} className="w-full h-full object-cover" />
-                                        <button type="button" onClick={() => setEditingProduct(editingProduct ? {...editingProduct, images: editingProduct.images?.filter((_, i) => i !== idx)} : null)} className="absolute top-0 right-0 bg-red-500 text-white p-1 opacity-0 group-hover:opacity-100 transition"><X size={12}/></button>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 block mb-2">{t('common.images')}</label>
+                                    <div className="flex flex-wrap gap-2">
+                                        {editingProduct?.images?.map((img, idx) => (
+                                            <div key={idx} className="relative w-20 h-20 group rounded-lg overflow-hidden border">
+                                                <img src={getImageUrl(img)} className="w-full h-full object-cover" />
+                                                <button type="button" onClick={() => setEditingProduct(editingProduct ? {...editingProduct, images: editingProduct.images.filter((_, i) => i !== idx)} : null)} className="absolute top-0 right-0 bg-red-500 text-white p-1 opacity-0 group-hover:opacity-100 transition"><X size={12}/></button>
+                                            </div>
+                                        ))}
+                                        <label className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition">
+                                            <Plus size={24} />
+                                            <span className="text-[10px] mt-1">Nahrát</span>
+                                            <input type="file" className="hidden" accept="image/*" onChange={handleImageFileChange} />
+                                        </label>
                                     </div>
-                                ))}
-                                <label className="w-20 h-20 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition">
-                                    <Plus size={24} />
-                                    <span className="text-[10px] mt-1">Nahrát</span>
-                                    <input type="file" className="hidden" onChange={handleImageFileChange} />
-                                </label>
+                                </div>
+                            </div>
+
+                            {/* RIGHT COLUMN: LOGISTICS, ECONOMICS, ALLERGENS, COMPOSITION */}
+                            <div className="space-y-6">
+                                {/* Composition / Ingredients */}
+                                <div className="bg-gray-50 p-4 rounded-xl border">
+                                    <h4 className="font-bold text-sm text-gray-500 uppercase mb-3 flex items-center">
+                                        <Wheat size={14} className="mr-2"/> Receptura (Suroviny)
+                                    </h4>
+                                    
+                                    <div className="space-y-2 mb-3">
+                                        {editingProduct?.composition?.map((comp, idx) => {
+                                            const ing = ingredients.find(i => i.id === comp.ingredientId);
+                                            if (!ing) return null;
+                                            return (
+                                                <div key={comp.ingredientId} className="flex items-center gap-2 text-sm bg-white p-2 rounded border border-gray-200">
+                                                    <span className="flex-grow font-bold text-gray-700">{ing.name}</span>
+                                                    <input 
+                                                        type="number" 
+                                                        className={`w-16 border rounded p-1 text-right font-mono text-xs ${noSpinnerClass}`}
+                                                        placeholder="0"
+                                                        step="0.01"
+                                                        value={comp.quantity}
+                                                        onChange={(e) => handleIngredientQuantityChange(comp.ingredientId, Number(e.target.value))}
+                                                    />
+                                                    <span className="text-gray-500 w-8 text-xs">{ing.unit}</span>
+                                                    <button onClick={() => handleRemoveIngredient(comp.ingredientId)} className="text-red-400 hover:text-red-600"><X size={14}/></button>
+                                                </div>
+                                            );
+                                        })}
+                                        {(!editingProduct?.composition || editingProduct.composition.length === 0) && (
+                                            <p className="text-xs text-gray-400 italic text-center">Žádné suroviny</p>
+                                        )}
+                                    </div>
+
+                                    <div className="relative">
+                                        <select 
+                                            className="w-full border rounded p-2 text-xs bg-white text-gray-600"
+                                            onChange={(e) => {
+                                                if (e.target.value) {
+                                                    handleAddIngredient(e.target.value);
+                                                    e.target.value = ''; // Reset
+                                                }
+                                            }}
+                                        >
+                                            <option value="">+ Přidat surovinu...</option>
+                                            {ingredients
+                                                .filter(i => !editingProduct?.composition?.some(c => c.ingredientId === i.id))
+                                                .filter(i => !i.isHidden) // Only show visible
+                                                .sort((a,b) => a.name.localeCompare(b.name))
+                                                .map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)
+                                            }
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
+                                    <h4 className="font-bold text-sm text-gray-500 uppercase">Logistika a Časování</h4>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Objednat předem (dny) {validationErrors.leadTimeDays && <span className="text-red-500">*</span>}</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.leadTimeDays ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.leadTimeDays || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, leadTimeDays: Number(e.target.value)} : null)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Trvanlivost (dny) {validationErrors.shelfLifeDays && <span className="text-red-500">*</span>}</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.shelfLifeDays ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.shelfLifeDays || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, shelfLifeDays: Number(e.target.value)} : null)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks) {validationErrors.minOrderQuantity && <span className="text-red-500">*</span>}</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.minOrderQuantity ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.minOrderQuantity || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, minOrderQuantity: Number(e.target.value)} : null)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml/g) {validationErrors.volume && <span className="text-red-500">*</span>}</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.volume ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.volume || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, volume: Number(e.target.value)} : null)} />
+                                        </div>
+                                        <div className="col-span-2 md:col-span-4 pt-2">
+                                            <label className="flex items-center space-x-2 text-xs cursor-pointer select-none">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={editingProduct?.noPackaging ?? false} 
+                                                    onChange={e => setEditingProduct(editingProduct ? {...editingProduct, noPackaging: e.target.checked} : null)} 
+                                                    className="rounded text-primary focus:ring-accent"
+                                                />
+                                                <span className="font-bold text-gray-600">Nepočítat do obalů (nevstupuje do výpočtu objemu krabice)</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
+                                    <h4 className="font-bold text-sm text-gray-500 uppercase">Ekonomika a Kapacity</h4>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Pracnost (body)</label>
+                                            <input type="number" min="0" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.workload ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, workload: Number(e.target.value)} : null)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Režie přípravy</label>
+                                            <input type="number" min="0" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.workloadOverhead ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, workloadOverhead: Number(e.target.value)} : null)} />
+                                        </div>
+                                        
+                                        {/* Capacity Category Selector */}
+                                        <div className="col-span-2">
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Kapacitní skupina (Sdílená režie)</label>
+                                            <select 
+                                                className="w-full border rounded p-2 text-xs bg-white"
+                                                value={editingProduct?.capacityCategoryId || ''}
+                                                onChange={e => setEditingProduct(editingProduct ? {...editingProduct, capacityCategoryId: e.target.value || undefined} : null)}
+                                            >
+                                                <option value="">-- Žádná (Samostatná režie) --</option>
+                                                {settings.capacityCategories?.map(cc => (
+                                                    <option key={cc.id} value={cc.id}>{cc.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">DPH Prodejna (%)</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.vatRateInner ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, vatRateInner: Number(e.target.value)} : null)} />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">DPH S sebou (%)</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.vatRateTakeaway ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, vatRateTakeaway: Number(e.target.value)} : null)} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 block mb-2">Viditelnost</label>
+                                    <div className="flex gap-4">
+                                        <label className="flex items-center space-x-2 text-sm cursor-pointer">
+                                            <input type="checkbox" checked={editingProduct?.visibility?.online ?? true} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, visibility: { ...editingProduct.visibility || { online: true, store: true, stand: true }, online: e.target.checked }} : null)} className="rounded text-primary"/>
+                                            <span>E-shop (Online)</span>
+                                        </label>
+                                        <label className="flex items-center space-x-2 text-sm cursor-pointer">
+                                            <input type="checkbox" checked={editingProduct?.visibility?.store ?? true} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, visibility: { ...editingProduct.visibility || { online: true, store: true, stand: true }, store: e.target.checked }} : null)} className="rounded text-primary"/>
+                                            <span>Prodejna (Kasa)</span>
+                                        </label>
+                                        <label className="flex items-center space-x-2 text-sm cursor-pointer">
+                                            <input type="checkbox" checked={editingProduct?.visibility?.stand ?? true} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, visibility: { ...editingProduct.visibility || { online: true, store: true, stand: true }, stand: e.target.checked }} : null)} className="rounded text-primary"/>
+                                            <span>Stánek</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-bold text-gray-400 block mb-2">Alergeny</label>
+                                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                                        {ALLERGENS.map(a => (
+                                            <label key={a.id} className={`flex flex-col items-center justify-center p-1 border rounded cursor-pointer transition hover:bg-gray-50 min-h-[50px] text-center ${editingProduct?.allergens?.includes(a.id) ? 'bg-orange-100 border-orange-300 text-orange-700' : 'bg-white border-gray-200'}`}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="sr-only"
+                                                    checked={editingProduct?.allergens?.includes(a.id) ?? false}
+                                                    onChange={e => {
+                                                        const current = editingProduct?.allergens || [];
+                                                        const updated = e.target.checked ? [...current, a.id] : current.filter(id => id !== a.id);
+                                                        setEditingProduct(editingProduct ? {...editingProduct, allergens: updated} : null);
+                                                    }}
+                                                />
+                                                <span className="font-bold text-sm leading-none">{a.code}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div className="flex gap-2 pt-4 border-t">
-                        <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
-                        <button type="submit" disabled={isUploading || isTranslating} className="flex-1 py-2 bg-primary text-white rounded flex justify-center items-center gap-2">
-                            {isUploading ? 'Nahrávám...' : isTranslating ? 'Překládám...' : t('common.save')}
-                        </button>
-                    </div>
-                </form>
+                        <div className="flex gap-2 pt-4 border-t sticky bottom-0 bg-white z-10">
+                            <button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 py-2.5 bg-gray-100 rounded font-bold text-gray-600 hover:bg-gray-200 transition">{t('admin.cancel')}</button>
+                            <button type="submit" disabled={isUploading} className="flex-1 py-2.5 bg-primary text-white rounded font-bold hover:bg-black transition flex items-center justify-center gap-2">
+                                {isUploading ? 'Ukládám...' : t('common.save')}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             )}
         </div>
