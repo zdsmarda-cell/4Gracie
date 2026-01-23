@@ -29,11 +29,23 @@ export const initEmail = async () => {
     }
 };
 
+const getBaseUrl = () => {
+    let url = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost';
+    // Remove trailing slash
+    url = url.replace(/\/$/, '');
+    
+    // Add port if defined in .env and not already present in URL
+    if (process.env.PORT && !url.includes(`:${process.env.PORT}`)) {
+        url = `${url}:${process.env.PORT}`;
+    }
+    return url;
+};
+
 const getImgUrl = (path) => {
     if (!path) return '';
     if (path.startsWith('http')) return path;
-    const baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
-    return `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+    const baseUrl = getBaseUrl();
+    return `${baseUrl}/${path.replace(/^\//, '')}`;
 };
 
 const formatDate = (dateStr) => {
@@ -175,7 +187,7 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
         order.billingDic ? `DIČ: ${order.billingDic}` : null
     ].filter(Boolean).join('<br>');
 
-    const baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
+    const baseUrl = getBaseUrl();
 
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
@@ -253,13 +265,15 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
 export const processOperatorEmail = async (operatorEmail, order, type, settings) => {
     if (!transporter) await initEmail();
     if (!transporter) return false;
+    
+    const baseUrl = getBaseUrl();
 
     const html = `
         <div style="font-family: Arial, sans-serif;">
             <h2>Nová objednávka #${order.id}</h2>
             <p>Zákazník: ${order.userName} (${order.userId})</p>
             <p>Celkem: ${order.totalPrice} Kč</p>
-            <p><a href="${process.env.APP_URL || 'http://localhost:5173'}/#/admin">Přejít do administrace</a></p>
+            <p><a href="${baseUrl}/#/admin">Přejít do administrace</a></p>
         </div>
     `;
 
@@ -351,8 +365,7 @@ export const sendEventNotification = async (date, products, recipients) => {
     const db = await getDb();
     if (!db) return;
 
-    let baseUrl = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost:3000';
-    if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+    let baseUrl = getBaseUrl();
     
     const formattedDate = formatDate(date);
     const subject = `Speciální akce na den ${formattedDate}`;
