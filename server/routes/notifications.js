@@ -15,8 +15,13 @@ const configureWebPush = () => {
     // Always re-check in case env vars changed or first run failed
     if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
         try {
+            // Fix: Extract pure email from "Name <email>" format if present
+            const emailFrom = process.env.EMAIL_FROM || 'info@4gracie.cz';
+            const mailtoMatch = emailFrom.match(/<([^>]+)>/);
+            const mailtoAddress = mailtoMatch ? mailtoMatch[1] : emailFrom;
+
             webpush.setVapidDetails(
-                `mailto:${process.env.EMAIL_FROM || 'info@4gracie.cz'}`,
+                `mailto:${mailtoAddress}`,
                 process.env.VAPID_PUBLIC_KEY,
                 process.env.VAPID_PRIVATE_KEY
             );
@@ -184,7 +189,7 @@ router.get('/history', requireAdmin, withDb(async (req, res, db) => {
     res.json({ 
         success: true, 
         notifications: rows, 
-        total: count[0].t,
+        total: count[0].t, 
         page: Number(page),
         pages: Math.ceil(count[0].t / Number(limit))
     });

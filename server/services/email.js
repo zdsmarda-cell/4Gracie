@@ -292,15 +292,15 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
     `;
 
     const mailOptions = {
-        from: process.env.EMAIL_FROM, // Use EMAIL_FROM directly from .env without extra formatting
+        from: process.env.EMAIL_FROM, 
         to: email,
         subject: subject,
         html: html,
         attachments: []
     };
 
-    // Attach VOP if available and order is created
-    if (type === 'created' && process.env.VOP_PATH) {
+    // Attach VOP if available and order is created or status changed to created
+    if ((type === 'created' || status === 'created') && process.env.VOP_PATH) {
         const vopFullPath = path.resolve(process.cwd(), process.env.VOP_PATH);
         if (fs.existsSync(vopFullPath)) {
             mailOptions.attachments.push({
@@ -312,12 +312,11 @@ export const processCustomerEmail = async (email, order, type, settings, statusO
         }
     }
 
-    if (type === 'created' || status === 'delivered') {
+    if (type === 'created' || status === 'created' || status === 'delivered') {
         try {
             const pdfType = status === 'delivered' ? 'final' : 'proforma';
             const buffer = await generateInvoicePdf(order, pdfType, settings);
             
-            // Name includes Order ID for both proforma and final
             const invoiceName = pdfType === 'proforma' 
                 ? `zalohova_faktura_${order.id}.pdf` 
                 : `faktura_${order.id}.pdf`;
