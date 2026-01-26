@@ -74,10 +74,23 @@ export const ProductsTab: React.FC = () => {
         if (!editingProduct) return;
 
         const errors: Record<string, string> = {};
-        if (!editingProduct.name) errors.name = 'Vyplňte název.';
-        if (editingProduct.price === undefined) errors.price = 'Vyplňte cenu.';
-        if (!editingProduct.unit) errors.unit = 'Vyberte jednotku.';
-        if (!editingProduct.category) errors.category = 'Vyberte kategorii.';
+        
+        // Strict Validation
+        if (!editingProduct.name || editingProduct.name.trim().length === 0) {
+            errors.name = t('validation.required');
+        }
+        if (editingProduct.price === undefined || editingProduct.price === null || isNaN(Number(editingProduct.price))) {
+            errors.price = t('validation.required');
+        } else if (Number(editingProduct.price) < 0) {
+            errors.price = 'Cena musí být 0 nebo vyšší';
+        }
+        
+        if (!editingProduct.unit) {
+            errors.unit = t('validation.required');
+        }
+        if (!editingProduct.category) {
+            errors.category = t('validation.required');
+        }
 
         if (Object.keys(errors).length > 0) {
             setValidationErrors(errors);
@@ -111,6 +124,7 @@ export const ProductsTab: React.FC = () => {
             p.vatRateTakeaway = Number(p.vatRateTakeaway ?? 0);
             p.workload = Number(p.workload ?? 0);
             p.workloadOverhead = Number(p.workloadOverhead ?? 0);
+            p.price = Number(p.price);
             
             // Ensure noPackaging is boolean
             p.noPackaging = !!p.noPackaging;
@@ -192,7 +206,7 @@ export const ProductsTab: React.FC = () => {
                         />
                     </div>
                 </div>
-                <button onClick={() => { setEditingProduct({ visibility: { online: true, store: true, stand: true }, allergens: [], images: [], composition: [] }); setIsProductModalOpen(true); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-black transition"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
+                <button onClick={() => { setEditingProduct({ visibility: { online: true, store: true, stand: true }, allergens: [], images: [], composition: [] }); setIsProductModalOpen(true); setValidationErrors({}); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-black transition"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
             </div>
 
             <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -227,7 +241,7 @@ export const ProductsTab: React.FC = () => {
                                     {p.visibility?.online ? <Check size={16} className="inline text-green-500"/> : <X size={16} className="inline text-gray-300"/>}
                                 </td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                    <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                    <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); setValidationErrors({}); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
                                     <button onClick={() => setDeleteTarget(p)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
                                 </td>
                             </tr>
@@ -261,34 +275,84 @@ export const ProductsTab: React.FC = () => {
                             {/* LEFT COLUMN: BASIC INFO */}
                             <div className="space-y-4">
                                 <h4 className="font-bold text-sm text-primary uppercase border-b pb-1 mb-3">Základní informace</h4>
+                                
+                                {/* NAME */}
                                 <div>
-                                    <label className="text-xs font-bold text-gray-400 block mb-1">Název {validationErrors.name && <span className="text-red-500">*</span>}</label>
-                                    <input required className={`w-full border rounded p-2 text-sm font-bold ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`} value={editingProduct?.name || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, name: e.target.value} : null)} />
+                                    <label className="text-xs font-bold text-gray-400 block mb-1">
+                                        Název {validationErrors.name && <span className="text-red-500">*</span>}
+                                    </label>
+                                    <input 
+                                        className={`w-full border rounded p-2 text-sm font-bold ${validationErrors.name ? 'border-red-500 bg-red-50' : ''}`} 
+                                        value={editingProduct?.name || ''} 
+                                        onChange={e => {
+                                            setEditingProduct(editingProduct ? {...editingProduct, name: e.target.value} : null);
+                                            setValidationErrors({...validationErrors, name: ''});
+                                        }} 
+                                    />
+                                    {validationErrors.name && <div className="text-red-500 text-[10px] mt-1">{validationErrors.name}</div>}
                                 </div>
+
+                                {/* DESCRIPTION */}
                                 <div>
                                     <label className="text-xs font-bold text-gray-400 block mb-1">Popis</label>
                                     <textarea className="w-full border rounded p-2 h-20 text-sm" value={editingProduct?.description || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, description: e.target.value} : null)} />
                                 </div>
+                                
+                                {/* PRICE & UNIT */}
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className="text-xs font-bold text-gray-400 block mb-1">Cena (Kč) {validationErrors.price && <span className="text-red-500">*</span>}</label>
-                                        <input type="number" required className={`w-full border rounded p-2 text-sm font-mono ${validationErrors.price ? 'border-red-500 bg-red-50' : ''}`} value={editingProduct?.price ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, price: Number(e.target.value)} : null)} />
+                                        <label className="text-xs font-bold text-gray-400 block mb-1">
+                                            Cena (Kč) {validationErrors.price && <span className="text-red-500">*</span>}
+                                        </label>
+                                        <input 
+                                            type="number" 
+                                            className={`w-full border rounded p-2 text-sm font-mono ${noSpinnerClass} ${validationErrors.price ? 'border-red-500 bg-red-50' : ''}`} 
+                                            value={editingProduct?.price ?? ''} 
+                                            onChange={e => {
+                                                setEditingProduct(editingProduct ? {...editingProduct, price: Number(e.target.value)} : null);
+                                                setValidationErrors({...validationErrors, price: ''});
+                                            }} 
+                                        />
+                                        {validationErrors.price && <div className="text-red-500 text-[10px] mt-1">{validationErrors.price}</div>}
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-gray-400 block mb-1">Jednotka</label>
-                                        <select className="w-full border rounded p-2 text-sm bg-white" value={editingProduct?.unit} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, unit: e.target.value as any} : null)}>
+                                        <label className="text-xs font-bold text-gray-400 block mb-1">
+                                            Jednotka {validationErrors.unit && <span className="text-red-500">*</span>}
+                                        </label>
+                                        <select 
+                                            className={`w-full border rounded p-2 text-sm bg-white ${validationErrors.unit ? 'border-red-500 bg-red-50' : ''}`}
+                                            value={editingProduct?.unit || ''} 
+                                            onChange={e => {
+                                                setEditingProduct(editingProduct ? {...editingProduct, unit: e.target.value as any} : null);
+                                                setValidationErrors({...validationErrors, unit: ''});
+                                            }}
+                                        >
+                                            <option value="">-- Vyberte --</option>
                                             <option value="ks">ks</option>
                                             <option value="kg">kg</option>
                                         </select>
+                                        {validationErrors.unit && <div className="text-red-500 text-[10px] mt-1">{validationErrors.unit}</div>}
                                     </div>
                                 </div>
+
+                                {/* CATEGORIES */}
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className="text-xs font-bold text-gray-400 block mb-1">Kategorie {validationErrors.category && <span className="text-red-500">*</span>}</label>
-                                        <select className={`w-full border rounded p-2 text-sm bg-white ${validationErrors.category ? 'border-red-500' : ''}`} value={editingProduct?.category} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, category: e.target.value, subcategory: undefined} : null)}>
+                                        <label className="text-xs font-bold text-gray-400 block mb-1">
+                                            Kategorie {validationErrors.category && <span className="text-red-500">*</span>}
+                                        </label>
+                                        <select 
+                                            className={`w-full border rounded p-2 text-sm bg-white ${validationErrors.category ? 'border-red-500 bg-red-50' : ''}`} 
+                                            value={editingProduct?.category || ''} 
+                                            onChange={e => {
+                                                setEditingProduct(editingProduct ? {...editingProduct, category: e.target.value, subcategory: undefined} : null);
+                                                setValidationErrors({...validationErrors, category: ''});
+                                            }}
+                                        >
                                             <option value="">-- Vyberte --</option>
                                             {settings.categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                         </select>
+                                        {validationErrors.category && <div className="text-red-500 text-[10px] mt-1">{validationErrors.category}</div>}
                                     </div>
                                     <div>
                                         <label className="text-xs font-bold text-gray-400 block mb-1">Podkategorie</label>
@@ -387,20 +451,20 @@ export const ProductsTab: React.FC = () => {
                                     <h4 className="font-bold text-sm text-gray-500 uppercase">Logistika a Časování</h4>
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                         <div>
-                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Objednat předem (dny) {validationErrors.leadTimeDays && <span className="text-red-500">*</span>}</label>
-                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.leadTimeDays ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.leadTimeDays || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, leadTimeDays: Number(e.target.value)} : null)} />
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Objednat předem (dny)</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.leadTimeDays ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, leadTimeDays: Number(e.target.value)} : null)} />
                                         </div>
                                         <div>
-                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Trvanlivost (dny) {validationErrors.shelfLifeDays && <span className="text-red-500">*</span>}</label>
-                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.shelfLifeDays ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.shelfLifeDays || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, shelfLifeDays: Number(e.target.value)} : null)} />
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Trvanlivost (dny)</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.shelfLifeDays ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, shelfLifeDays: Number(e.target.value)} : null)} />
                                         </div>
                                         <div>
-                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks) {validationErrors.minOrderQuantity && <span className="text-red-500">*</span>}</label>
-                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.minOrderQuantity ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.minOrderQuantity || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, minOrderQuantity: Number(e.target.value)} : null)} />
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Min. odběr (ks)</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.minOrderQuantity ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, minOrderQuantity: Number(e.target.value)} : null)} />
                                         </div>
                                         <div>
-                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml/g) {validationErrors.volume && <span className="text-red-500">*</span>}</label>
-                                            <input type="number" className={`w-full border rounded p-2 text-sm ${validationErrors.volume ? 'border-red-500 bg-red-50' : ''} ${noSpinnerClass}`} value={editingProduct?.volume || ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, volume: Number(e.target.value)} : null)} />
+                                            <label className="text-[10px] font-bold text-gray-400 block mb-1">Objem (ml/g)</label>
+                                            <input type="number" className={`w-full border rounded p-2 text-sm ${noSpinnerClass}`} value={editingProduct?.volume ?? ''} onChange={e => setEditingProduct(editingProduct ? {...editingProduct, volume: Number(e.target.value)} : null)} />
                                         </div>
                                         <div className="col-span-2 md:col-span-4 pt-2">
                                             <label className="flex items-center space-x-2 text-xs cursor-pointer select-none">
@@ -474,9 +538,9 @@ export const ProductsTab: React.FC = () => {
 
                                 <div>
                                     <label className="text-xs font-bold text-gray-400 block mb-2">Alergeny</label>
-                                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2">
                                         {ALLERGENS.map(a => (
-                                            <label key={a.id} className={`flex flex-col items-center justify-center p-1 border rounded cursor-pointer transition hover:bg-gray-50 min-h-[50px] text-center ${editingProduct?.allergens?.includes(a.id) ? 'bg-orange-100 border-orange-300 text-orange-700' : 'bg-white border-gray-200'}`}>
+                                            <label key={a.id} className={`flex flex-col items-center justify-center p-2 border rounded cursor-pointer transition hover:bg-gray-50 min-h-[80px] text-center ${editingProduct?.allergens?.includes(a.id) ? 'bg-orange-100 border-orange-300 text-orange-700' : 'bg-white border-gray-200'}`}>
                                                 <input 
                                                     type="checkbox" 
                                                     className="sr-only"
@@ -487,7 +551,8 @@ export const ProductsTab: React.FC = () => {
                                                         setEditingProduct(editingProduct ? {...editingProduct, allergens: updated} : null);
                                                     }}
                                                 />
-                                                <span className="font-bold text-sm leading-none">{a.code}</span>
+                                                <span className="font-bold text-lg leading-none mb-1">{a.code}</span>
+                                                <span className="text-[9px] leading-tight text-gray-600 line-clamp-2">{a.name}</span>
                                             </label>
                                         ))}
                                     </div>
