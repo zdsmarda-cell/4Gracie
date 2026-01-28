@@ -4,6 +4,15 @@ import { useStore } from '../context/StoreContext';
 import { ALLERGENS } from '../constants';
 import { Product } from '../types';
 import { Filter, Info, ChevronLeft, ChevronRight, X, Maximize2, Clock, AlertCircle, Plus, Minus, Ban } from 'lucide-react';
+import { logEcommerceEvent } from '../utils/analytics';
+
+const mapProductToGaItem = (product: Product, quantity: number = 1) => ({
+    item_id: product.id,
+    item_name: product.name,
+    price: product.price,
+    item_category: product.category,
+    quantity: quantity
+});
 
 const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
   const { getImageUrl } = useStore();
@@ -22,6 +31,12 @@ const ProductImageGallery: React.FC<{ product: Product }> = ({ product }) => {
 
   const handleOpenZoom = () => {
     setIsZoomed(true);
+    // GA4: View Item (Detail)
+    logEcommerceEvent('view_item', {
+        currency: 'CZK',
+        value: product.price,
+        items: [mapProductToGaItem(product)]
+    });
   };
 
   if (!product.images || product.images.length === 0) {
@@ -141,6 +156,16 @@ const ProductCard: React.FC<{
 
     const hasCapacity = !product.isEventProduct || isEventCapacityAvailable(product);
 
+    const handleAddToCart = () => {
+        addToCart(product, quantity);
+        // GA4: Add to Cart
+        logEcommerceEvent('add_to_cart', {
+            currency: 'CZK',
+            value: product.price * quantity,
+            items: [mapProductToGaItem(product, quantity)]
+        });
+    };
+
     return (
         <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden group border border-gray-100 flex flex-col h-full relative">
               
@@ -200,7 +225,7 @@ const ProductCard: React.FC<{
                         </div>
 
                         <button 
-                            onClick={() => addToCart(product, quantity)}
+                            onClick={handleAddToCart}
                             className="flex-1 bg-primary text-white h-10 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-sm active:scale-95 flex items-center justify-center"
                         >
                             {t('product.add')}
@@ -228,6 +253,14 @@ export const Menu: React.FC = () => {
   // Reset subcategories when main category changes
   useEffect(() => {
       setSelectedSubcategories([]);
+  }, [selectedCategory]);
+  
+  // GA4: View Item List
+  useEffect(() => {
+      logEcommerceEvent('view_item_list', {
+          item_list_id: selectedCategory,
+          item_list_name: selectedCategory === 'all' ? 'All Products' : selectedCategory
+      });
   }, [selectedCategory]);
 
   // Check if any event product is orderable (has valid future slots respecting lead time)
