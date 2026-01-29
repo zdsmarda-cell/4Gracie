@@ -368,7 +368,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const getDateStatus = (date: string, items: CartItem[]) => checkAvailability(date, items).status;
     const getDeliveryRegion = (zip: string) => settings.deliveryRegions.find(r => r.enabled && r.zips.includes(zip.replace(/\s/g,'')));
     
-    // UPDATED: Check openingHours (per day)
+    // UPDATED: Check openingHours (per day) with SAFE DATE PARSING
     const getRegionInfoForDate = (r: DeliveryRegion, d: string): RegionDateInfo => { 
         // 1. Exceptions
         const ex = r.exceptions?.find(e => e.date === d); 
@@ -382,9 +382,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             };
         }
         
-        // 2. Standard Day Check
-        const day = new Date(d).getDay(); // 0-6 (Sun-Sat)
-        const config = r.openingHours[day];
+        // 2. Standard Day Check (Robust Parsing)
+        // new Date('YYYY-MM-DD') parses as UTC. getDay() returns local day. 
+        // In UTC- timezones or near midnight, this shifts the day.
+        // We split the string to force local day construction.
+        const [year, month, day] = d.split('-').map(Number);
+        // Note: Month is 0-indexed in Date constructor
+        const dateObj = new Date(year, month - 1, day);
+        const dayOfWeek = dateObj.getDay(); // 0-6 (Sun-Sat) local time
+
+        const config = r.openingHours[dayOfWeek];
 
         if (!config || !config.isOpen) {
              return { isOpen: false, isException: false, reason: 'Mimo dny rozvozu' };
@@ -393,7 +400,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         return { isOpen: true, timeStart: config.start, timeEnd: config.end, isException: false }; 
     };
 
-    const getPickupPointInfo = (loc: PickupLocation, d: string) => { const ex = loc.exceptions?.find(e => e.date === d); if (ex) return { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true }; const day = new Date(d).getDay(); const c = loc.openingHours[day]; if (!c || !c.isOpen) return { isOpen: false, isException: false }; return { isOpen: true, timeStart: c.start, timeEnd: c.end, isException: false }; };
+    const getPickupPointInfo = (loc: PickupLocation, d: string) => { 
+        const ex = loc.exceptions?.find(e => e.date === d); 
+        if (ex) return { isOpen: ex.isOpen, timeStart: ex.deliveryTimeStart, timeEnd: ex.deliveryTimeEnd, isException: true }; 
+        
+        // Robust Parsing for Pickup too
+        const [year, month, day] = d.split('-').map(Number);
+        const dateObj = new Date(year, month - 1, day);
+        const dayOfWeek = dateObj.getDay();
+        
+        const c = loc.openingHours[dayOfWeek]; 
+        if (!c || !c.isOpen) return { isOpen: false, isException: false }; 
+        return { isOpen: true, timeStart: c.start, timeEnd: c.end, isException: false }; 
+    };
+
     const getAvailableEventDates = (p: Product) => getAvailableEventDatesLogic(p, settings, orders, products);
     const isEventCapacityAvailable = (p: Product) => getAvailableEventDates(p).length > 0;
     const calculatePackagingFee = (items: CartItem[]) => calculatePackagingFeeLogic(items, settings.packaging.types, settings.packaging.freeFrom);
