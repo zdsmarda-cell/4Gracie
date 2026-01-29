@@ -1,3 +1,4 @@
+
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Ride, Order, Product, GlobalSettings } from '../types';
@@ -8,11 +9,6 @@ const fetchFont = async (url: string): Promise<string> => {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Failed to load font: ${response.statusText}`);
     const arrayBuffer = await response.arrayBuffer();
-    // Use a browser-compatible way to convert to base64 if Buffer is not available, 
-    // but since this is likely client-side reacting to window, we can use FileReader or similar, 
-    // or just assume Buffer works if polyfilled, or use btoa on binary string.
-    // However, in Vite environment, we can usually rely on standard APIs.
-    // Let's use a simple binary to base64 conversion.
     let binary = '';
     const bytes = new Uint8Array(arrayBuffer);
     const len = bytes.byteLength;
@@ -72,6 +68,10 @@ export const generateRoutePdf = async (
                 let paymentCell: any = 'ZAPLACENO';
                 let isGrayedOut = false;
                 let statusText = '';
+                
+                // Resolve Customer Details (Prioritize Order Data)
+                const customerName = fullOrder?.deliveryName || fullOrder?.userName || step.customerName || 'Neznámý';
+                const customerPhone = fullOrder?.deliveryPhone || step.customerPhone || '-';
 
                 // Handle Address Error Display
                 if (step.error) {
@@ -146,9 +146,9 @@ export const generateRoutePdf = async (
                 tableBody.push([
                     { content: step.orderId, styles: rowStyles },
                     isGrayedOut ? { content: step.arrivalTime + statusText, styles: rowStyles } : arrivalCell,
-                    { content: step.customerName + statusText, styles: rowStyles },
+                    { content: customerName + statusText, styles: rowStyles },
                     isGrayedOut ? { content: step.address, styles: rowStyles } : addressCell,
-                    { content: step.customerPhone || '-', styles: rowStyles },
+                    { content: customerPhone, styles: rowStyles },
                     isGrayedOut ? { content: paymentCell, styles: rowStyles } : paymentCell,
                     { content: pkgCount, styles: { ...rowStyles, halign: 'center' } }
                 ]);
