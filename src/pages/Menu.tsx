@@ -264,19 +264,26 @@ export const Menu: React.FC = () => {
   }, [selectedCategory]);
 
   // Check if any event product is orderable (has valid future slots respecting lead time)
+  // This controls the visibility of the "AKCE" tab
   const hasOrderableEvents = useMemo(() => {
       return products.some(p => p.isEventProduct && p.visibility.online && getAvailableEventDates(p).length > 0);
   }, [products, getAvailableEventDates]);
 
   // Determine active categories
+  // Only show categories that have at least one visible product
+  // If a category contains ONLY Event products, it should only be active if those products are orderable
   const activeCategories = useMemo(() => {
     const productsInCats = new Set<string>();
+    
     products.forEach(p => {
       if (p.visibility?.online) {
-        // If event product, check if it's orderable
         if (p.isEventProduct) {
-            if (getAvailableEventDates(p).length > 0) productsInCats.add(p.category);
+            // Only add category if event product is orderable
+            if (getAvailableEventDates(p).length > 0) {
+                productsInCats.add(p.category);
+            }
         } else {
+            // Standard product
             productsInCats.add(p.category);
         }
       }
@@ -301,7 +308,10 @@ export const Menu: React.FC = () => {
 
       const activeSubcatsIds = new Set<string>();
       products.forEach(p => {
-          if (p.category === selectedCategory && p.visibility.online && p.subcategory) {
+          // Check product visibility AND validity
+          const isValid = p.visibility.online && (!p.isEventProduct || getAvailableEventDates(p).length > 0);
+          
+          if (p.category === selectedCategory && isValid && p.subcategory) {
               activeSubcatsIds.add(p.subcategory);
           }
       });
@@ -310,14 +320,17 @@ export const Menu: React.FC = () => {
       return normalizedSubs
         .filter(s => activeSubcatsIds.has(s.id))
         .sort((a, b) => a.order - b.order);
-  }, [selectedCategory, products, settings.categories]);
+  }, [selectedCategory, products, settings.categories, getAvailableEventDates]);
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
       if (!p.visibility?.online) return false;
       
-      // Event Product Visibility Check: Must have available slots
-      if (p.isEventProduct && getAvailableEventDates(p).length === 0) return false;
+      // CRITICAL: Hide Event Products if they are not orderable (no future dates)
+      // This applies to ALL views (All, Category, Search, etc.)
+      if (p.isEventProduct && getAvailableEventDates(p).length === 0) {
+          return false;
+      }
 
       // Category Filter Logic
       if (selectedCategory === 'events') {
@@ -396,7 +409,7 @@ export const Menu: React.FC = () => {
                 </button>
               ))}
               
-              {/* Event Tab */}
+              {/* Event Tab - Only shown if there are valid event products */}
               {hasOrderableEvents && (
                   <button 
                     onClick={() => setSelectedCategory('events')}
