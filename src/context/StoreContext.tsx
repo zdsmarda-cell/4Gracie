@@ -321,14 +321,38 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const target = new Date(date); target.setHours(0,0,0,0);
         if (isNaN(target.getTime())) return { allowed: false, reason: 'Invalid Date', status: 'closed' as DayStatus };
         if (target.getTime() < today.getTime()) return { allowed: false, reason: t('error.past'), status: 'past' as DayStatus };
+        
         const maxLead = cartItems.length > 0 ? Math.max(...cartItems.map(i => Number(i.leadTimeDays) || 0)) : 0;
         const minDate = new Date(today.getTime()); minDate.setDate(minDate.getDate() + maxLead);
         if (target.getTime() < minDate.getTime()) return { allowed: false, reason: t('error.too_soon'), status: 'too_soon' as DayStatus };
         
-        const config = dayConfigs.find(d => d.date === date);
-        if (config && !config.isOpen) return { allowed: false, reason: t('error.day_closed'), status: 'closed' as DayStatus };
+        // 1. Check for Event Products
+        const hasEventItems = cartItems.some(item => {
+            const productDef = products.find(p => String(p.id) === String(item.id));
+            return !!(item.isEventProduct || productDef?.isEventProduct);
+        });
+
+        // 2. Strict Event Logic
+        if (hasEventItems) {
+            // If cart contains event items, the date MUST be an existing event slot
+            const slot = settings.eventSlots?.find(s => s.date === date);
+            if (!slot) {
+                return { allowed: false, reason: t('cart.event_only'), status: 'closed' as DayStatus }; 
+            }
+            // Proceed to capacity check for event items
+        } else {
+            // 3. Standard Logic (Non-event items)
+            const config = dayConfigs.find(d => d.date === date);
+            if (config && !config.isOpen) {
+                return { allowed: false, reason: t('error.day_closed'), status: 'closed' as DayStatus };
+            }
+        }
 
         const { load, eventLoad } = getDailyLoad(date, excludeOrderId);
+        
+        // Simulate adding cart load
+        const tempLoad = { ...load };
+        const tempEventLoad = { ...eventLoad };
         
         cartItems.forEach(item => {
             const productDef = products.find(p => String(p.id) === String(item.id));
@@ -337,31 +361,36 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             const quantity = Number(item.quantity) || 0;
             const cat = item.category || productDef?.category;
             const isEvent = !!(item.isEventProduct || productDef?.isEventProduct);
+            
             if (cat) {
-                if (isEvent) eventLoad[cat] = (eventLoad[cat] || 0) + (workload * quantity) + overhead;
-                else load[cat] = (load[cat] || 0) + (workload * quantity) + overhead;
+                if (isEvent) tempEventLoad[cat] = (tempEventLoad[cat] || 0) + (workload * quantity) + overhead;
+                else tempLoad[cat] = (tempLoad[cat] || 0) + (workload * quantity) + overhead;
             }
         });
 
         let anyExceeds = false;
         const catsToCheck = new Set([...settings.categories.map(c => c.id)]);
-        for(const cat of catsToCheck) {
-            const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
-            if ((load[cat] || 0) > limit) anyExceeds = true; 
+
+        if (hasEventItems) {
+            // Event Mode: Check against Event Slot limits
+            const slot = settings.eventSlots?.find(s => s.date === date);
+            if (slot) {
+                for(const cat of catsToCheck) {
+                    const limit = slot.capacityOverrides?.[cat] ?? 0;
+                    if (limit > 0 && (tempEventLoad[cat] || 0) > limit) anyExceeds = true;
+                }
+            }
+        } else {
+            // Standard Mode: Check against Standard limits
+            const config = dayConfigs.find(d => d.date === date);
+            for(const cat of catsToCheck) {
+                const limit = config?.capacityOverrides?.[cat] ?? settings.defaultCapacities[cat] ?? 0;
+                if ((tempLoad[cat] || 0) > limit) anyExceeds = true; 
+            }
         }
+
         if (anyExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' as DayStatus };
         
-        const hasEventItems = cartItems.some(i => i.isEventProduct);
-        if (hasEventItems) {
-            const slot = settings.eventSlots?.find(s => s.date === date);
-            if (!slot) return { allowed: false, reason: t('cart.event_only'), status: 'closed' as DayStatus }; 
-            let eventExceeds = false;
-            for(const cat of catsToCheck) {
-                const limit = slot.capacityOverrides?.[cat] ?? 0;
-                if (limit > 0 && (eventLoad[cat] || 0) > limit) eventExceeds = true;
-            }
-            if (eventExceeds) return { allowed: false, reason: t('error.capacity_exceeded'), status: 'exceeds' as DayStatus };
-        }
         return { allowed: true, status: 'available' as DayStatus };
     }, [dayConfigs, getDailyLoad, settings, products, t]);
 
@@ -383,11 +412,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
         
         // 2. Standard Day Check (Robust Parsing)
-        // new Date('YYYY-MM-DD') parses as UTC. getDay() returns local day. 
-        // In UTC- timezones or near midnight, this shifts the day.
-        // We split the string to force local day construction.
         const [year, month, day] = d.split('-').map(Number);
-        // Note: Month is 0-indexed in Date constructor
         const dateObj = new Date(year, month - 1, day);
         const dayOfWeek = dateObj.getDay(); // 0-6 (Sun-Sat) local time
 
