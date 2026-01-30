@@ -1,9 +1,11 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../context/StoreContext';
 import { Product, Ingredient, ProductIngredient } from '../../types';
 import { ALLERGENS } from '../../constants';
-import { Plus, Edit, Trash2, Check, X, ImageIcon, Search, AlertCircle, Languages, Wheat } from 'lucide-react';
+import { Plus, Edit, Trash2, Check, X, ImageIcon, Search, AlertCircle, Wheat, RefreshCw, Filter } from 'lucide-react';
+import { Pagination } from '../../components/Pagination';
+import { MultiSelect } from '../../components/MultiSelect';
 
 const DeleteConfirmModal: React.FC<{
     isOpen: boolean;
@@ -33,11 +35,29 @@ const DeleteConfirmModal: React.FC<{
 };
 
 export const ProductsTab: React.FC = () => {
-    const { products, addProduct, updateProduct, deleteProduct, settings, t, tData, uploadImage, getImageUrl, ingredients } = useStore();
+    const { products, addProduct, updateProduct, deleteProduct, searchProducts, settings, t, tData, uploadImage, getImageUrl, ingredients } = useStore();
     const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
-    const [search, setSearch] = useState('');
+    
+    // Filters & Pagination State
+    const [page, setPage] = useState(1);
+    const [limit, setLimit] = useState(50);
+    const [totalItems, setTotalItems] = useState(0);
+    const [totalPages, setTotalPages] = useState(1);
+    const [displayedProducts, setDisplayedProducts] = useState<Product[]>([]);
+    const [isListLoading, setIsListLoading] = useState(false);
+
+    const [filters, setFilters] = useState({
+        search: '',
+        categories: '',
+        minPrice: '',
+        maxPrice: '',
+        visibility: '',
+        isEvent: 'all',
+        noPackaging: 'all'
+    });
+
     const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
     const [isUploading, setIsUploading] = useState(false);
 
@@ -46,19 +66,47 @@ export const ProductsTab: React.FC = () => {
 
     const getCategoryName = (id: string) => settings.categories.find(c => c.id === id)?.name || id;
 
-    const sortedProducts = useMemo(() => {
-        let filtered = products;
-        if (search) {
-            filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+    // Load Data
+    const loadData = async () => {
+        setIsListLoading(true);
+        try {
+            const res = await searchProducts({
+                page,
+                limit,
+                ...filters
+            });
+            setDisplayedProducts(res.products);
+            setTotalItems(res.total);
+            setTotalPages(res.pages);
+        } catch(e) {
+            console.error(e);
+        } finally {
+            setIsListLoading(false);
         }
-        // Sort by Category order then Name
-        return filtered.sort((a, b) => {
-            const catA = settings.categories.find(c => c.id === a.category)?.order || 999;
-            const catB = settings.categories.find(c => c.id === b.category)?.order || 999;
-            if (catA !== catB) return catA - catB;
-            return a.name.localeCompare(b.name);
+    };
+
+    // Trigger load on filter/page change
+    useEffect(() => {
+        loadData();
+    }, [page, limit, filters]); // removed searchProducts from deps to avoid loop if unstable
+
+    const handleFilterChange = (key: string, value: string) => {
+        setFilters(prev => ({ ...prev, [key]: value }));
+        setPage(1); // Reset to page 1 on filter change
+    };
+
+    const clearFilters = () => {
+        setFilters({
+            search: '',
+            categories: '',
+            minPrice: '',
+            maxPrice: '',
+            visibility: '',
+            isEvent: 'all',
+            noPackaging: 'all'
         });
-    }, [products, search, settings.categories]);
+        setPage(1);
+    };
 
     // Subcategories for current editing product's category
     const availableSubcategories = useMemo(() => {
@@ -135,6 +183,7 @@ export const ProductsTab: React.FC = () => {
                 await addProduct(p);
             }
             setIsProductModalOpen(false);
+            loadData(); // Refresh list
         } catch (e) {
             console.error(e);
             alert('Chyba při ukládání.');
@@ -159,6 +208,7 @@ export const ProductsTab: React.FC = () => {
         if (deleteTarget) {
             await deleteProduct(deleteTarget.id);
             setDeleteTarget(null);
+            loadData(); // Refresh list
         }
     };
 
@@ -190,67 +240,151 @@ export const ProductsTab: React.FC = () => {
             )
         });
     };
+    
+    // Filter Option Maps
+    const categoryOptions = useMemo(() => settings.categories.map(c => ({ value: c.id, label: c.name })), [settings.categories]);
+    const visibilityOptions = [
+        { value: 'online', label: 'E-shop' },
+        { value: 'store', label: 'Prodejna' },
+        { value: 'stand', label: 'Stánek' }
+    ];
+
+    const hasActiveFilters = Object.values(filters).some(val => val !== '' && val !== 'all');
 
     return (
         <div className="animate-fade-in space-y-4">
             <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center gap-4">
                     <h2 className="text-xl font-bold text-primary">{t('admin.products')}</h2>
-                    <div className="relative">
-                        <Search size={16} className="absolute left-3 top-2.5 text-gray-400"/>
-                        <input 
-                            className="pl-9 p-2 border rounded-lg text-sm w-64 focus:ring-accent outline-none" 
-                            placeholder="Hledat produkt..." 
-                            value={search} 
-                            onChange={e => setSearch(e.target.value)}
-                        />
-                    </div>
+                    <button 
+                        onClick={loadData} 
+                        className="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition" 
+                        title="Obnovit"
+                    >
+                        <RefreshCw size={18} className={isListLoading ? 'animate-spin' : ''} />
+                    </button>
                 </div>
                 <button onClick={() => { setEditingProduct({ visibility: { online: true, store: true, stand: true }, allergens: [], images: [], composition: [] }); setIsProductModalOpen(true); setValidationErrors({}); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center shadow-sm hover:bg-black transition"><Plus size={16} className="mr-2"/> {t('admin.add_product')}</button>
             </div>
 
-            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
-                <table className="min-w-full divide-y">
-                    <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
-                        <tr>
-                            <th className="px-6 py-4 text-left w-20">Foto</th>
-                            <th className="px-6 py-4 text-left">{t('admin.tbl_name')}</th>
-                            <th className="px-6 py-4 text-left">{t('admin.tbl_category')}</th>
-                            <th className="px-6 py-4 text-left">{t('admin.tbl_price')}</th>
-                            <th className="px-6 py-4 text-center">{t('admin.tbl_visibility')}</th>
-                            <th className="px-6 py-4 text-right">{t('admin.tbl_actions')}</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y text-xs">
-                        {sortedProducts.map(p => (
-                            <tr key={p.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-4">
-                                    {p.images?.[0] ? (
-                                        <img src={getImageUrl(p.images[0], 'small')} className="w-10 h-10 object-cover rounded" loading="lazy" />
-                                    ) : (
-                                        <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
-                                    )}
-                                </td>
-                                <td className="px-6 py-4 font-bold text-gray-900">
-                                    {tData(p, 'name')}
-                                    {p.isEventProduct && <span className="ml-2 bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider">AKCE</span>}
-                                </td>
-                                <td className="px-6 py-4 text-gray-600">{getCategoryName(p.category)}</td>
-                                <td className="px-6 py-4 font-mono">{p.price} Kč / {p.unit}</td>
-                                <td className="px-6 py-4 text-center">
-                                    {p.visibility?.online ? <Check size={16} className="inline text-green-500"/> : <X size={16} className="inline text-gray-300"/>}
-                                </td>
-                                <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                    <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); setValidationErrors({}); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
-                                    <button onClick={() => setDeleteTarget(p)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
-                                </td>
+            {/* Filters */}
+            <div className="bg-white p-4 rounded-xl border shadow-sm grid grid-cols-2 md:grid-cols-7 gap-3 mb-4 items-end">
+                <div className="col-span-2 md:col-span-1">
+                    <label className="text-[10px] font-bold text-gray-400 block mb-1">Hledat</label>
+                    <div className="relative">
+                        <Search size={14} className="absolute left-2 top-2 text-gray-400"/>
+                        <input className="w-full border rounded pl-7 p-1.5 text-xs" placeholder="Název..." value={filters.search} onChange={e => handleFilterChange('search', e.target.value)} />
+                    </div>
+                </div>
+                <div className="col-span-2 md:col-span-1">
+                    <MultiSelect 
+                        label="Kategorie"
+                        options={categoryOptions}
+                        selectedValues={filters.categories ? filters.categories.split(',') : []}
+                        onChange={v => handleFilterChange('categories', v.join(','))}
+                    />
+                </div>
+                <div className="col-span-2 md:col-span-1">
+                     <label className="text-[10px] font-bold text-gray-400 block mb-1">Cena</label>
+                     <div className="flex gap-1">
+                         <input type="number" className="w-1/2 border rounded p-1.5 text-xs" placeholder="Od" value={filters.minPrice} onChange={e => handleFilterChange('minPrice', e.target.value)} />
+                         <input type="number" className="w-1/2 border rounded p-1.5 text-xs" placeholder="Do" value={filters.maxPrice} onChange={e => handleFilterChange('maxPrice', e.target.value)} />
+                     </div>
+                </div>
+                <div className="col-span-2 md:col-span-1">
+                    <MultiSelect 
+                        label="Viditelnost"
+                        options={visibilityOptions}
+                        selectedValues={filters.visibility ? filters.visibility.split(',') : []}
+                        onChange={v => handleFilterChange('visibility', v.join(','))}
+                    />
+                </div>
+                <div>
+                     <label className="text-[10px] font-bold text-gray-400 block mb-1">Akční zboží</label>
+                     <select className="w-full border rounded p-1.5 text-xs bg-white" value={filters.isEvent} onChange={e => handleFilterChange('isEvent', e.target.value)}>
+                         <option value="all">Vše</option>
+                         <option value="yes">Ano</option>
+                         <option value="no">Ne</option>
+                     </select>
+                </div>
+                <div>
+                     <label className="text-[10px] font-bold text-gray-400 block mb-1">Bez obalu</label>
+                     <select className="w-full border rounded p-1.5 text-xs bg-white" value={filters.noPackaging} onChange={e => handleFilterChange('noPackaging', e.target.value)}>
+                         <option value="all">Vše</option>
+                         <option value="yes">Ano</option>
+                         <option value="no">Ne</option>
+                     </select>
+                </div>
+                <div>
+                    {hasActiveFilters && (
+                        <button onClick={clearFilters} className="w-full text-xs text-red-500 hover:text-red-700 font-bold flex items-center justify-center p-1.5 mb-[1px]">
+                            <X size={14} className="mr-1"/> Zrušit
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col">
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y">
+                        <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                            <tr>
+                                <th className="px-6 py-4 text-left w-20">Foto</th>
+                                <th className="px-6 py-4 text-left">{t('admin.tbl_name')}</th>
+                                <th className="px-6 py-4 text-left">{t('admin.tbl_category')}</th>
+                                <th className="px-6 py-4 text-left">{t('admin.tbl_price')}</th>
+                                <th className="px-6 py-4 text-center">{t('admin.tbl_visibility')}</th>
+                                <th className="px-6 py-4 text-right">{t('admin.tbl_actions')}</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
-                {sortedProducts.length === 0 && (
-                    <div className="p-12 text-center text-gray-400">Žádné produkty k zobrazení</div>
-                )}
+                        </thead>
+                        <tbody className="divide-y text-xs">
+                            {displayedProducts.map(p => (
+                                <tr key={p.id} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4">
+                                        {p.images?.[0] ? (
+                                            <img src={getImageUrl(p.images[0], 'small')} className="w-10 h-10 object-cover rounded" loading="lazy" />
+                                        ) : (
+                                            <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={16}/></div>
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4 font-bold text-gray-900">
+                                        {tData(p, 'name')}
+                                        <div className="flex gap-1 mt-1">
+                                            {p.isEventProduct && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[9px] uppercase font-bold tracking-wider">AKCE</span>}
+                                            {p.noPackaging && <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-[9px] font-bold">BEZ OBALU</span>}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-gray-600">{getCategoryName(p.category)}</td>
+                                    <td className="px-6 py-4 font-mono">{p.price} Kč / {p.unit}</td>
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex justify-center gap-1">
+                                            {p.visibility?.online && <span className="w-2 h-2 rounded-full bg-green-500" title="E-shop"></span>}
+                                            {p.visibility?.store && <span className="w-2 h-2 rounded-full bg-blue-500" title="Prodejna"></span>}
+                                            {p.visibility?.stand && <span className="w-2 h-2 rounded-full bg-orange-500" title="Stánek"></span>}
+                                            {(!p.visibility?.online && !p.visibility?.store && !p.visibility?.stand) && <span className="text-gray-300"><X size={14}/></span>}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                        <button onClick={() => { setEditingProduct(p); setIsProductModalOpen(true); setValidationErrors({}); }} className="p-1 hover:text-primary"><Edit size={16}/></button>
+                                        <button onClick={() => setDeleteTarget(p)} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={16}/></button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {displayedProducts.length === 0 && (
+                        <div className="p-12 text-center text-gray-400">Žádné produkty k zobrazení</div>
+                    )}
+                </div>
+                
+                <Pagination 
+                    currentPage={page} 
+                    totalPages={totalPages} 
+                    onPageChange={setPage} 
+                    limit={limit} 
+                    onLimitChange={(l) => { setLimit(l); setPage(1); }} 
+                    totalItems={totalItems} 
+                />
             </div>
 
             <DeleteConfirmModal 

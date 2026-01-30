@@ -8,7 +8,8 @@ const router = express.Router();
 router.get('/', withDb(async (req, res, db) => {
     const { 
         page = 1, limit = 50, sort, order = 'asc',
-        search, minPrice, maxPrice, categories, visibility 
+        search, minPrice, maxPrice, categories, visibility,
+        isEvent, noPackaging 
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
@@ -42,9 +43,9 @@ router.get('/', withDb(async (req, res, db) => {
 
     // Categories
     if (categories) {
-        // Can be array or single string
-        const catArray = Array.isArray(categories) ? categories : [categories];
-        if (catArray.length > 0) {
+        // Can be array or single string - query params logic
+        const catArray = Array.isArray(categories) ? categories : categories.split(',');
+        if (catArray.length > 0 && catArray[0] !== '') {
             const cond = ' AND category IN (?)';
             query += cond;
             countQuery += cond;
@@ -53,11 +54,9 @@ router.get('/', withDb(async (req, res, db) => {
     }
 
     // Visibility (JSON query)
-    // Structure: full_json -> visibility -> { online: bool, store: bool, stand: bool }
     if (visibility) {
-        const visArray = Array.isArray(visibility) ? visibility : [visibility];
-        if (visArray.length > 0) {
-            // Logic: OR condition for selected visibilities. If product has ANY of selected true, include it.
+        const visArray = Array.isArray(visibility) ? visibility : visibility.split(',');
+        if (visArray.length > 0 && visArray[0] !== '') {
             const conditions = [];
             if (visArray.includes('online')) conditions.push("JSON_EXTRACT(full_json, '$.visibility.online') = true");
             if (visArray.includes('store')) conditions.push("JSON_EXTRACT(full_json, '$.visibility.store') = true");
@@ -69,6 +68,28 @@ router.get('/', withDb(async (req, res, db) => {
                 countQuery += cond;
             }
         }
+    }
+
+    // Event Product (JSON)
+    if (isEvent === 'yes') {
+        const cond = " AND JSON_EXTRACT(full_json, '$.isEventProduct') = true";
+        query += cond;
+        countQuery += cond;
+    } else if (isEvent === 'no') {
+        const cond = " AND (JSON_EXTRACT(full_json, '$.isEventProduct') = false OR JSON_EXTRACT(full_json, '$.isEventProduct') IS NULL)";
+        query += cond;
+        countQuery += cond;
+    }
+
+    // No Packaging (JSON)
+    if (noPackaging === 'yes') {
+        const cond = " AND JSON_EXTRACT(full_json, '$.noPackaging') = true";
+        query += cond;
+        countQuery += cond;
+    } else if (noPackaging === 'no') {
+        const cond = " AND (JSON_EXTRACT(full_json, '$.noPackaging') = false OR JSON_EXTRACT(full_json, '$.noPackaging') IS NULL)";
+        query += cond;
+        countQuery += cond;
     }
 
     // Count

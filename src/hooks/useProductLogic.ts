@@ -67,8 +67,63 @@ export const useProductLogic = ({ dataSource, apiCall, showNotify, t }: UseProdu
             if (res && res.success) return res;
             return { products: [], total: 0, page: 1, pages: 1 };
         } else {
-            // Local fallback
-            return { products: products, total: products.length, page: 1, pages: 1 };
+            // Local fallback logic
+            let filtered = [...products];
+
+            // Search (Name)
+            if (filters.search) {
+                const term = filters.search.toLowerCase();
+                filtered = filtered.filter(p => p.name.toLowerCase().includes(term));
+            }
+
+            // Price
+            if (filters.minPrice) {
+                filtered = filtered.filter(p => p.price >= Number(filters.minPrice));
+            }
+            if (filters.maxPrice) {
+                filtered = filtered.filter(p => p.price <= Number(filters.maxPrice));
+            }
+
+            // Categories (comma separated string in filters)
+            if (filters.categories) {
+                const catArray = filters.categories.split(',').filter((c: string) => c.trim() !== '');
+                if (catArray.length > 0) {
+                    filtered = filtered.filter(p => catArray.includes(p.category));
+                }
+            }
+
+            // Visibility
+            if (filters.visibility) {
+                const visArray = filters.visibility.split(',').filter((v: string) => v.trim() !== '');
+                if (visArray.length > 0) {
+                     filtered = filtered.filter(p => {
+                         if (visArray.includes('online') && p.visibility?.online) return true;
+                         if (visArray.includes('store') && p.visibility?.store) return true;
+                         if (visArray.includes('stand') && p.visibility?.stand) return true;
+                         return false;
+                     });
+                }
+            }
+
+            // Event Product
+            if (filters.isEvent === 'yes') filtered = filtered.filter(p => p.isEventProduct);
+            if (filters.isEvent === 'no') filtered = filtered.filter(p => !p.isEventProduct);
+
+            // No Packaging
+            if (filters.noPackaging === 'yes') filtered = filtered.filter(p => p.noPackaging);
+            if (filters.noPackaging === 'no') filtered = filtered.filter(p => !p.noPackaging);
+
+            const page = Number(filters.page) || 1;
+            const limit = Number(filters.limit) || 50;
+            const startIndex = (page - 1) * limit;
+            const paginated = filtered.slice(startIndex, startIndex + limit);
+
+            return { 
+                products: paginated, 
+                total: filtered.length, 
+                page: page, 
+                pages: Math.ceil(filtered.length / limit) 
+            };
         }
     }, [dataSource, apiCall, products]);
 
