@@ -1,3 +1,4 @@
+
 import { CartItem, Product, GlobalSettings, Order, OrderStatus, DiscountCode, DiscountType, PackagingType } from '../types';
 
 export const calculateDiscountAmountLogic = (
@@ -142,6 +143,14 @@ export const calculateDailyLoad = (orders: Order[], products: Product[], setting
     return { load, eventLoad };
 };
 
+// Helper to safely get local YYYY-MM-DD to avoid timezone shifting issues with toISOString()
+const getLocalYMD = (d: Date) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 export const getAvailableEventDatesLogic = (
     product: Product, 
     settings: GlobalSettings, 
@@ -152,12 +161,16 @@ export const getAvailableEventDatesLogic = (
     if (!product.isEventProduct) return [];
     
     const today = todayDate ? new Date(todayDate) : new Date();
+    // Reset time components to ensure we count full calendar days
     today.setHours(0,0,0,0);
     
     const leadTime = product.leadTimeDays || 0;
     const minDate = new Date(today);
+    // Add lead time days
     minDate.setDate(minDate.getDate() + leadTime);
-    const minDateStr = minDate.toISOString().split('T')[0];
+    
+    // Convert to YYYY-MM-DD using local time logic
+    const minDateStr = getLocalYMD(minDate);
 
     const validSlots = (settings.eventSlots || [])
         .filter(slot => slot.date >= minDateStr)
@@ -177,6 +190,8 @@ export const getAvailableEventDatesLogic = (
         const limit = slot.capacityOverrides?.[catId] ?? 0;
         const currentLoad = eventLoad[catId] || 0;
         
+        // Product fits if current load is strictly less than limit.
+        // If they are equal, it's full.
         return limit > currentLoad;
     }).map(s => s.date);
 };
