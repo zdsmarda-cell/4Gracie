@@ -263,29 +263,28 @@ export const Menu: React.FC = () => {
       });
   }, [selectedCategory]);
 
+  // --- FILTERING HELPER ---
+  // A product is orderable if it's online AND (if event) has available dates.
+  const isProductOrderable = (p: Product) => {
+      if (!p.visibility?.online) return false;
+      if (p.isEventProduct && getAvailableEventDates(p).length === 0) return false;
+      return true;
+  };
+
   // Check if any event product is orderable (has valid future slots respecting lead time)
   // This controls the visibility of the "AKCE" tab
   const hasOrderableEvents = useMemo(() => {
-      return products.some(p => p.isEventProduct && p.visibility.online && getAvailableEventDates(p).length > 0);
+      return products.some(p => p.isEventProduct && isProductOrderable(p));
   }, [products, getAvailableEventDates]);
 
   // Determine active categories
-  // Only show categories that have at least one visible product
-  // If a category contains ONLY Event products, it should only be active if those products are orderable
+  // Only show categories that have at least one visible AND ORDERABLE product
   const activeCategories = useMemo(() => {
     const productsInCats = new Set<string>();
     
     products.forEach(p => {
-      if (p.visibility?.online) {
-        if (p.isEventProduct) {
-            // Only add category if event product is orderable
-            if (getAvailableEventDates(p).length > 0) {
-                productsInCats.add(p.category);
-            }
-        } else {
-            // Standard product
-            productsInCats.add(p.category);
-        }
+      if (isProductOrderable(p)) {
+          productsInCats.add(p.category);
       }
     });
     
@@ -294,7 +293,7 @@ export const Menu: React.FC = () => {
       .sort((a, b) => a.order - b.order);
   }, [products, settings.categories, getAvailableEventDates]);
 
-  // Available Subcategories for current main category (must contain visible products)
+  // Available Subcategories for current main category (must contain visible & orderable products)
   const availableSubcategories = useMemo(() => {
       if (selectedCategory === 'all' || selectedCategory === 'events') return [];
       
@@ -308,10 +307,7 @@ export const Menu: React.FC = () => {
 
       const activeSubcatsIds = new Set<string>();
       products.forEach(p => {
-          // Check product visibility AND validity
-          const isValid = p.visibility.online && (!p.isEventProduct || getAvailableEventDates(p).length > 0);
-          
-          if (p.category === selectedCategory && isValid && p.subcategory) {
+          if (p.category === selectedCategory && isProductOrderable(p) && p.subcategory) {
               activeSubcatsIds.add(p.subcategory);
           }
       });
@@ -324,27 +320,22 @@ export const Menu: React.FC = () => {
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
-      if (!p.visibility?.online) return false;
-      
-      // CRITICAL: Hide Event Products if they are not orderable (no future dates)
-      // This applies to ALL views (All, Category, Search, etc.)
-      if (p.isEventProduct && getAvailableEventDates(p).length === 0) {
-          return false;
-      }
+      // 1. Core Visibility Check (Online & Orderable)
+      if (!isProductOrderable(p)) return false;
 
-      // Category Filter Logic
+      // 2. Category Filter Logic
       if (selectedCategory === 'events') {
           if (!p.isEventProduct) return false;
       } else if (selectedCategory !== 'all' && p.category !== selectedCategory) {
           return false;
       }
 
-      // Subcategory Filter Logic (Multi-Select)
+      // 3. Subcategory Filter Logic (Multi-Select)
       if (selectedSubcategories.length > 0 && selectedCategory !== 'all' && selectedCategory !== 'events') {
-          // p.subcategory stores the ID
           if (!p.subcategory || !selectedSubcategories.includes(p.subcategory)) return false;
       }
 
+      // 4. Allergen Filter
       if (excludeAllergens.length > 0) {
         const hasExcludedAllergen = p.allergens.some(a => excludeAllergens.includes(a));
         if (hasExcludedAllergen) return false;
