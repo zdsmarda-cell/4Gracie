@@ -13,7 +13,6 @@ const UPLOAD_ROOT = path.resolve(__dirname, '..', '..', 'uploads');
 let transporter = null;
 
 export const initEmail = async () => {
-    // If transporter exists, verify it's still valid
     if (transporter) {
         return true;
     }
@@ -38,19 +37,21 @@ export const initEmail = async () => {
         });
         
         await t.verify();
-        transporter = t; // Assign only after successful verification
+        transporter = t; 
         console.log("📧 Email service initialized");
         return true;
     } catch (err) {
         console.error("❌ Email init failed:", err.message);
-        transporter = null; // Ensure null if failed
+        transporter = null;
         return false;
     }
 };
 
 // API URL for images served from backend
 const getApiUrl = () => {
+    // Priority: Env var -> Hardcoded fallback
     let url = process.env.VITE_API_URL || 'http://localhost:3000';
+    // Remove trailing slash to handle path joining consistently
     url = url.replace(/\/$/, '');
     return url;
 };
@@ -64,9 +65,21 @@ const getWebUrl = () => {
 
 const getImgUrl = (imagePath) => {
     if (!imagePath) return '';
-    if (imagePath.startsWith('http')) return imagePath;
+    // If it's already an absolute URL (e.g. data:image or external http), return as is
+    if (imagePath.startsWith('http') || imagePath.startsWith('data:')) return imagePath;
+    
     const baseUrl = getApiUrl();
-    return `${baseUrl}/${imagePath.replace(/^\//, '')}`;
+    // Ensure we are pointing to the static file route defined in server/index.js
+    // app.use('/api/uploads', express.static(UPLOAD_ROOT));
+    // If path is like 'images/foo.jpg', we need 'http://host:3000/api/uploads/images/foo.jpg'
+    
+    // Check if path already contains '/api/uploads'
+    if (imagePath.includes('/api/uploads')) {
+         return `${baseUrl}/${imagePath.replace(/^\//, '')}`;
+    }
+    
+    // Default assumption: imagePath is relative to uploads root, e.g. "images/pic.webp"
+    return `${baseUrl}/api/uploads/${imagePath.replace(/^\//, '')}`;
 };
 
 const formatDate = (dateStr) => {
@@ -120,8 +133,9 @@ const TEXTS = {
         pickup: 'Osobní odběr',
         courier: 'Rozvoz',
         date: 'Datum:',
-        address: 'Doručovací adresa:',
+        delivery_address: 'Doručovací adresa:',
         pickup_place: 'Místo odběru:',
+        billing_address: 'Fakturační adresa:',
         footer: 'Děkujeme, že jste si vybrali naše služby.'
     },
     en: {
@@ -136,8 +150,9 @@ const TEXTS = {
         pickup: 'Pickup',
         courier: 'Delivery',
         date: 'Date:',
-        address: 'Delivery Address:',
+        delivery_address: 'Delivery Address:',
         pickup_place: 'Pickup Point:',
+        billing_address: 'Billing Address:',
         footer: 'Thank you for choosing our services.'
     },
     de: {
@@ -152,8 +167,9 @@ const TEXTS = {
         pickup: 'Abholung',
         courier: 'Lieferung',
         date: 'Datum:',
-        address: 'Lieferadresse:',
+        delivery_address: 'Lieferadresse:',
         pickup_place: 'Abholort:',
+        billing_address: 'Rechnungsadresse:',
         footer: 'Danke, dass Sie unsere Dienste gewählt haben.'
     }
 };
@@ -170,17 +186,18 @@ const generateEmailHtml = (order, type, settings, status) => {
     const title = type === 'created' ? T.title_create : T.title_update.replace('{status}', translatedStatus);
     const intro = type === 'created' ? T.intro_create : T.intro_update.replace('{id}', order.id);
     
-    // Address Logic
-    let addressHtml = '';
+    // --- Address Logic (Split into Delivery & Billing columns) ---
+    
+    let deliveryContentHtml = '';
+    let deliveryTitle = T.delivery_address;
+
     if (order.deliveryType === 'pickup') {
+        deliveryTitle = T.pickup_place;
         const pickupName = order.deliveryName || 'Prodejna 4Gracie'; 
         const pickupAddress = order.deliveryAddress?.replace('Osobní odběr: ', '') || '';
-        addressHtml = `
-            <div style="margin-top: 15px; padding: 10px; background-color: #f9fafb; border-radius: 6px;">
-                <div style="font-size: 12px; text-transform: uppercase; color: #6b7280; font-weight: bold; margin-bottom: 4px;">${T.pickup_place}</div>
-                <div style="font-weight: bold; color: #1f2937;">${pickupName}</div>
-                <div style="color: #4b5563; font-size: 14px;">${pickupAddress}</div>
-            </div>
+        deliveryContentHtml = `
+            <div style="font-weight: bold; color: #1f2937;">${pickupName}</div>
+            <div style="color: #4b5563; font-size: 14px;">${pickupAddress}</div>
         `;
     } else {
         const delName = order.deliveryName || order.userName;
@@ -188,20 +205,43 @@ const generateEmailHtml = (order, type, settings, status) => {
         const delCity = order.deliveryCity || '';
         const delZip = order.deliveryZip || '';
         const delPhone = order.deliveryPhone || '';
-        const legacyAddr = order.deliveryAddress ? order.deliveryAddress.replace(/\n/g, '<br>') : '';
-
-        addressHtml = `
-            <div style="margin-top: 15px; padding: 10px; background-color: #f9fafb; border-radius: 6px;">
-                <div style="font-size: 12px; text-transform: uppercase; color: #6b7280; font-weight: bold; margin-bottom: 4px;">${T.address}</div>
-                ${delStreet ? `
-                    <div style="font-weight: bold; color: #1f2937;">${delName}</div>
-                    <div style="color: #4b5563; font-size: 14px;">${delStreet}<br>${delZip} ${delCity}</div>
-                    ${delPhone ? `<div style="margin-top: 4px; color: #6b7280; font-size: 12px;">Tel: ${delPhone}</div>` : ''}
-                ` : `<div style="color: #4b5563; font-size: 14px;">${legacyAddr}</div>`}
-            </div>
-        `;
+        
+        // Fallback for legacy data without structured fields
+        if (!delStreet && order.deliveryAddress) {
+             deliveryContentHtml = `<div style="color: #4b5563; font-size: 14px;">${order.deliveryAddress.replace(/\n/g, '<br>')}</div>`;
+        } else {
+             deliveryContentHtml = `
+                <div style="font-weight: bold; color: #1f2937;">${delName}</div>
+                <div style="color: #4b5563; font-size: 14px;">${delStreet}<br>${delZip} ${delCity}</div>
+                ${delPhone ? `<div style="margin-top: 4px; color: #6b7280; font-size: 12px;">Tel: ${delPhone}</div>` : ''}
+            `;
+        }
     }
 
+    const billingContentHtml = `
+        <div style="font-weight: bold; color: #1f2937;">${order.billingName || order.userName}</div>
+        <div style="color: #4b5563; font-size: 14px;">${order.billingStreet || ''}<br>${order.billingZip || ''} ${order.billingCity || ''}</div>
+        ${order.billingIc ? `<div style="margin-top: 4px; color: #6b7280; font-size: 12px;">IČ: ${order.billingIc}</div>` : ''}
+        ${order.billingDic ? `<div style="color: #6b7280; font-size: 12px;">DIČ: ${order.billingDic}</div>` : ''}
+    `;
+
+    // Address Table Wrapper
+    const addressTableHtml = `
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 15px; background-color: #f9fafb; border-radius: 6px;">
+            <tr>
+                <td width="50%" valign="top" style="padding: 10px; border-right: 1px solid #e5e7eb;">
+                    <div style="font-size: 12px; text-transform: uppercase; color: #6b7280; font-weight: bold; margin-bottom: 4px;">${deliveryTitle}</div>
+                    ${deliveryContentHtml}
+                </td>
+                <td width="50%" valign="top" style="padding: 10px;">
+                    <div style="font-size: 12px; text-transform: uppercase; color: #6b7280; font-weight: bold; margin-bottom: 4px;">${T.billing_address}</div>
+                    ${billingContentHtml}
+                </td>
+            </tr>
+        </table>
+    `;
+
+    // --- Items Logic ---
     const itemsHtml = order.items.map(item => {
         // Product image from API
         const imgUrl = (item.images && item.images.length > 0) ? getImgUrl(item.images[0]) : '';
@@ -260,7 +300,7 @@ const generateEmailHtml = (order, type, settings, status) => {
                 </div>
             </div>
 
-            ${addressHtml}
+            ${addressTableHtml}
 
             <div style="margin-top: 15px; display: flex; justify-content: space-between; font-size: 14px;">
                 <div>
@@ -361,6 +401,7 @@ export const processCustomerEmail = async (recipient, order, type, settings, cus
     const html = generateEmailHtml(order, type, settings, customStatus);
     const attachments = [];
 
+    // Attach Invoice for Created or Delivered
     if (type === 'created' || (type === 'status' && customStatus === 'delivered')) {
         try {
             const invoiceType = (type === 'status' && customStatus === 'delivered') ? 'final' : 'proforma';
@@ -374,6 +415,7 @@ export const processCustomerEmail = async (recipient, order, type, settings, cus
         }
     }
 
+    // Attach VOP (Terms) for New Orders
     if (type === 'created') {
         const vopPath = path.join(UPLOAD_ROOT, 'VOP.pdf');
         if (fs.existsSync(vopPath)) {
