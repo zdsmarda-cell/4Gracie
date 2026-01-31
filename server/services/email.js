@@ -142,6 +142,7 @@ const TEXTS = {
         delivery_address: 'Doručovací adresa:',
         pickup_place: 'Místo odběru:',
         billing_address: 'Fakturační adresa:',
+        note: 'Poznámka:',
         footer: 'Děkujeme, že jste si vybrali naše služby.'
     },
     en: {
@@ -159,6 +160,7 @@ const TEXTS = {
         delivery_address: 'Delivery Address:',
         pickup_place: 'Pickup Point:',
         billing_address: 'Billing Address:',
+        note: 'Note:',
         footer: 'Thank you for choosing our services.'
     },
     de: {
@@ -176,6 +178,7 @@ const TEXTS = {
         delivery_address: 'Lieferadresse:',
         pickup_place: 'Abholort:',
         billing_address: 'Rechnungsadresse:',
+        note: 'Anmerkung:',
         footer: 'Danke, dass Sie unsere Dienste gewählt haben.'
     }
 };
@@ -247,6 +250,17 @@ const generateEmailHtml = (order, type, settings, status) => {
         </table>
     `;
 
+    // --- Note Block ---
+    let noteHtml = '';
+    if (order.note) {
+         noteHtml = `
+            <div style="margin-top: 15px; padding: 10px; background-color: #fff7ed; border: 1px solid #ffedd5; border-radius: 6px;">
+                <div style="font-size: 12px; text-transform: uppercase; color: #c2410c; font-weight: bold; margin-bottom: 4px;">${T.note}</div>
+                <div style="color: #431407; font-size: 14px;">${order.note.replace(/\n/g, '<br>')}</div>
+            </div>
+        `;
+    }
+
     // --- Items Logic ---
     const itemsHtml = order.items.map(item => {
         // Product image from API
@@ -307,6 +321,7 @@ const generateEmailHtml = (order, type, settings, status) => {
             </div>
 
             ${addressTableHtml}
+            ${noteHtml}
 
             <div style="margin-top: 15px; display: flex; justify-content: space-between; font-size: 14px;">
                 <div>
