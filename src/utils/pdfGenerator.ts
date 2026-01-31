@@ -69,14 +69,18 @@ export const generateRoutePdf = async (
                 let isGrayedOut = false;
                 let statusText = '';
                 
-                // Resolve Customer Details (Prioritize Order Data)
+                // Resolve Customer Details (Prioritize Order Data, fallback to Step Data)
                 const customerName = fullOrder?.deliveryName || fullOrder?.userName || step.customerName || 'Neznámý';
                 const customerPhone = fullOrder?.deliveryPhone || step.customerPhone || '-';
 
-                // Append Note to Address if present
+                // --- BUILD ADDRESS + NOTE TEXT ---
+                // Start with base address from step (which contains street, city)
                 let addressText = step.address;
-                if (fullOrder?.note) {
-                    addressText += `\nPozn: ${fullOrder.note}`;
+                
+                // Append Note: Try Order first, then Step data
+                const note = fullOrder?.note || step.note;
+                if (note) {
+                    addressText += `\nPozn: ${note}`;
                 }
 
                 // Handle Address Error Display
@@ -155,7 +159,8 @@ export const generateRoutePdf = async (
                     { content: step.orderId, styles: rowStyles },
                     isGrayedOut ? { content: step.arrivalTime + statusText, styles: rowStyles } : arrivalCell,
                     { content: customerName + statusText, styles: rowStyles },
-                    isGrayedOut ? { content: step.address, styles: rowStyles } : addressCell,
+                    // FIX: Always use addressCell (which contains note logic), apply gray styles if needed
+                    isGrayedOut ? { content: (addressCell.content || addressCell), styles: rowStyles } : addressCell,
                     { content: customerPhone, styles: rowStyles },
                     isGrayedOut ? { content: paymentCell, styles: rowStyles } : paymentCell,
                     { content: pkgCount, styles: { ...rowStyles, halign: 'center' } }

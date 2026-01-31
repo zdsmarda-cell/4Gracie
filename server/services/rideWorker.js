@@ -85,17 +85,34 @@ export const startRideWorker = () => {
                         console.log(`🚕 Ride Worker: Calculating route for Ride ${ride.id} with ${ordersPayload.length} orders...`);
                         
                         // Call AI Service
-                        const optimizedSteps = await optimizeRouteData(
+                        // AI returns sorted steps but might drop non-essential fields like note/phone
+                        const aiSteps = await optimizeRouteData(
                             depotAddress,
                             ordersPayload,
                             ride.departure_time,
                             logisticsSettings
                         );
 
+                        // MERGE BACK DETAILS: Ensure Note, Phone, Name are preserved in the saved JSON
+                        const finalSteps = aiSteps.map(step => {
+                            const original = ordersPayload.find(o => o.id === step.orderId);
+                            if (original) {
+                                return {
+                                    ...step,
+                                    customerName: original.customerName,
+                                    customerPhone: original.customerPhone,
+                                    note: original.note,
+                                    isPaid: original.isPaid,
+                                    itemsCount: original.itemsCount
+                                };
+                            }
+                            return step;
+                        });
+
                         // Save Result
                         await db.query(
                             "UPDATE rides SET steps = ? WHERE id = ?",
-                            [JSON.stringify(optimizedSteps), ride.id]
+                            [JSON.stringify(finalSteps), ride.id]
                         );
                         
                         console.log(`✅ Ride Worker: Ride ${ride.id} optimized successfully.`);
