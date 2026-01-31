@@ -10,7 +10,6 @@ import { fileURLToPath } from 'url';
 import { getDb } from './db.js';
 import { initEmail, startEmailWorker } from './services/email.js';
 import { startRideWorker } from './services/rideWorker.js'; 
-import { checkAndGenerateMissingVariants } from './services/imageProcessor.js'; // NEW IMPORT
 
 // ROUTES IMPORTS
 import authRoutes from './routes/users.js'; 
@@ -188,9 +187,6 @@ const startServer = async () => {
   startEmailWorker();
   startRideWorker();
   
-  // Background task: Check existing images and generate optimized versions if missing
-  checkAndGenerateMissingVariants(); 
-
   const sslKey = process.env.SSL_KEY_PATH;
   const sslCert = process.env.SSL_CERT_PATH; 
   
