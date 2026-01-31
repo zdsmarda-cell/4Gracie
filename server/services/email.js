@@ -48,18 +48,27 @@ export const initEmail = async () => {
 };
 
 // API URL for images served from backend
+// Force HTTPS and combine APP_URL + PORT as requested
 const getApiUrl = () => {
-    // Priority: Env var -> Hardcoded fallback
-    let url = process.env.VITE_API_URL || 'http://localhost:3000';
-    // Remove trailing slash to handle path joining consistently
-    url = url.replace(/\/$/, '');
-    return url;
+    // 1. Get Domain from APP_URL (remove protocol if present)
+    let domain = process.env.APP_URL || 'localhost';
+    domain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    
+    // 2. Get Port
+    const port = process.env.PORT || 3000;
+    
+    // 3. Construct URL: https://eshop.4gracie.cz:3000
+    return `https://${domain}:${port}`;
 };
 
 // Web URL for links and frontend assets (logo)
 const getWebUrl = () => {
     let url = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
     url = url.replace(/\/$/, '');
+    // Ensure protocol is present if missing
+    if (!url.startsWith('http')) {
+        url = `https://${url}`;
+    }
     return url;
 };
 
@@ -69,9 +78,6 @@ const getImgUrl = (imagePath) => {
     if (imagePath.startsWith('http') || imagePath.startsWith('data:')) return imagePath;
     
     const baseUrl = getApiUrl();
-    // Ensure we are pointing to the static file route defined in server/index.js
-    // app.use('/api/uploads', express.static(UPLOAD_ROOT));
-    // If path is like 'images/foo.jpg', we need 'http://host:3000/api/uploads/images/foo.jpg'
     
     // Check if path already contains '/api/uploads'
     if (imagePath.includes('/api/uploads')) {
@@ -417,12 +423,25 @@ export const processCustomerEmail = async (recipient, order, type, settings, cus
 
     // Attach VOP (Terms) for New Orders
     if (type === 'created') {
-        const vopPath = path.join(UPLOAD_ROOT, 'VOP.pdf');
+        // Logic to determine path: VOP_PATH env var OR default 'vop.pdf'
+        let vopPath = null;
+        if (process.env.VOP_PATH) {
+             vopPath = process.env.VOP_PATH;
+        } else {
+             vopPath = path.join(UPLOAD_ROOT, 'vop.pdf');
+        }
+
         if (fs.existsSync(vopPath)) {
             attachments.push({
                 filename: 'VOP.pdf',
                 path: vopPath
             });
+        } else {
+             // Try fallback to Uppercase just in case of FS discrepancy
+             const vopPathUpper = path.join(UPLOAD_ROOT, 'VOP.pdf');
+             if (fs.existsSync(vopPathUpper)) {
+                 attachments.push({ filename: 'VOP.pdf', path: vopPathUpper });
+             }
         }
     }
 
