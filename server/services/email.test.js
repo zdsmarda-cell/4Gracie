@@ -1,5 +1,5 @@
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { processCustomerEmail, processOperatorEmail, initEmail } from './email.js';
 
 // Mock Nodemailer
@@ -26,12 +26,21 @@ vi.mock('./pdf.js', () => ({
 }));
 
 describe('Email Service', () => {
+    const originalEnv = process.env;
+
     beforeEach(() => {
         vi.clearAllMocks();
+        process.env = { ...originalEnv }; // Clone env
         process.env.SMTP_HOST = 'smtp.test.com';
         process.env.SMTP_USER = 'test-user';
         process.env.EMAIL_FROM = 'noreply@test.com';
+        process.env.APP_URL = 'https://myshop.com';
+        process.env.PORT = '3000';
         initEmail(); // Initialize transporter
+    });
+
+    afterEach(() => {
+        process.env = originalEnv; // Restore env
     });
 
     it('should send created order email with attachments (Customer)', async () => {
@@ -102,5 +111,38 @@ describe('Email Service', () => {
         const call = sendMailMock.mock.calls[0][0];
         expect(call.to).toBe('customer@test.com');
         expect(call.subject).toContain('Order Status Update');
+    });
+
+    it('should ensure email body is Base64 encoded and contains absolute URLs', async () => {
+        const order = {
+            id: '123',
+            userId: 'u1',
+            status: 'created',
+            items: [
+                { name: 'Test Product', quantity: 1, price: 100, images: ['product.jpg'] }
+            ],
+            totalPrice: 100,
+            packagingFee: 0,
+            deliveryFee: 0,
+            language: 'cs'
+        };
+        const settings = { companyDetails: {} };
+
+        await processCustomerEmail('test@test.com', order, 'created', settings);
+
+        const callArgs = sendMailMock.mock.calls[0][0];
+
+        // 1. Verify Base64 encoding setting
+        expect(callArgs.encoding).toBe('base64');
+
+        // 2. Verify Absolute URLs in HTML
+        const html = callArgs.html;
+        
+        // Logo URL check (matches getWebUrl logic)
+        expect(html).toContain('https://myshop.com/logo.png');
+        
+        // Product Image URL check (matches getApiUrl logic which adds port for backend)
+        // Logic: `https://${domain}:${port}/api/uploads/...`
+        expect(html).toContain('https://myshop.com:3000/api/uploads/product.jpg');
     });
 });
