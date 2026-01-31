@@ -143,6 +143,7 @@ const TEXTS = {
         pickup_place: 'Místo odběru:',
         billing_address: 'Fakturační adresa:',
         note: 'Poznámka:',
+        go_to_eshop: 'Přejít na e-shop',
         footer: 'Děkujeme, že jste si vybrali naše služby.'
     },
     en: {
@@ -161,6 +162,7 @@ const TEXTS = {
         pickup_place: 'Pickup Point:',
         billing_address: 'Billing Address:',
         note: 'Note:',
+        go_to_eshop: 'Go to E-shop',
         footer: 'Thank you for choosing our services.'
     },
     de: {
@@ -179,6 +181,7 @@ const TEXTS = {
         pickup_place: 'Abholort:',
         billing_address: 'Rechnungsadresse:',
         note: 'Anmerkung:',
+        go_to_eshop: 'Zum E-Shop',
         footer: 'Danke, dass Sie unsere Dienste gewählt haben.'
     }
 };
@@ -322,6 +325,12 @@ const generateEmailHtml = (order, type, settings, status) => {
 
             ${addressTableHtml}
             ${noteHtml}
+            
+            <div style="text-align: center; margin-top: 25px;">
+                <a href="${webUrl}" style="background-color: #9333ea; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; display: inline-block;">
+                    ${T.go_to_eshop}
+                </a>
+            </div>
 
             <div style="margin-top: 15px; display: flex; justify-content: space-between; font-size: 14px;">
                 <div>
@@ -388,7 +397,7 @@ const generateEventEmailHtml = (date, products) => {
                 </div>
             </div>
             <div style="background-color: #f3f4f6; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af;">
-                <p style="margin: 0;">&copy; ${new Date().getFullYear()} 4Gracie Catering</p>
+                <p style="margin: 0;">&copy; ${new Date().getFullYear()} 4 grácie</p>
                 <p style="margin: 5px 0 0 0;">Toto je automaticky generovaná zpráva.</p>
             </div>
         </div>
