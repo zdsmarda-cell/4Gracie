@@ -4,7 +4,7 @@ import { useStore } from '../../context/StoreContext';
 import { Order, OrderStatus, DeliveryType, Language, PaymentMethod, PickupLocation } from '../../types';
 import { Pagination } from '../../components/Pagination';
 import { MultiSelect } from '../../components/MultiSelect';
-import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle, ArrowUp, ArrowDown, ArrowUpDown, Zap, Truck, Store, DollarSign, Smartphone, Trash2, MapPin, Phone } from 'lucide-react';
+import { FileText, Check, X, Filter, QrCode, FileCheck, Edit, Save, ImageIcon, Minus, Plus, AlertCircle, ArrowUp, ArrowDown, ArrowUpDown, Zap, Truck, Store, DollarSign, Smartphone, Trash2, MapPin, Phone, HelpCircle } from 'lucide-react';
 import { CustomCalendar } from '../../components/CustomCalendar';
 
 interface OrdersTabProps {
@@ -33,6 +33,30 @@ const StatusConfirmModal: React.FC<{
                 <div className="flex gap-3">
                     <button onClick={onClose} className="flex-1 py-2 bg-gray-100 rounded-lg font-bold text-sm">Zrušit</button>
                     <button onClick={onConfirm} className="flex-1 py-2 bg-primary text-white rounded-lg font-bold text-sm">Potvrdit</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const NoteViewModal: React.FC<{
+    isOpen: boolean;
+    note: string | null;
+    onClose: () => void;
+}> = ({ isOpen, note, onClose }) => {
+    if (!isOpen || !note) return null;
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl relative" onClick={e => e.stopPropagation()}>
+                <button onClick={onClose} className="absolute top-4 right-4 p-1 hover:bg-gray-100 rounded-full"><X size={18}/></button>
+                <h3 className="text-lg font-bold mb-4 flex items-center text-primary">
+                    <HelpCircle className="mr-2 text-orange-500" size={20}/> Poznámka k objednávce
+                </h3>
+                <div className="bg-orange-50 p-4 rounded-xl border border-orange-100 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
+                    {note}
+                </div>
+                <div className="mt-6 text-center">
+                    <button onClick={onClose} className="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-sm hover:bg-gray-200 transition">Zavřít</button>
                 </div>
             </div>
         </div>
@@ -175,12 +199,6 @@ const AddressDetailModal: React.FC<{
                                     </div>
                                 )}
                             </div>
-                            {details.note && (
-                                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                    <span className="text-xs font-bold text-gray-400 uppercase block mb-1">Poznámka</span>
-                                    <p className="italic text-gray-600">{details.note}</p>
-                                </div>
-                            )}
                         </>
                     )}
                 </div>
@@ -228,6 +246,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
     const [paymentModalOrder, setPaymentModalOrder] = useState<Order | null>(null);
     const [addressModalData, setAddressModalData] = useState<{ type: 'pickup' | 'delivery', content: any } | null>(null);
     const [confirmStatus, setConfirmStatus] = useState<{ isOpen: boolean, status: OrderStatus | null }>({ isOpen: false, status: null });
+    const [noteModalContent, setNoteModalContent] = useState<string | null>(null);
 
     const [editingOrder, setEditingOrder] = useState<Order | null>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -564,17 +583,30 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
 
                                     {/* CLICKABLE DELIVERY */}
                                     <td className="px-4 py-3 text-center" onClick={(e) => openAddressModal(e, order)}>
-                                        {order.deliveryType === DeliveryType.DELIVERY ? (
-                                            <div className="flex flex-col items-center cursor-pointer hover:scale-110 transition" title="Zobrazit doručovací adresu">
-                                                <Truck size={14} className="text-blue-600 mb-0.5"/>
-                                                <span className="text-[9px] font-bold text-blue-700">Rozvoz</span>
-                                            </div>
-                                        ) : (
-                                            <div className="flex flex-col items-center cursor-pointer hover:scale-110 transition" title="Zobrazit odběrné místo">
-                                                <Store size={14} className="text-orange-500 mb-0.5"/>
-                                                <span className="text-[9px] font-bold text-orange-700">Odběr</span>
-                                            </div>
-                                        )}
+                                        <div className="flex justify-center items-center gap-2">
+                                            {order.deliveryType === DeliveryType.DELIVERY ? (
+                                                <div className="flex flex-col items-center cursor-pointer hover:scale-110 transition" title="Zobrazit doručovací adresu">
+                                                    <Truck size={14} className="text-blue-600 mb-0.5"/>
+                                                    <span className="text-[9px] font-bold text-blue-700">Rozvoz</span>
+                                                </div>
+                                            ) : (
+                                                <div className="flex flex-col items-center cursor-pointer hover:scale-110 transition" title="Zobrazit odběrné místo">
+                                                    <Store size={14} className="text-orange-500 mb-0.5"/>
+                                                    <span className="text-[9px] font-bold text-orange-700">Odběr</span>
+                                                </div>
+                                            )}
+                                            
+                                            {/* Note Icon */}
+                                            {order.note && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); setNoteModalContent(order.note || ''); }}
+                                                    className="text-orange-500 hover:text-orange-700 transition"
+                                                    title="Zobrazit poznámku"
+                                                >
+                                                    <HelpCircle size={16} />
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
 
                                     <td className="px-4 py-3 text-center">
@@ -608,6 +640,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
 
             {/* Modals */}
             <StatusConfirmModal isOpen={confirmStatus.isOpen} count={selectedOrders.length} status={confirmStatus.status!} onConfirm={confirmBulkStatusChange} onClose={() => setConfirmStatus({ isOpen: false, status: null })} t={t}/>
+            <NoteViewModal isOpen={!!noteModalContent} note={noteModalContent} onClose={() => setNoteModalContent(null)} />
             <InvoiceSelectionModal isOpen={!!invoiceModalOrder} onClose={() => setInvoiceModalOrder(null)} onSelect={(type) => { if (invoiceModalOrder) { printInvoice(invoiceModalOrder, type); setInvoiceModalOrder(null); }}} />
             <PaymentStatusModal isOpen={!!paymentModalOrder} order={paymentModalOrder} onClose={() => setPaymentModalOrder(null)} onUpdate={handlePaymentUpdate} />
             <AddressDetailModal isOpen={!!addressModalData} onClose={() => setAddressModalData(null)} data={addressModalData} />

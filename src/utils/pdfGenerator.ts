@@ -73,12 +73,20 @@ export const generateRoutePdf = async (
                 const customerName = fullOrder?.deliveryName || fullOrder?.userName || step.customerName || 'Neznámý';
                 const customerPhone = fullOrder?.deliveryPhone || step.customerPhone || '-';
 
+                // Append Note to Address if present
+                let addressText = step.address;
+                if (fullOrder?.note) {
+                    addressText += `\nPozn: ${fullOrder.note}`;
+                }
+
                 // Handle Address Error Display
                 if (step.error) {
                     addressCell = {
-                        content: `${step.address}\n>>> CHYBA: ${step.error} <<<`,
+                        content: `${addressText}\n>>> CHYBA: ${step.error} <<<`,
                         styles: { textColor: [200, 0, 0], fontStyle: 'bold' }
                     };
+                } else {
+                    addressCell = addressText;
                 }
 
                 if (fullOrder) {
