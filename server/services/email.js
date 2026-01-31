@@ -2,14 +2,8 @@
 import nodemailer from 'nodemailer';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { getDb } from '../db.js';
 import { generateInvoicePdf } from './pdf.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-// Assuming uploads root is two levels up from services/email.js
-const UPLOAD_ROOT = path.resolve(__dirname, '..', '..', 'uploads');
 
 let transporter = null;
 
@@ -37,32 +31,80 @@ export const initEmail = async () => {
     }
 };
 
-// API URL for images served from backend
-const getApiUrl = () => {
-    let url = process.env.VITE_API_URL || 'http://localhost:3000';
+const getBaseUrl = () => {
+    let url = process.env.APP_URL || process.env.VITE_API_URL || 'http://localhost';
+    // Remove trailing slash
     url = url.replace(/\/$/, '');
+    
+    // Add port if defined in .env and not already present in URL
+    if (process.env.PORT && !url.includes(`:${process.env.PORT}`)) {
+        url = `${url}:${process.env.PORT}`;
+    }
     return url;
 };
 
-// Web URL for links and frontend assets (logo)
-const getWebUrl = () => {
-    let url = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
-    url = url.replace(/\/$/, '');
-    return url;
-};
-
-const getImgUrl = (imagePath) => {
-    if (!imagePath) return '';
-    if (imagePath.startsWith('http')) return imagePath;
-    const baseUrl = getApiUrl();
-    // Ensure path doesn't start with slash to avoid double slashes if baseUrl has one (though we stripped it)
-    // But commonly images stored in DB might be 'api/uploads/...' or '/api/uploads...'
-    return `${baseUrl}/${imagePath.replace(/^\//, '')}`;
+const getImgUrl = (path) => {
+    if (!path) return '';
+    if (path.startsWith('http')) return path;
+    const baseUrl = getBaseUrl();
+    return `${baseUrl}/${path.replace(/^\//, '')}`;
 };
 
 const formatDate = (dateStr) => {
     if (!dateStr) return '';
     return new Date(dateStr).toLocaleDateString('cs-CZ');
+};
+
+// Helper to generate Event HTML (moved from sendEventNotification)
+const generateEventEmailHtml = (date, products) => {
+    const baseUrl = getBaseUrl();
+    const formattedDate = formatDate(date);
+    
+    const itemsHtml = products.map(p => {
+        const imageUrl = p.images && p.images[0] ? getImgUrl(p.images[0]) : '';
+        return `
+        <tr>
+            <td style="padding: 15px; border-bottom: 1px solid #eee; width: 60px;">
+                ${imageUrl ? `<img src="${imageUrl}" alt="${p.name}" width="60" height="60" style="border-radius: 8px; object-fit: cover; display: block;">` : ''}
+            </td>
+            <td style="padding: 15px; border-bottom: 1px solid #eee; vertical-align: middle;">
+                <div style="font-size: 16px; font-weight: bold; color: #1f2937; margin-bottom: 4px;">${p.name}</div>
+                <div style="font-size: 12px; color: #6b7280;">${p.description ? p.description.substring(0, 60) + (p.description.length > 60 ? '...' : '') : ''}</div>
+            </td>
+            <td style="padding: 15px; border-bottom: 1px solid #eee; text-align: right; vertical-align: middle; white-space: nowrap;">
+                <span style="font-size: 16px; font-weight: bold; color: #9333ea;">${p.price} Kč</span>
+            </td>
+        </tr>
+        `;
+    }).join('');
+
+    return `
+        <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+            <div style="text-align: center; padding: 30px 0; background-color: #1f2937; border-bottom: 4px solid #9333ea;">
+                <img src="${baseUrl}/logo.png" alt="4Gracie Catering" width="120" style="display: block; margin: 0 auto;">
+                <h1 style="color: #ffffff; margin: 20px 0 0 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px;">Speciální Akce</h1>
+            </div>
+            <div style="padding: 30px 20px;">
+                <p style="font-size: 16px; color: #374151; line-height: 1.5; margin-bottom: 25px; text-align: center;">
+                    Dobrý den,<br><br>
+                    Na den <strong style="color: #9333ea;">${formattedDate}</strong> jsme pro vás připravili tuto speciální nabídku. <br>
+                    Neváhejte a objednejte si včas, kapacity jsou omezené!
+                </p>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+                    <tbody>${itemsHtml}</tbody>
+                </table>
+                <div style="text-align: center; margin-top: 40px;">
+                    <a href="${baseUrl}" style="background-color: #9333ea; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(147, 51, 234, 0.25);">
+                        Objednat nyní na e-shopu
+                    </a>
+                </div>
+            </div>
+            <div style="background-color: #f3f4f6; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af;">
+                <p style="margin: 0;">&copy; ${new Date().getFullYear()} 4Gracie Catering</p>
+                <p style="margin: 5px 0 0 0;">Toto je automaticky generovaná zpráva.</p>
+            </div>
+        </div>
+    `;
 };
 
 const STATUS_TRANSLATIONS = {
@@ -101,7 +143,7 @@ const STATUS_TRANSLATIONS = {
 const TEXTS = {
     cs: {
         subject_create: 'Potvrzení objednávky #{id}',
-        subject_update: 'Objednávka #{id} - {status}', // Fixed to match test expectation "Order Status Update" logic if needed, but keeping simple
+        subject_update: 'Objednávka #{id} - {status}',
         title_create: 'Potvrzení objednávky',
         title_update: 'Stav objednávky: {status}',
         intro_create: 'Dobrý den,<br>děkujeme za Vaši objednávku. Níže naleznete její shrnutí.',
@@ -112,317 +154,288 @@ const TEXTS = {
         courier: 'Rozvoz',
         date: 'Datum:',
         address: 'Doručovací adresa:',
-        pickup_place: 'Místo odběru:',
-        footer: 'Děkujeme, že jste si vybrali naše služby.'
+        billing_address: 'Fakturační adresa:',
+        eshop_link: 'Přejít do e-shopu'
     },
     en: {
         subject_create: 'Order Confirmation #{id}',
         subject_update: 'Order Status Update #{id} - {status}',
         title_create: 'Order Confirmation',
         title_update: 'Order Status: {status}',
-        intro_create: 'Hello,<br>thank you for your order. Please find the summary below.',
-        intro_update: 'Hello,<br>the status of your order <strong>#{id}</strong> has been updated.',
+        intro_create: 'Hello,<br>thank you for your order. Below is the summary.',
+        intro_update: 'Hello,<br>status of your order <strong>#{id}</strong> has been updated.',
         total: 'Total:',
         delivery: 'Delivery Method:',
         pickup: 'Pickup',
-        courier: 'Delivery',
+        courier: 'Courier',
         date: 'Date:',
         address: 'Delivery Address:',
-        pickup_place: 'Pickup Point:',
-        footer: 'Thank you for choosing our services.'
+        billing_address: 'Billing Address:',
+        eshop_link: 'Go to E-shop'
     },
     de: {
         subject_create: 'Bestellbestätigung #{id}',
         subject_update: 'Bestellstatus-Update #{id} - {status}',
         title_create: 'Bestellbestätigung',
         title_update: 'Bestellstatus: {status}',
-        intro_create: 'Guten Tag,<br>vielen Dank für Ihre Bestellung. Unten finden Sie die Zusammenfassung.',
-        intro_update: 'Guten Tag,<br>der Status Ihrer Bestellung <strong>#{id}</strong> wurde aktualisiert.',
+        intro_create: 'Hallo,<br>vielen Dank für Ihre Bestellung. Zusammenfassung unten.',
+        intro_update: 'Hallo,<br>der Status Ihrer Bestellung <strong>#{id}</strong> wurde aktualisiert.',
         total: 'Gesamt:',
         delivery: 'Liefermethode:',
         pickup: 'Abholung',
         courier: 'Lieferung',
         date: 'Datum:',
         address: 'Lieferadresse:',
-        pickup_place: 'Abholort:',
-        footer: 'Danke, dass Sie unsere Dienste gewählt haben.'
+        billing_address: 'Rechnungsadresse:',
+        eshop_link: 'Zum E-Shop gehen'
     }
 };
 
-const generateEmailHtml = (order, type, settings, status) => {
+export const processCustomerEmail = async (email, order, type, settings, statusOverride) => {
+    if (!transporter) await initEmail();
+    if (!transporter) return false;
+
     const lang = order.language || 'cs';
-    const T = TEXTS[lang] || TEXTS.cs;
-    const S = STATUS_TRANSLATIONS[lang] || STATUS_TRANSLATIONS.cs;
-    
-    // Logo comes from Frontend URL (public assets), Product images from API
-    const webUrl = getWebUrl();
-    const logoUrl = `${webUrl}/logo.png`; 
-    const translatedStatus = S[status || order.status] || status;
+    const t = TEXTS[lang] || TEXTS.cs;
+    const statusDict = STATUS_TRANSLATIONS[lang] || STATUS_TRANSLATIONS.cs;
 
-    const title = type === 'created' ? T.title_create : T.title_update.replace('{status}', translatedStatus);
-    const intro = type === 'created' ? T.intro_create : T.intro_update.replace('{id}', order.id);
+    const status = statusOverride || order.status;
+    const statusText = statusDict[status] || status;
     
-    // Address Logic
-    let addressHtml = '';
-    if (order.deliveryType === 'pickup') {
-        const pickupName = order.deliveryName || 'Prodejna 4Gracie'; 
-        const pickupAddress = order.deliveryAddress?.replace('Osobní odběr: ', '') || '';
-        addressHtml = `
-            <div style="margin-top: 15px; padding: 10px; background-color: #f9fafb; border-radius: 6px;">
-                <div style="font-size: 12px; text-transform: uppercase; color: #6b7280; font-weight: bold; margin-bottom: 4px;">${T.pickup_place}</div>
-                <div style="font-weight: bold; color: #1f2937;">${pickupName}</div>
-                <div style="color: #4b5563; font-size: 14px;">${pickupAddress}</div>
-            </div>
-        `;
-    } else {
-        const delName = order.deliveryName || order.userName;
-        const delStreet = order.deliveryStreet || '';
-        const delCity = order.deliveryCity || '';
-        const delZip = order.deliveryZip || '';
-        const delPhone = order.deliveryPhone || '';
-        const legacyAddr = order.deliveryAddress ? order.deliveryAddress.replace(/\n/g, '<br>') : '';
+    let subject = t.subject_update.replace('{id}', order.id).replace('{status}', statusText);
+    let title = t.title_update.replace('{status}', statusText);
+    let intro = t.intro_update.replace('{id}', order.id);
 
-        addressHtml = `
-            <div style="margin-top: 15px; padding: 10px; background-color: #f9fafb; border-radius: 6px;">
-                <div style="font-size: 12px; text-transform: uppercase; color: #6b7280; font-weight: bold; margin-bottom: 4px;">${T.address}</div>
-                ${delStreet ? `
-                    <div style="font-weight: bold; color: #1f2937;">${delName}</div>
-                    <div style="color: #4b5563; font-size: 14px;">${delStreet}<br>${delZip} ${delCity}</div>
-                    ${delPhone ? `<div style="margin-top: 4px; color: #6b7280; font-size: 12px;">Tel: ${delPhone}</div>` : ''}
-                ` : `<div style="color: #4b5563; font-size: 14px;">${legacyAddr}</div>`}
-            </div>
-        `;
+    if (type === 'created') {
+        subject = t.subject_create.replace('{id}', order.id);
+        title = t.title_create;
+        intro = t.intro_create;
     }
 
-    const itemsHtml = order.items.map(item => {
-        // Product image from API
-        const imgUrl = (item.images && item.images.length > 0) ? getImgUrl(item.images[0]) : '';
-        
-        return `
-        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #f3f4f6; padding: 8px 0; align-items: center;">
-            <div style="display: flex; align-items: center;">
-                ${imgUrl ? `<img src="${imgUrl}" alt="${item.name}" width="40" height="40" style="object-fit: cover; border-radius: 4px; margin-right: 10px;">` : ''}
-                <div>
-                    <span style="font-weight: bold; color: #374151;">${item.quantity}x</span> ${item.name}
-                </div>
-            </div>
-            <div style="font-weight: bold; color: #1f2937;">${item.price * item.quantity} Kč</div>
-        </div>
-        `;
-    }).join('');
-
-    // Summary Fees
-    let feesHtml = '';
-    if (order.packagingFee > 0) feesHtml += `<div style="display: flex; justify-content: space-between; padding: 4px 0; color: #6b7280; font-size: 14px;"><span>Balné</span><span>${order.packagingFee} Kč</span></div>`;
-    if (order.deliveryFee > 0) feesHtml += `<div style="display: flex; justify-content: space-between; padding: 4px 0; color: #6b7280; font-size: 14px;"><span>Doprava</span><span>${order.deliveryFee} Kč</span></div>`;
-    
-    // Discounts
-    let discountHtml = '';
-    if (order.appliedDiscounts && order.appliedDiscounts.length > 0) {
-        order.appliedDiscounts.forEach(d => {
-            discountHtml += `<div style="display: flex; justify-content: space-between; padding: 4px 0; color: #16a34a; font-size: 14px;"><span>Sleva ${d.code}</span><span>-${d.amount} Kč</span></div>`;
-        });
-    }
-
-    const discountTotal = order.appliedDiscounts?.reduce((sum, d) => sum + d.amount, 0) || 0;
-    const finalTotal = Math.max(0, order.totalPrice - discountTotal) + order.packagingFee + (order.deliveryFee || 0);
-
-    return `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #1f2937;">
-        <div style="text-align: center; margin-bottom: 30px;">
-            <img src="${logoUrl}" alt="4Gracie" width="100" style="margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto;">
-            <h1 style="color: #9333ea; margin: 0;">${title}</h1>
-            <p style="color: #6b7280; margin-top: 5px;">#${order.id}</p>
-        </div>
-        
-        <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-            <p style="margin-top: 0;">${intro}</p>
-            
-            <div style="margin: 20px 0;">
-                <div style="font-weight: bold; margin-bottom: 10px; border-bottom: 2px solid #f3f4f6; padding-bottom: 5px;">Položky</div>
-                ${itemsHtml}
-            </div>
-
-            <div style="border-top: 2px solid #f3f4f6; padding-top: 10px;">
-                ${feesHtml}
-                ${discountHtml}
-                <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 18px; font-weight: bold;">
-                    <span>${T.total}</span>
-                    <span style="color: #9333ea;">${finalTotal} Kč</span>
-                </div>
-            </div>
-
-            ${addressHtml}
-
-            <div style="margin-top: 15px; display: flex; justify-content: space-between; font-size: 14px;">
-                <div>
-                    <span style="color: #6b7280;">${T.delivery}</span> 
-                    <strong>${order.deliveryType === 'pickup' ? T.pickup : T.courier}</strong>
-                </div>
-                <div>
-                    <span style="color: #6b7280;">${T.date}</span> 
-                    <strong>${formatDate(order.deliveryDate)}</strong>
-                </div>
-            </div>
-        </div>
-
-        <div style="text-align: center; margin-top: 30px; color: #9ca3af; font-size: 12px;">
-            <p>${T.footer}</p>
-            <p>${settings.companyDetails?.name || '4Gracie s.r.o.'}</p>
-        </div>
-    </div>
-    `;
-};
-
-// Special Template for Events
-const generateEventEmailHtml = (date, products) => {
-    const webUrl = getWebUrl();
-    const formattedDate = formatDate(date);
-    
-    const itemsHtml = products.map(p => {
-        const imageUrl = p.images && p.images[0] ? getImgUrl(p.images[0]) : '';
+    // Generate Items HTML with Images
+    const itemsHtml = order.items.map(i => {
+        const imgUrl = (i.images && i.images.length > 0) ? getImgUrl(i.images[0]) : '';
+        const imgTag = imgUrl ? `<img src="${imgUrl}" alt="${i.name}" width="50" height="50" style="border-radius: 4px; object-fit: cover; display: block;">` : '';
         return `
         <tr>
-            <td style="padding: 15px; border-bottom: 1px solid #eee; width: 60px;">
-                ${imageUrl ? `<img src="${imageUrl}" alt="${p.name}" width="60" height="60" style="border-radius: 8px; object-fit: cover; display: block;">` : ''}
-            </td>
-            <td style="padding: 15px; border-bottom: 1px solid #eee; vertical-align: middle;">
-                <div style="font-size: 16px; font-weight: bold; color: #1f2937; margin-bottom: 4px;">${p.name}</div>
-                <div style="font-size: 12px; color: #6b7280;">${p.description ? p.description.substring(0, 60) + (p.description.length > 60 ? '...' : '') : ''}</div>
-            </td>
-            <td style="padding: 15px; border-bottom: 1px solid #eee; text-align: right; vertical-align: middle; white-space: nowrap;">
-                <span style="font-size: 16px; font-weight: bold; color: #9333ea;">${p.price} Kč</span>
-            </td>
+            <td style="padding: 8px; border-bottom: 1px solid #eee; width: 60px;">${imgTag}</td>
+            <td style="padding: 8px; border-bottom: 1px solid #eee;">${i.quantity}x</td>
+            <td style="padding: 8px; border-bottom: 1px solid #eee;">${i.name}</td>
+            <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${i.price} Kč</td>
         </tr>
-        `;
-    }).join('');
+    `;}).join('');
 
-    return `
-        <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-            <div style="text-align: center; padding: 30px 0; background-color: #1f2937; border-bottom: 4px solid #9333ea;">
-                <img src="${webUrl}/logo.png" alt="4Gracie Catering" width="120" style="display: block; margin: 0 auto;">
-                <h1 style="color: #ffffff; margin: 20px 0 0 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px;">Speciální Akce</h1>
-            </div>
-            <div style="padding: 30px 20px;">
-                <p style="font-size: 16px; color: #374151; line-height: 1.5; margin-bottom: 25px; text-align: center;">
-                    Dobrý den,<br><br>
-                    Na den <strong style="color: #9333ea;">${formattedDate}</strong> jsme pro vás připravili tuto speciální nabídku. <br>
-                    Neváhejte a objednejte si včas, kapacity jsou omezené!
-                </p>
-                <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
-                    <tbody>${itemsHtml}</tbody>
+    // Prepare Addresses
+    const deliveryAddrStr = order.deliveryAddress ? order.deliveryAddress.replace(/\n/g, '<br>') : [
+        order.deliveryName,
+        order.deliveryStreet,
+        [order.deliveryZip, order.deliveryCity].filter(Boolean).join(' '),
+        order.deliveryPhone
+    ].filter(Boolean).join('<br>');
+
+    const billingAddrStr = [
+        order.billingName,
+        order.billingStreet,
+        [order.billingZip, order.billingCity].filter(Boolean).join(' '),
+        order.billingIc ? `IČ: ${order.billingIc}` : null,
+        order.billingDic ? `DIČ: ${order.billingDic}` : null
+    ].filter(Boolean).join('<br>');
+
+    const baseUrl = getBaseUrl();
+
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h1 style="color: #9333ea;">${title}</h1>
+            <p>${intro}</p>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+                <thead>
+                    <tr style="background-color: #f3f4f6;">
+                        <th style="padding: 10px; width: 60px;"></th>
+                        <th style="padding: 10px; text-align: left;">Ks</th>
+                        <th style="padding: 10px; text-align: left;">Název</th>
+                        <th style="padding: 10px; text-align: right;">Cena</th>
+                    </tr>
+                </thead>
+                <tbody>${itemsHtml}</tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" style="padding: 10px; font-weight: bold; text-align: right;">${t.total}</td>
+                        <td style="padding: 10px; font-weight: bold; text-align: right;">${order.totalPrice + order.packagingFee + (order.deliveryFee||0)} Kč</td>
+                    </tr>
+                </tfoot>
+            </table>
+            
+            <div style="margin-top: 20px; font-size: 13px; color: #555; background-color: #f9f9f9; padding: 15px; border-radius: 8px;">
+                <p style="margin: 0 0 10px 0;"><strong>${t.delivery}</strong> ${order.deliveryType === 'delivery' ? t.courier : t.pickup}</p>
+                <p style="margin: 0 0 10px 0;"><strong>${t.date}</strong> ${formatDate(order.deliveryDate)}</p>
+                
+                <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                    <tr>
+                        <td style="width: 50%; vertical-align: top; padding-right: 10px;">
+                            <strong>${t.address}</strong><br>
+                            ${deliveryAddrStr}
+                        </td>
+                        <td style="width: 50%; vertical-align: top; padding-left: 10px; border-left: 1px solid #ddd;">
+                            <strong>${t.billing_address}</strong><br>
+                            ${billingAddrStr || '-'}
+                        </td>
+                    </tr>
                 </table>
-                <div style="text-align: center; margin-top: 40px;">
-                    <a href="${webUrl}" style="background-color: #9333ea; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block; box-shadow: 0 4px 6px rgba(147, 51, 234, 0.25);">
-                        Objednat nyní na e-shopu
-                    </a>
-                </div>
             </div>
-            <div style="background-color: #f3f4f6; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af;">
-                <p style="margin: 0;">&copy; ${new Date().getFullYear()} 4Gracie Catering</p>
-                <p style="margin: 5px 0 0 0;">Toto je automaticky generovaná zpráva.</p>
+
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="${baseUrl}" style="display: inline-block; background-color: #9333ea; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold;">
+                    ${t.eshop_link}
+                </a>
             </div>
         </div>
     `;
-};
 
-// --- EMAIL PROCESSORS ---
-
-export const processCustomerEmail = async (recipient, order, type, settings, customStatus = null) => {
-    const lang = order.language || 'cs';
-    const T = TEXTS[lang] || TEXTS.cs;
-    const S = STATUS_TRANSLATIONS[lang] || STATUS_TRANSLATIONS.cs;
-    
-    // Fix subject for status updates to match tests if needed, otherwise meaningful text
-    let subject;
-    if (type === 'created') {
-        subject = T.subject_create.replace('{id}', order.id);
-    } else {
-        const statusText = S[customStatus || order.status] || (customStatus || order.status);
-        subject = T.subject_update.replace('{id}', order.id).replace('{status}', statusText);
-        // Fallback for strict test matching if translation is missing "Order Status Update" string specifically
-        if (lang === 'en' && !subject.includes('Order Status Update')) {
-            subject = `Order Status Update #${order.id} - ${statusText}`;
-        }
-    }
-
-    const html = generateEmailHtml(order, type, settings, customStatus);
-    const attachments = [];
-
-    // Attach Invoice for Created or Delivered
-    if (type === 'created' || (type === 'status' && customStatus === 'delivered')) {
-        try {
-            const invoiceType = (type === 'status' && customStatus === 'delivered') ? 'final' : 'proforma';
-            const pdfBuffer = await generateInvoicePdf(order, invoiceType, settings);
-            attachments.push({
-                filename: `faktura_${order.id}.pdf`,
-                content: pdfBuffer
-            });
-        } catch (e) {
-            console.error("PDF generation for email failed:", e);
-        }
-    }
-
-    // Attach VOP (Terms) for New Orders
-    if (type === 'created') {
-        // Attempt to find VOP.pdf in uploads or public folder
-        const vopPath = path.join(UPLOAD_ROOT, 'VOP.pdf');
-        if (fs.existsSync(vopPath)) {
-            attachments.push({
-                filename: 'VOP.pdf',
-                path: vopPath
-            });
-        } else {
-            // Optional: Log warning or skip
-            // console.warn("VOP.pdf not found in uploads folder.");
-        }
-    }
-
-    await transporter.sendMail({
-        from: process.env.EMAIL_FROM,
-        to: recipient,
+    const mailOptions = {
+        from: process.env.EMAIL_FROM, 
+        to: email,
         subject: subject,
         html: html,
-        attachments
-        // Note: encoding: 'base64' removed for standard emails to avoid breakage
-    });
+        attachments: []
+    };
+
+    // Attach VOP if available and order is created or status changed to created
+    if ((type === 'created' || status === 'created') && process.env.VOP_PATH) {
+        const vopFullPath = path.resolve(process.cwd(), process.env.VOP_PATH);
+        if (fs.existsSync(vopFullPath)) {
+            mailOptions.attachments.push({
+                filename: 'VOP.pdf',
+                path: vopFullPath
+            });
+        } else {
+            console.warn("⚠️ VOP file defined in .env but not found:", vopFullPath);
+        }
+    }
+
+    if (type === 'created' || status === 'created' || status === 'delivered') {
+        try {
+            const pdfType = status === 'delivered' ? 'final' : 'proforma';
+            const buffer = await generateInvoicePdf(order, pdfType, settings);
+            
+            const invoiceName = pdfType === 'proforma' 
+                ? `zalohova_faktura_${order.id}.pdf` 
+                : `faktura_${order.id}.pdf`;
+
+            mailOptions.attachments.push({
+                filename: invoiceName,
+                content: buffer
+            });
+        } catch (e) {
+            console.error("PDF attachment error:", e);
+        }
+    }
+
+    await transporter.sendMail(mailOptions);
+    return true;
 };
 
-export const processOperatorEmail = async (recipient, order, type, settings) => {
-    if (type !== 'created') return; 
+export const processOperatorEmail = async (operatorEmail, order, type, settings) => {
+    if (!transporter) await initEmail();
+    if (!transporter) return false;
+    
+    const baseUrl = getBaseUrl();
 
-    const subject = `Nová objednávka #${order.id} (${order.totalPrice} Kč)`;
-    const html = generateEmailHtml(order, 'created', settings);
+    const html = `
+        <div style="font-family: Arial, sans-serif;">
+            <h2>Nová objednávka #${order.id}</h2>
+            <p>Zákazník: ${order.userName} (${order.userId})</p>
+            <p>Celkem: ${order.totalPrice} Kč</p>
+            <p><a href="${baseUrl}/#/admin">Přejít do administrace</a></p>
+        </div>
+    `;
 
     await transporter.sendMail({
         from: process.env.EMAIL_FROM,
-        to: recipient,
-        subject: subject,
+        to: operatorEmail,
+        subject: `Nová objednávka #${order.id}`,
         html: html
     });
+    return true;
 };
 
-export const queueOrderEmail = async (order, type, settings, customStatus = null) => {
+export const startEmailWorker = () => {
+    const runWorker = async () => {
+        const db = await getDb();
+        if (!db) return;
+
+        try {
+            const [rows] = await db.query("SELECT * FROM email_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT 5");
+            
+            for (const job of rows) {
+                await db.query("UPDATE email_queue SET status = 'processing', processed_at = NOW() WHERE id = ?", [job.id]);
+                
+                try {
+                    const payload = typeof job.payload === 'string' ? JSON.parse(job.payload) : job.payload;
+                    let success = false;
+
+                    if (job.type === 'order_customer') {
+                        success = await processCustomerEmail(job.recipient_email, payload.order, payload.type, payload.settings, payload.statusOverride);
+                    } else if (job.type === 'order_operator') {
+                        success = await processOperatorEmail(job.recipient_email, payload.order, payload.type, payload.settings);
+                    } else if (job.type === 'event_notify') {
+                        if (!transporter) await initEmail();
+                        
+                        // Handle both old format (HTML in payload) and new format (Data in payload)
+                        let htmlContent = payload.html;
+                        if (!htmlContent && payload.products && payload.date) {
+                            htmlContent = generateEventEmailHtml(payload.date, payload.products);
+                        }
+
+                        if (transporter && htmlContent) {
+                            await transporter.sendMail({
+                                from: process.env.EMAIL_FROM,
+                                to: job.recipient_email,
+                                subject: job.subject,
+                                html: htmlContent
+                            });
+                            success = true;
+                        }
+                    }
+
+                    if (success) {
+                        await db.query("UPDATE email_queue SET status = 'sent' WHERE id = ?", [job.id]);
+                    } else {
+                        await db.query("UPDATE email_queue SET status = 'error', error_message = 'Transporter not ready or send failed' WHERE id = ?", [job.id]);
+                    }
+                } catch (err) {
+                    console.error(`Email Job ${job.id} failed:`, err);
+                    await db.query("UPDATE email_queue SET status = 'error', error_message = ? WHERE id = ?", [err.message, job.id]);
+                }
+            }
+        } catch (e) {
+            console.error("Email Worker Error:", e);
+        }
+    };
+
+    setInterval(runWorker, 10000); // 10s interval
+};
+
+export const queueOrderEmail = async (order, type, settings, statusOverride = null) => {
     const db = await getDb();
     if (!db) return;
 
-    let userEmail = '';
+    let userEmail = null;
     if (order.userId) {
-        const [uRows] = await db.query('SELECT email FROM users WHERE id = ?', [order.userId]);
-        if (uRows.length > 0) userEmail = uRows[0].email;
+        const [users] = await db.query('SELECT email FROM users WHERE id = ?', [order.userId]);
+        if (users.length > 0) userEmail = users[0].email;
     }
     
-    if (userEmail && userEmail.includes('@')) {
+    if (userEmail) {
         await db.query(
-            'INSERT INTO email_queue (type, recipient_email, subject, payload, status) VALUES (?, ?, ?, ?, ?)',
-            ['customer_notify', userEmail, `Order ${order.id}`, JSON.stringify({ order, type, settings, customStatus }), 'pending']
+            "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+            ['order_customer', userEmail, `Objednávka #${order.id}`, JSON.stringify({ order, type, settings, statusOverride })]
         );
     }
 
     if (type === 'created' && settings.companyDetails?.email) {
         await db.query(
-            'INSERT INTO email_queue (type, recipient_email, subject, payload, status) VALUES (?, ?, ?, ?, ?)',
-            ['operator_notify', settings.companyDetails.email, `New Order ${order.id}`, JSON.stringify({ order, type, settings }), 'pending']
+            "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+            ['order_operator', settings.companyDetails.email, `Nová objednávka #${order.id}`, JSON.stringify({ order, type, settings })]
         );
     }
 };
@@ -431,57 +444,20 @@ export const sendEventNotification = async (date, products, recipients) => {
     const db = await getDb();
     if (!db) return;
     
-    for (const email of recipients) {
-        await db.query(
-            'INSERT INTO email_queue (type, recipient_email, subject, payload, status) VALUES (?, ?, ?, ?, ?)',
-            ['event_notify', email, `Speciální Akce - ${formatDate(date)}`, JSON.stringify({ date, products }), 'pending']
-        );
-    }
-};
+    const formattedDate = formatDate(date);
+    const subject = `Speciální akce na den ${formattedDate}`;
 
-// WORKER
-export const startEmailWorker = () => {
-    if (!process.env.SMTP_HOST) {
-        console.warn("⚠️ SMTP not configured. Email worker disabled.");
-        return;
-    }
-
-    console.log("📨 Email Worker started...");
-    
-    const runWorker = async () => {
-        const db = await getDb();
-        if (!db || !transporter) return;
-
-        const [rows] = await db.query("SELECT * FROM email_queue WHERE status = 'pending' LIMIT 5");
-        
-        for (const task of rows) {
-            try {
-                await db.query("UPDATE email_queue SET status = 'processing' WHERE id = ?", [task.id]);
-                const payload = typeof task.payload === 'string' ? JSON.parse(task.payload) : task.payload;
-
-                if (task.type === 'customer_notify') {
-                    await processCustomerEmail(task.recipient_email, payload.order, payload.type, payload.settings, payload.customStatus);
-                } else if (task.type === 'operator_notify') {
-                    await processOperatorEmail(task.recipient_email, payload.order, payload.type, payload.settings);
-                } else if (task.type === 'event_notify') {
-                    const { date, products } = payload;
-                    const html = generateEventEmailHtml(date, products);
-                    await transporter.sendMail({
-                        from: process.env.EMAIL_FROM,
-                        bcc: task.recipient_email, 
-                        subject: `Speciální Akce - ${formatDate(date)}`,
-                        html: html,
-                        encoding: 'base64' // Force Base64 encoding ONLY for Event emails
-                    });
-                }
-
-                await db.query("UPDATE email_queue SET status = 'sent', processed_at = NOW() WHERE id = ?", [task.id]);
-            } catch (err) {
-                console.error(`❌ Email Task ${task.id} failed:`, err);
-                await db.query("UPDATE email_queue SET status = 'error', error_message = ? WHERE id = ?", [err.message, task.id]);
-            }
-        }
+    // Store DATA ONLY in payload, not rendered HTML. 
+    // The worker will generate HTML to allow Admin UI to show pure JSON data.
+    const payloadData = {
+        date: date,
+        products: products
     };
 
-    setInterval(runWorker, 10000); 
+    for (const email of recipients) {
+        await db.query(
+            "INSERT INTO email_queue (type, recipient_email, subject, payload) VALUES (?, ?, ?, ?)",
+            ['event_notify', email, subject, JSON.stringify(payloadData)]
+        );
+    }
 };
