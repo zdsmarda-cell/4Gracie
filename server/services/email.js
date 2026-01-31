@@ -146,7 +146,7 @@ const STATUS_TRANSLATIONS = {
 const TEXTS = {
     cs: {
         subject_create: 'Potvrzení objednávky #{id}',
-        subject_update: 'Objednávka #{id} - {status}',
+        subject_update: 'Aktualizace stavu objednávky #{id} - {status}',
         title_create: 'Potvrzení objednávky',
         title_update: 'Stav objednávky: {status}',
         intro_create: 'Dobrý den,<br>děkujeme za Vaši objednávku. Níže naleznete její shrnutí.',
@@ -162,7 +162,7 @@ const TEXTS = {
     },
     en: {
         subject_create: 'Order Confirmation #{id}',
-        subject_update: 'Order #{id} - {status}',
+        subject_update: 'Order Status Update #{id} - {status}',
         title_create: 'Order Confirmation',
         title_update: 'Order Status: {status}',
         intro_create: 'Hello,<br>thank you for your order. Please find the summary below.',
@@ -178,7 +178,7 @@ const TEXTS = {
     },
     de: {
         subject_create: 'Bestellbestätigung #{id}',
-        subject_update: 'Bestellung #{id} - {status}',
+        subject_update: 'Bestellstatus-Update #{id} - {status}',
         title_create: 'Bestellbestätigung',
         title_update: 'Bestellstatus: {status}',
         intro_create: 'Guten Tag,<br>vielen Dank für Ihre Bestellung. Unten finden Sie die Zusammenfassung.',
