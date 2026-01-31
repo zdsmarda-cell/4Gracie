@@ -465,6 +465,7 @@ export const processCustomerEmail = async (recipient, order, type, settings, cus
         to: recipient,
         subject: subject,
         html: html,
+        encoding: 'base64',
         attachments
     });
     
@@ -487,7 +488,8 @@ export const processOperatorEmail = async (recipient, order, type, settings) => 
         from: process.env.EMAIL_FROM,
         to: recipient,
         subject: subject,
-        html: html
+        html: html,
+        encoding: 'base64'
     });
     return true;
 };
