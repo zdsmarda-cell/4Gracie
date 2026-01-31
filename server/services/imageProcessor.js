@@ -20,13 +20,16 @@ export const processImage = async (inputBuffer, originalFilename) => {
     // In our flow, we save manually, but let's assume we handle the variants here.
     
     // Generate Medium (Web) - Max width 800px, WebP
+    // Added .rotate() to auto-orient based on EXIF data before stripping metadata
     await sharp(inputBuffer)
+        .rotate() 
         .resize({ width: 800, withoutEnlargement: true })
         .webp({ quality: 80 })
         .toFile(path.join(IMAGES_DIR, `${filenameBase}-medium.webp`));
 
     // Generate Small (Mobile) - Max width 400px, WebP
     await sharp(inputBuffer)
+        .rotate()
         .resize({ width: 400, withoutEnlargement: true })
         .webp({ quality: 70 })
         .toFile(path.join(IMAGES_DIR, `${filenameBase}-small.webp`));
@@ -35,7 +38,7 @@ export const processImage = async (inputBuffer, originalFilename) => {
 };
 
 export const checkAndGenerateMissingVariants = async () => {
-    console.log("🔍 Checking for missing image variants...");
+    console.log("🔍 Checking image variants and fixing rotation...");
     
     try {
         const files = fs.readdirSync(IMAGES_DIR);
@@ -54,26 +57,28 @@ export const checkAndGenerateMissingVariants = async () => {
             const smallPath = path.join(IMAGES_DIR, `${filenameBase}-small.webp`);
             const originalPath = path.join(IMAGES_DIR, file);
 
-            const missingMedium = !fs.existsSync(mediumPath);
-            const missingSmall = !fs.existsSync(smallPath);
+            // We force regeneration to ensure rotation is applied to existing images
+            // even if the file exists.
+            const forceRegenerate = true; 
 
-            if (missingMedium || missingSmall) {
+            if (forceRegenerate || !fs.existsSync(mediumPath) || !fs.existsSync(smallPath)) {
                 try {
                     const buffer = fs.readFileSync(originalPath);
                     
-                    if (missingMedium) {
-                        await sharp(buffer)
-                            .resize({ width: 800, withoutEnlargement: true })
-                            .webp({ quality: 80 })
-                            .toFile(mediumPath);
-                    }
+                    // Always regenerate Medium with rotation
+                    await sharp(buffer)
+                        .rotate() // Auto-orient
+                        .resize({ width: 800, withoutEnlargement: true })
+                        .webp({ quality: 80 })
+                        .toFile(mediumPath);
                     
-                    if (missingSmall) {
-                        await sharp(buffer)
-                            .resize({ width: 400, withoutEnlargement: true })
-                            .webp({ quality: 70 })
-                            .toFile(smallPath);
-                    }
+                    // Always regenerate Small with rotation
+                    await sharp(buffer)
+                        .rotate() // Auto-orient
+                        .resize({ width: 400, withoutEnlargement: true })
+                        .webp({ quality: 70 })
+                        .toFile(smallPath);
+                    
                     count++;
                 } catch (err) {
                     console.error(`❌ Failed to process existing image ${file}:`, err.message);
@@ -81,7 +86,7 @@ export const checkAndGenerateMissingVariants = async () => {
             }
         }
         
-        if (count > 0) console.log(`✅ Generated variants for ${count} existing images.`);
+        if (count > 0) console.log(`✅ Regenerated/Fixed variants for ${count} existing images.`);
         else console.log("✅ All images are optimized.");
         
     } catch (e) {
