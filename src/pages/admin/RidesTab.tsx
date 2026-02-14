@@ -196,8 +196,11 @@ const RideDetail: React.FC<{
     const [isRefreshing, setIsRefreshing] = useState(false); // Initially false, managed by parent or demand
     const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
     
-    // Refresh data when modal opens to ensure we have latest ride structure
+    const dayRides = useMemo(() => rides.filter(r => r.date === date), [rides, date]);
+
+    // AUTO REFRESH LOGIC
     useEffect(() => {
+        // Force refresh on mount
         const sync = async () => {
             setIsRefreshing(true);
             await refreshData();
@@ -206,8 +209,23 @@ const RideDetail: React.FC<{
         sync();
     }, []);
 
+    // Polling interval if any ride is 'planned' and has no steps (waiting for worker)
+    useEffect(() => {
+        const hasPendingRides = dayRides.some(r => r.status === 'planned' && (!r.steps || r.steps.length === 0));
+        let interval: any;
+        
+        if (hasPendingRides) {
+            console.log("Polling for ride calculations...");
+            interval = setInterval(() => {
+                refreshData();
+            }, 5000); // Poll every 5 seconds
+        }
+
+        return () => clearInterval(interval);
+    }, [dayRides, refreshData]);
+
+
     const drivers = useMemo(() => allUsers.filter(u => u.role === 'driver' && !u.isBlocked), [allUsers]);
-    const dayRides = useMemo(() => rides.filter(r => r.date === date), [rides, date]);
     const dayOrders = useMemo(() => orders.filter(o => 
         o.deliveryDate === date && 
         o.deliveryType === DeliveryType.DELIVERY && 
@@ -373,7 +391,7 @@ const RideDetail: React.FC<{
                                 const driver = drivers.find(d => d.id === ride.driverId) || allUsers.find(u => u.id === ride.driverId);
                                 const driverName = driver?.name || 'Neznámý řidič';
                                 const rideOrders = orders.filter(o => ride.orderIds.includes(o.id));
-                                const pendingCalc = !ride.steps || ride.steps.length === 0;
+                                const pendingCalc = ride.status === 'planned' && (!ride.steps || ride.steps.length === 0);
                                 const hasErrors = ride.steps?.some(s => s.error);
                                 
                                 return (

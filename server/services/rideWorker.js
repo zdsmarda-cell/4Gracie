@@ -10,26 +10,14 @@ export const startRideWorker = () => {
         if (!db) return;
 
         try {
-            // 1. Auto-start rides logic (Planned -> Active if time passed)
-            const now = new Date();
-            const currentDate = now.toISOString().split('T')[0];
-            const currentTime = now.toTimeString().slice(0, 5); // HH:MM
-
-            const [ridesToStart] = await db.query(
-                "SELECT id FROM rides WHERE status = 'planned' AND date = ? AND departure_time <= ?",
-                [currentDate, currentTime]
-            );
-
-            if (ridesToStart.length > 0) {
-                const ids = ridesToStart.map(r => r.id);
-                await db.query("UPDATE rides SET status = 'active' WHERE id IN (?)", [ids]);
-                console.log(`🚕 Ride Worker: Auto-started ${ridesToStart.length} rides.`);
-            }
-
-            // 2. Auto-Generate Routes for Planned OR Active Rides with missing steps
-            // Fix: Include 'active' status because rides auto-started above are now 'active' but still need route calc
+            // REMOVED: Auto-start logic.
+            // Rides must be started manually by the Driver in the UI.
+            
+            // 2. Auto-Generate Routes for Planned Rides with missing steps
+            // Only look for 'planned' rides. 'active' rides implies the driver already started it, 
+            // so we shouldn't overwrite the route unless explicitly requested via API (recalc).
             const [pendingRides] = await db.query(
-                "SELECT * FROM rides WHERE status IN ('planned', 'active') AND (steps IS NULL OR JSON_LENGTH(steps) = 0)"
+                "SELECT * FROM rides WHERE status = 'planned' AND (steps IS NULL OR JSON_LENGTH(steps) = 0)"
             );
 
             if (pendingRides.length > 0) {
@@ -64,7 +52,7 @@ export const startRideWorker = () => {
                         const ordersPayload = orderRows.map(row => {
                             const o = parseJsonCol(row, 'full_json');
                             
-                            // FIX: Prioritize structured fields (Street + City) because Admin Edit updates these.
+                            // Prioritize structured fields (Street + City) because Admin Edit updates these.
                             // Fallback to o.deliveryAddress (blob string) only if structured data is missing.
                             let addressToUse = o.deliveryAddress;
                             if (o.deliveryStreet && o.deliveryCity) {
