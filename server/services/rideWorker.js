@@ -26,10 +26,10 @@ export const startRideWorker = () => {
                 console.log(`🚕 Ride Worker: Auto-started ${ridesToStart.length} rides.`);
             }
 
-            // 2. Auto-Generate Routes for Planned Rides
-            // Look for rides that are 'planned' but have NO steps calculated yet
+            // 2. Auto-Generate Routes for Planned OR Active Rides with missing steps
+            // Fix: Include 'active' status because rides auto-started above are now 'active' but still need route calc
             const [pendingRides] = await db.query(
-                "SELECT * FROM rides WHERE status = 'planned' AND (steps IS NULL OR JSON_LENGTH(steps) = 0)"
+                "SELECT * FROM rides WHERE status IN ('planned', 'active') AND (steps IS NULL OR JSON_LENGTH(steps) = 0)"
             );
 
             if (pendingRides.length > 0) {
