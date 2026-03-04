@@ -179,14 +179,115 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                 else setServerDetails({ summary: [], details: [] });
             }).catch(() => setServerDetails({ summary: [], details: [] })).finally(() => setIsLoadingDetails(false));
         } else {
-            // Local fallback logic (truncated for brevity, same as previous implementation)
-             setIsLoadingDetails(false);
-             setServerDetails({ summary: [], details: [] }); // Placeholder for local
+            // Local fallback logic
+            const relevantOrders = orders.filter(o => 
+                o.deliveryDate === selectedDate && 
+                o.status !== OrderStatus.CANCELLED && 
+                o.status !== OrderStatus.DELIVERED && 
+                o.status !== OrderStatus.NOT_PICKED_UP
+            );
+
+            const detailsMap = new Map<string, ServerLoadDetail>();
+            const summaryMap = new Map<string, ServerLoadSummary>();
+            const usedProductIds = new Set<string>();
+
+            relevantOrders.forEach(order => {
+                order.items.forEach(item => {
+                    const productDef = products.find(p => String(p.id) === String(item.id));
+                    const catId = item.category || productDef?.category || null;
+                    const itemWorkload = Number(productDef?.workload) || Number(item.workload) || 0;
+                    const itemOverhead = Number(productDef?.workloadOverhead) || Number(item.workloadOverhead) || 0;
+                    
+                    let overheadToAdd = 0;
+                    const overheadKey = productDef?.capacityCategoryId || String(item.id);
+                    if (!usedProductIds.has(overheadKey)) {
+                        overheadToAdd = itemOverhead;
+                        usedProductIds.add(overheadKey);
+                    }
+
+                    // Detail
+                    const detailKey = String(item.id);
+                    if (!detailsMap.has(detailKey)) {
+                        detailsMap.set(detailKey, {
+                            category: catId,
+                            product_id: detailKey,
+                            name: item.name,
+                            unit: productDef?.unit || 'ks',
+                            total_quantity: 0,
+                            product_workload: 0,
+                            unit_overhead: itemOverhead
+                        });
+                    }
+                    const detail = detailsMap.get(detailKey)!;
+                    detail.total_quantity = Number(detail.total_quantity) + item.quantity;
+                    detail.product_workload = Number(detail.product_workload) + (itemWorkload * item.quantity);
+
+                    // Summary
+                    const sumKey = catId || 'unknown';
+                    if (!summaryMap.has(sumKey)) {
+                        summaryMap.set(sumKey, {
+                            category: catId,
+                            total_workload: 0,
+                            total_overhead: 0,
+                            order_count: 0
+                        });
+                    }
+                    const sum = summaryMap.get(sumKey)!;
+                    sum.total_workload = Number(sum.total_workload) + (itemWorkload * item.quantity);
+                    sum.total_overhead = Number(sum.total_overhead) + overheadToAdd;
+                });
+            });
+
+            // Count orders per category
+            relevantOrders.forEach(order => {
+                const catsInOrder = new Set(order.items.map(i => {
+                    const p = products.find(p => String(p.id) === String(i.id));
+                    return i.category || p?.category || 'unknown';
+                }));
+                catsInOrder.forEach(cat => {
+                    if (summaryMap.has(cat)) {
+                        summaryMap.get(cat)!.order_count++;
+                    }
+                });
+            });
+
+            setServerDetails({
+                summary: Array.from(summaryMap.values()),
+                details: Array.from(detailsMap.values())
+            });
+            setIsLoadingDetails(false);
         }
     }, [selectedDate, dataSource, orders, settings.categories, getFullApiUrl, products]);
 
     const handleOpenDetail = (date: string) => setSelectedDate(date);
-    const handleExportXLS = () => { /* ... existing export logic ... */ };
+    const handleExportXLS = () => {
+        if (!serverDetails) return;
+        const wb = XLSX.utils.book_new();
+        
+        // Summary Sheet
+        const summaryRows = serverDetails.summary.map(s => ({
+            Kategorie: settings.categories.find(c => c.id === s.category)?.name || 'Neznámá',
+            'Kapacita (Produkty)': s.total_workload,
+            'Kapacita (Režie)': s.total_overhead,
+            'Celkem Kapacita': Number(s.total_workload) + Number(s.total_overhead),
+            'Počet objednávek': s.order_count
+        }));
+        const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+        XLSX.utils.book_append_sheet(wb, wsSummary, "Souhrn");
+
+        // Details Sheet
+        const detailRows = serverDetails.details.map(d => ({
+            Kategorie: settings.categories.find(c => c.id === d.category)?.name || 'Neznámá',
+            Produkt: d.name || 'Neznámý produkt',
+            Množství: `${d.total_quantity} ${d.unit}`,
+            'Kapacita (Prod)': Number(d.product_workload).toFixed(1),
+            'Kapacita (Režie)': Number(d.unit_overhead).toFixed(1)
+        }));
+        const wsDetails = XLSX.utils.json_to_sheet(detailRows);
+        XLSX.utils.book_append_sheet(wb, wsDetails, "Detail Produktů");
+
+        XLSX.writeFile(wb, `vytizeni_${selectedDate}.xlsx`);
+    };
 
     return (
         <div className="animate-fade-in space-y-4">
@@ -296,9 +397,90 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
                             <h3 className="text-xl font-bold text-primary flex items-center gap-2">Detail výroby: <span className="font-mono">{formatDate(selectedDate)}</span></h3>
                             <button onClick={() => setSelectedDate(null)} className="p-2 hover:bg-gray-200 rounded-full"><X size={20}/></button>
                         </div>
-                        <div className="p-6 overflow-y-auto flex-grow bg-white text-center text-gray-400">
-                             {/* Placeholder for detail view logic re-use */}
-                             Zobrazuji detail pro {selectedDate}. (Logika detailu je zachována viz předchozí implementace)
+                        <div className="p-6 overflow-y-auto flex-grow bg-white">
+                            {isLoadingDetails ? (
+                                <div className="flex justify-center items-center h-32">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+                                </div>
+                            ) : serverDetails ? (
+                                <div className="space-y-8">
+                                    {/* Summary Section */}
+                                    <div>
+                                        <h4 className="font-bold text-lg mb-4 text-primary">Souhrn podle kategorií</h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {serverDetails.summary.map((s, idx) => {
+                                                const catName = settings.categories.find(c => c.id === s.category)?.name || 'Neznámá kategorie';
+                                                const total = Number(s.total_workload) + Number(s.total_overhead);
+                                                return (
+                                                    <div key={idx} className="bg-gray-50 p-4 rounded-xl border">
+                                                        <div className="font-bold text-primary mb-2">{catName}</div>
+                                                        <div className="space-y-1 text-sm">
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">Produkty:</span>
+                                                                <span className="font-mono">{Number(s.total_workload).toFixed(1)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-gray-500">Režie:</span>
+                                                                <span className="font-mono">{Number(s.total_overhead).toFixed(1)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between border-t pt-1 mt-1 font-bold">
+                                                                <span>Celkem:</span>
+                                                                <span className="font-mono text-accent">{total.toFixed(1)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between text-xs text-gray-400 mt-2">
+                                                                <span>Počet objednávek:</span>
+                                                                <span>{s.order_count}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* Details Section */}
+                                    <div>
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h4 className="font-bold text-lg text-primary">Detail produktů</h4>
+                                            <button onClick={handleExportXLS} className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 transition flex items-center">
+                                                <FileSpreadsheet size={14} className="mr-2"/> Export Excel
+                                            </button>
+                                        </div>
+                                        <div className="bg-white border rounded-xl overflow-hidden">
+                                            <table className="min-w-full divide-y divide-gray-200">
+                                                <thead className="bg-gray-50 text-[10px] font-bold text-gray-400 uppercase">
+                                                    <tr>
+                                                        <th className="px-4 py-3 text-left">Kategorie</th>
+                                                        <th className="px-4 py-3 text-left">Produkt</th>
+                                                        <th className="px-4 py-3 text-right">Množství</th>
+                                                        <th className="px-4 py-3 text-right">Kapacita (Prod)</th>
+                                                        <th className="px-4 py-3 text-right">Kapacita (Režie)</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y text-xs">
+                                                    {serverDetails.details.map((d, idx) => {
+                                                        const catName = settings.categories.find(c => c.id === d.category)?.name || 'Neznámá';
+                                                        return (
+                                                            <tr key={idx} className="hover:bg-gray-50">
+                                                                <td className="px-4 py-2 text-gray-500">{catName}</td>
+                                                                <td className="px-4 py-2 font-bold text-gray-800">{d.name}</td>
+                                                                <td className="px-4 py-2 text-right font-mono">{d.total_quantity} {d.unit}</td>
+                                                                <td className="px-4 py-2 text-right font-mono text-blue-600">{Number(d.product_workload).toFixed(1)}</td>
+                                                                <td className="px-4 py-2 text-right font-mono text-orange-600">{Number(d.unit_overhead).toFixed(1)}</td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                    {serverDetails.details.length === 0 && (
+                                                        <tr><td colSpan={5} className="p-8 text-center text-gray-400">Žádná data k zobrazení.</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-center text-gray-400 p-8">Data nejsou k dispozici.</div>
+                            )}
                         </div>
                     </div>
                 </div>
