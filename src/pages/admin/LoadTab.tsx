@@ -264,7 +264,18 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         if (!serverDetails) return;
         const wb = XLSX.utils.book_new();
         
-        // Summary Sheet
+        // Details Sheet (First)
+        const detailRows = serverDetails.details.map(d => ({
+            Kategorie: settings.categories.find(c => c.id === d.category)?.name || 'Neznámá',
+            Produkt: d.name || 'Neznámý produkt',
+            Množství: `${d.total_quantity || 0} ${d.unit || ''}`.trim(),
+            'Kapacita (Prod)': Number(d.product_workload || 0).toFixed(1),
+            'Kapacita (Režie)': Number(d.unit_overhead || 0).toFixed(1)
+        }));
+        const wsDetails = XLSX.utils.json_to_sheet(detailRows);
+        XLSX.utils.book_append_sheet(wb, wsDetails, "Detail Produktů");
+
+        // Summary Sheet (Second)
         const summaryRows = serverDetails.summary.map(s => ({
             Kategorie: settings.categories.find(c => c.id === s.category)?.name || 'Neznámá',
             'Kapacita (Produkty)': s.total_workload,
@@ -274,17 +285,6 @@ export const LoadTab: React.FC<LoadTabProps> = ({ onNavigateToDate }) => {
         }));
         const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
         XLSX.utils.book_append_sheet(wb, wsSummary, "Souhrn");
-
-        // Details Sheet
-        const detailRows = serverDetails.details.map(d => ({
-            Kategorie: settings.categories.find(c => c.id === d.category)?.name || 'Neznámá',
-            Produkt: d.name || 'Neznámý produkt',
-            Množství: `${d.total_quantity} ${d.unit}`,
-            'Kapacita (Prod)': Number(d.product_workload).toFixed(1),
-            'Kapacita (Režie)': Number(d.unit_overhead).toFixed(1)
-        }));
-        const wsDetails = XLSX.utils.json_to_sheet(detailRows);
-        XLSX.utils.book_append_sheet(wb, wsDetails, "Detail Produktů");
 
         XLSX.writeFile(wb, `vytizeni_${selectedDate}.xlsx`);
     };
