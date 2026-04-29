@@ -188,7 +188,7 @@ const ProductCard: React.FC<{
                 <h3 className="text-xl font-serif font-bold text-gray-900">{tData(product, 'name')}</h3>
                 <span className="text-lg font-bold text-accent whitespace-nowrap ml-2">{product.price} Kč</span>
             </div>
-            <p className="text-gray-500 text-sm mb-4 line-clamp-2 flex-grow">{tData(product, 'description')}</p>
+            <p className="text-gray-500 text-sm mb-4 line-clamp-2 group-hover:line-clamp-none transition-all flex-grow">{tData(product, 'description')}</p>
             
             <div className="flex flex-col space-y-3 mt-auto">
                 <div className="flex items-center justify-between text-[11px] text-gray-400 font-medium">
