@@ -349,7 +349,7 @@ const MainContent = () => {
 const App: React.FC = () => {
   return (
     <StoreProvider>
-      <Router>
+      <Router future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
         <MainContent />
       </Router>
     </StoreProvider>
