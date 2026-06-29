@@ -144,6 +144,8 @@ export interface Category {
   enabled: boolean;
   subcategories?: (Subcategory | string)[]; // string for legacy support
   translations?: Translations;
+  allowSlicing?: boolean;
+  sliceCount?: number;
 }
 
 export interface CapacityCategory {
@@ -199,6 +201,7 @@ export interface Ingredient {
 
 export interface CartItem extends Product {
   quantity: number;
+  sliced?: boolean;
 }
 
 export interface User {

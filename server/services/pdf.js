@@ -167,8 +167,17 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
     order.items.forEach(item => {
         const lineTotal = item.price * item.quantity;
         const rate = Number(item.vatRateTakeaway || 0);
+        
+        let itemName = item.name;
+        if (item.sliced && settings?.categories) {
+            const category = settings.categories.find(c => c.id === item.category);
+            if (category) {
+                itemName += ` (Nakrájeno na ${category.sliceCount || 8} porcí)`;
+            }
+        }
+
         const row = [
-            item.name,
+            itemName,
             item.quantity,
             isVatPayer ? getBase(item.price, rate).toFixed(2) : item.price.toFixed(2)
         ];

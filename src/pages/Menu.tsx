@@ -150,24 +150,60 @@ const ProductCard: React.FC<{
     product: Product; 
     onOpenAllergens: (p: Product) => void; 
 }> = ({ product, onOpenAllergens }) => {
-    const { t, tData, addToCart, isEventCapacityAvailable } = useStore();
+    const { t, tData, addToCart, isEventCapacityAvailable, settings } = useStore();
     const minQty = product.minOrderQuantity || 1;
     const [quantity, setQuantity] = useState(minQty);
+    const [isSliceModalOpen, setIsSliceModalOpen] = useState(false);
 
     const hasCapacity = !product.isEventProduct || isEventCapacityAvailable(product);
+    const category = settings.categories.find(c => c.id === product.category);
+    const canSlice = category?.allowSlicing;
+    const sliceCount = category?.sliceCount || 8;
 
-    const handleAddToCart = () => {
-        addToCart(product, quantity);
+    const executeAddToCart = (sliced: boolean = false) => {
+        addToCart(product, quantity, sliced);
         // GA4: Add to Cart
         logEcommerceEvent('add_to_cart', {
             currency: 'CZK',
             value: product.price * quantity,
             items: [mapProductToGaItem(product, quantity)]
         });
+        setIsSliceModalOpen(false);
+    };
+
+    const handleAddToCartClick = () => {
+        if (canSlice) {
+            setIsSliceModalOpen(true);
+        } else {
+            executeAddToCart(false);
+        }
     };
 
     return (
         <div className="bg-white rounded-xl shadow-sm hover:shadow-md transition overflow-hidden group border border-gray-100 flex flex-col h-full relative">
+              
+            {isSliceModalOpen && (
+                <div className="fixed inset-0 bg-black/60 z-[150] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 text-center">
+                        <h3 className="font-bold text-xl text-primary mb-2">Nakrájet na porce?</h3>
+                        <p className="text-sm text-gray-500 mb-6">Přejete si produkt rozkrájet na {sliceCount} ks?</p>
+                        <div className="flex gap-3">
+                            <button 
+                                onClick={() => executeAddToCart(false)}
+                                className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition"
+                            >
+                                Ne, děkuji
+                            </button>
+                            <button 
+                                onClick={() => executeAddToCart(true)}
+                                className="flex-1 py-2.5 bg-accent hover:bg-orange-500 text-white font-bold rounded-xl transition"
+                            >
+                                Ano, nakrájet
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
               
             {/* Allergen Badge Trigger */}
             {product.allergens && product.allergens.length > 0 && (
@@ -225,7 +261,7 @@ const ProductCard: React.FC<{
                         </div>
 
                         <button 
-                            onClick={handleAddToCart}
+                            onClick={handleAddToCartClick}
                             className="flex-1 bg-primary text-white h-10 rounded-lg text-sm font-bold hover:bg-gray-800 transition shadow-sm active:scale-95 flex items-center justify-center"
                         >
                             {t('product.add')}

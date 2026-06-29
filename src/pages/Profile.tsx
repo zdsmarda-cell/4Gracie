@@ -226,6 +226,15 @@ export const Profile: React.FC = () => {
     recalculateOrderTotals(updatedItems, editingOrder.appliedDiscounts || []);
   };
 
+  const handleEditOrderSliced = (itemId: string, sliced: boolean) => {
+    if (!editingOrder) return;
+    const updatedItems = editingOrder.items.map(i => {
+      if (i.id === itemId) return { ...i, sliced };
+      return i;
+    });
+    setEditingOrder({...editingOrder, items: updatedItems});
+  };
+
   const handleAddProductToOrder = (p: Product) => {
     if (!editingOrder) return;
     const existing = editingOrder.items.find(i => i.id === p.id);
@@ -445,17 +454,24 @@ export const Profile: React.FC = () => {
                         <div className="space-y-2">
                           <h4 className="text-xs font-bold uppercase text-gray-400">Obsah objednávky</h4>
                           <div className="divide-y divide-gray-100 bg-white rounded-lg border">
-                            {o.items.map(item => (
+                            {o.items.map(item => {
+                              const category = settings.categories.find(c => c.id === item.category);
+                              return (
                               <div key={item.id} className="p-3 flex items-center justify-between text-sm">
                                 <div className="flex items-center gap-3">
                                   {item.images && item.images[0] && (
                                     <img src={getImageUrl(item.images[0])} alt={item.name} className="w-8 h-8 rounded object-cover" />
                                   )}
-                                  <span className="font-bold">{item.quantity}x {item.name}</span>
+                                  <div>
+                                    <span className="font-bold">{item.quantity}x {item.name}</span>
+                                    {item.sliced && category && (
+                                        <div className="text-[10px] text-accent">Nakrájeno ({category.sliceCount || 8} porcí)</div>
+                                    )}
+                                  </div>
                                 </div>
                                 <span>{item.price * item.quantity} Kč</span>
                               </div>
-                            ))}
+                            )})}
                             
                             {/* Discounts */}
                             {o.appliedDiscounts && o.appliedDiscounts.length > 0 && (
@@ -948,7 +964,10 @@ export const Profile: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y text-xs">
-                          {editingOrder.items.map(item => (
+                          {editingOrder.items.map(item => {
+                            const category = settings.categories.find(c => c.id === item.category);
+                            const canSlice = category?.allowSlicing;
+                            return (
                             <tr key={item.id}>
                               <td className="px-3 py-2">
                                   {item.images && item.images[0] ? (
@@ -957,7 +976,20 @@ export const Profile: React.FC = () => {
                                       <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={12}/></div>
                                   )}
                               </td>
-                              <td className="px-3 py-2 font-bold">{item.name}</td>
+                              <td className="px-3 py-2">
+                                <div className="font-bold">{item.name}</div>
+                                {canSlice && (
+                                    <div className="mt-1 flex items-center gap-1">
+                                        <input 
+                                            type="checkbox"
+                                            checked={item.sliced || false}
+                                            onChange={(e) => handleEditOrderSliced(item.id, e.target.checked)}
+                                            className="rounded border-gray-300 h-3 w-3"
+                                        />
+                                        <span className="text-[10px] text-gray-500">Nakrájet ({category.sliceCount || 8} ks)</span>
+                                    </div>
+                                )}
+                              </td>
                               <td className="px-3 py-2 text-center">
                                 <div className="flex items-center justify-center space-x-1">
                                    <button onClick={() => handleEditOrderQuantity(item.id, -1)} className="p-1 hover:bg-gray-100 rounded"><Minus size={10}/></button>
@@ -968,7 +1000,7 @@ export const Profile: React.FC = () => {
                               <td className="px-3 py-2 text-right">{item.price * item.quantity}</td>
                               <td className="px-3 py-2 text-right"><button onClick={() => handleEditOrderQuantity(item.id, -item.quantity)} className="text-red-400"><X size={12}/></button></td>
                             </tr>
-                          ))}
+                          )})}
                         </tbody>
                       </table>
                       <button onClick={() => setIsAddProductModalOpen(true)} className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-xs font-bold text-gray-600 border-t">+ Přidat produkt</button>

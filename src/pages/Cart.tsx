@@ -9,7 +9,7 @@ import { TermsContent } from '../components/TermsContent';
 import { logEcommerceEvent } from '../utils/analytics';
 
 export const Cart: React.FC = () => {
-  const { cart, removeFromCart, updateCartItemQuantity, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate, getImageUrl } = useStore();
+  const { cart, removeFromCart, updateCartItemQuantity, updateCartItemSliced, t, tData, clearCart, user, openAuthModal, checkAvailability, addOrder, orders, settings, generateInvoice, getDeliveryRegion, applyDiscount, removeAppliedDiscount, appliedDiscounts, updateUser, generateCzIban, removeDiacritics, language, calculatePackagingFee, getRegionInfoForDate, getPickupPointInfo, formatDate, getImageUrl } = useStore();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
@@ -381,7 +381,10 @@ export const Cart: React.FC = () => {
         <div className="lg:col-span-2 space-y-6">
           {step === 1 && (
             <div className="bg-white rounded-2xl shadow-sm border overflow-hidden divide-y">
-               {cart.map(item => (
+               {cart.map(item => {
+                 const category = settings.categories.find(c => c.id === item.category);
+                 const canSlice = category?.allowSlicing;
+                 return (
                  <div key={item.id} className="p-4 flex flex-col md:flex-row md:items-center gap-4 hover:bg-gray-50 transition">
                    <div className="flex items-center gap-4 flex-1">
                      <img src={getImageUrl(item.images[0])} className="w-16 h-16 object-cover rounded-lg shadow-sm" />
@@ -389,6 +392,20 @@ export const Cart: React.FC = () => {
                        <div className="font-bold text-sm text-gray-800">{tData(item, 'name')}</div>
                        {item.minOrderQuantity && item.minOrderQuantity > 1 && (
                          <div className="text-[10px] text-gray-400 mt-1">{t('common.min_qty')}: {item.minOrderQuantity}</div>
+                       )}
+                       {canSlice && (
+                         <div className="mt-1.5 flex items-center gap-2 text-xs">
+                             <input 
+                                 type="checkbox" 
+                                 id={`slice_${item.id}`}
+                                 checked={item.sliced || false}
+                                 onChange={(e) => updateCartItemSliced(item.id, e.target.checked)}
+                                 className="rounded border-gray-300 text-accent focus:ring-accent"
+                             />
+                             <label htmlFor={`slice_${item.id}`} className="text-gray-600 cursor-pointer">
+                                Nakrájet na {category.sliceCount || 8} porcí
+                             </label>
+                         </div>
                        )}
                        {validationErrors[item.id] && (
                          <div className="text-xs text-red-500 font-bold mt-1 flex items-center">
@@ -407,7 +424,7 @@ export const Cart: React.FC = () => {
                       <button onClick={() => removeFromCart(item.id)} className="text-red-300 hover:text-red-500 p-2 transition"><Trash2 size={16}/></button>
                    </div>
                  </div>
-               ))}
+               )})}
             </div>
           )}
           

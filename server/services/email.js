@@ -269,12 +269,21 @@ const generateEmailHtml = (order, type, settings, status) => {
         // Product image from API
         const imgUrl = (item.images && item.images.length > 0) ? getImgUrl(item.images[0]) : '';
         
+        let sliceText = '';
+        if (item.sliced && settings?.categories) {
+            const category = settings.categories.find(c => c.id === item.category);
+            if (category) {
+                sliceText = `<div style="font-size: 11px; color: #f97316;">Nakrájeno na ${category.sliceCount || 8} porcí</div>`;
+            }
+        }
+
         return `
         <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #f3f4f6; padding: 8px 0; align-items: center;">
             <div style="display: flex; align-items: center;">
                 ${imgUrl ? `<img src="${imgUrl}" alt="${item.name}" width="40" height="40" style="object-fit: cover; border-radius: 4px; margin-right: 10px;">` : ''}
                 <div>
-                    <span style="font-weight: bold; color: #374151;">${item.quantity}x</span> ${item.name}
+                    <div><span style="font-weight: bold; color: #374151;">${item.quantity}x</span> ${item.name}</div>
+                    ${sliceText}
                 </div>
             </div>
             <div style="font-weight: bold; color: #1f2937;">${item.price * item.quantity} Kč</div>

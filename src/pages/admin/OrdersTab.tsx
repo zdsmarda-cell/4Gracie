@@ -810,7 +810,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                           </tr>
                                         </thead>
                                         <tbody className="divide-y text-xs">
-                                          {editingOrder.items.map(item => (
+                                          {editingOrder.items.map(item => {
+                                            const category = settings.categories.find(c => c.id === item.category);
+                                            const canSlice = category?.allowSlicing;
+                                            return (
                                             <tr key={item.id}>
                                               <td className="px-3 py-2">
                                                   {item.images && item.images[0] ? (
@@ -819,7 +822,23 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                                       <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center text-gray-300"><ImageIcon size={12}/></div>
                                                   )}
                                               </td>
-                                              <td className="px-3 py-2 font-bold">{item.name}</td>
+                                              <td className="px-3 py-2">
+                                                <div className="font-bold">{item.name}</div>
+                                                {canSlice && (
+                                                    <div className="mt-1 flex items-center gap-1">
+                                                        <input 
+                                                            type="checkbox"
+                                                            checked={item.sliced || false}
+                                                            onChange={(e) => {
+                                                                const items = editingOrder.items.map(i => i.id === item.id ? {...i, sliced: e.target.checked} : i);
+                                                                setEditingOrder({...editingOrder, items});
+                                                            }}
+                                                            className="rounded border-gray-300 h-3 w-3"
+                                                        />
+                                                        <span className="text-[10px] text-gray-500">Nakrájet ({category.sliceCount || 8} ks)</span>
+                                                    </div>
+                                                )}
+                                              </td>
                                               <td className="px-3 py-2 text-center">
                                                 <div className="flex items-center justify-center space-x-1">
                                                    <button onClick={() => { 
@@ -839,7 +858,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({ initialDate, initialEventO
                                                   setEditingOrder({...editingOrder, items, totalPrice: items.reduce((a,b)=>a+b.price*b.quantity,0)});
                                               }} className="text-red-400"><X size={12}/></button></td>
                                             </tr>
-                                          ))}
+                                          )})}
                                         </tbody>
                                       </table>
                                       <button onClick={() => setIsAddProductModalOpen(true)} className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-xs font-bold text-gray-600 border-t">+ Přidat produkt</button>

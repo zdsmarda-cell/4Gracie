@@ -68,9 +68,10 @@ interface StoreContextType {
   setLanguage: (lang: Language) => void;
   cart: CartItem[];
   cartBump: boolean;
-  addToCart: (product: Product, quantity?: number) => void;
+  addToCart: (product: Product, quantity?: number, sliced?: boolean) => void;
   removeFromCart: (productId: string) => void;
   updateCartItemQuantity: (productId: string, quantity: number) => void;
+  updateCartItemSliced: (productId: string, sliced: boolean) => void;
   clearCart: () => void;
   user: User | null;
   allUsers: User[];
@@ -280,7 +281,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     );
 
     const {
-        cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart
+        cartBump, addToCart, removeFromCart, updateCartItemQuantity, updateCartItemSliced, clearCart
     } = useCart(cart, setCart, showNotify);
 
     const {
@@ -759,7 +760,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         <StoreContext.Provider value={{
             dataSource, setDataSource, isLoading, isOperationPending, dbConnectionError,
             isPreviewEnvironment: dataSource === 'local',
-            language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, clearCart,
+            language, setLanguage, cart, cartBump, addToCart, removeFromCart, updateCartItemQuantity, updateCartItemSliced, clearCart,
             user, allUsers, refreshUser, login, register, logout, updateUser, updateUserAdmin, toggleUserBlock, sendPasswordReset, resetPasswordByToken, changePassword, addUser,
             orders, addOrder, updateOrderStatus, updateOrder, checkOrderRestoration: () => ({ valid: true, invalidCodes: [] }), searchOrders,
             products, addProduct, updateProduct, deleteProduct, searchProducts,
