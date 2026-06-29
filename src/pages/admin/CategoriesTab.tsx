@@ -364,6 +364,11 @@ export const CategoriesTab: React.FC = () => {
                                                     {cat.translations && (
                                                         <button onClick={() => setViewingTranslations(cat)} className="ml-2 inline-flex items-center text-gray-400 hover:text-accent"><Languages size={14}/></button>
                                                     )}
+                                                    {cat.allowSlicing && (
+                                                        <span className="ml-2 inline-flex items-center bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                            Nakrájení ({cat.sliceCount || 8})
+                                                        </span>
+                                                    )}
                                                 </td>
                                                 <td className="px-6 py-4 font-mono text-gray-400">{cat.id}</td>
                                                 <td className="px-6 py-4 text-center">
@@ -382,8 +387,13 @@ export const CategoriesTab: React.FC = () => {
                                                         <CornerDownRight size={14} className="mr-2 text-gray-300"/>
                                                         {sub.order}
                                                     </td>
-                                                    <td className="px-6 py-3 text-sm text-gray-600 font-medium">
+                                                    <td className="px-6 py-3 text-sm text-gray-600 font-medium flex items-center">
                                                         {sub.name}
+                                                        {sub.allowSlicing && (
+                                                            <span className="ml-2 inline-flex items-center bg-orange-100 text-orange-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                                Nakrájení ({sub.sliceCount || 8})
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="px-6 py-3 font-mono text-xs text-gray-300">{sub.id}</td>
                                                     <td className="px-6 py-3 text-center">
