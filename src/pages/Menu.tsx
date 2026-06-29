@@ -157,8 +157,22 @@ const ProductCard: React.FC<{
 
     const hasCapacity = !product.isEventProduct || isEventCapacityAvailable(product);
     const category = settings.categories.find(c => c.id === product.category);
-    const canSlice = category?.allowSlicing;
-    const sliceCount = category?.sliceCount || 8;
+    let subcategoryObj;
+    if (category && product.subcategory) {
+        subcategoryObj = category.subcategories?.map(s => typeof s === 'string' ? null : s).find(s => s && s.id === product.subcategory);
+    }
+    
+    // Subcategory has priority if it defines allowSlicing, otherwise fallback to category
+    let canSlice = false;
+    let sliceCount = 8;
+    
+    if (subcategoryObj && subcategoryObj.allowSlicing !== undefined) {
+        canSlice = subcategoryObj.allowSlicing;
+        sliceCount = subcategoryObj.sliceCount || 8;
+    } else if (category && category.allowSlicing !== undefined) {
+        canSlice = category.allowSlicing;
+        sliceCount = category.sliceCount || 8;
+    }
 
     const executeAddToCart = (sliced: boolean = false) => {
         addToCart(product, quantity, sliced);

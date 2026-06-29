@@ -593,6 +593,42 @@ export const CategoriesTab: React.FC = () => {
                             <span className="text-sm">Aktivní</span>
                         </label>
                         
+                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 space-y-3">
+                            <label className="flex items-center gap-2">
+                                <input 
+                                    type="checkbox" 
+                                    checked={editingSub.sub.allowSlicing ?? false} 
+                                    onChange={e => setEditingSub({ 
+                                        ...editingSub, 
+                                        sub: {
+                                            ...editingSub.sub, 
+                                            allowSlicing: e.target.checked,
+                                            sliceCount: e.target.checked ? (editingSub.sub.sliceCount || 8) : undefined 
+                                        }
+                                    })} 
+                                />
+                                <span className="text-sm font-medium">Umožnit nakrájení (přepisuje nadřazenou kategorii)</span>
+                            </label>
+                            {editingSub.sub.allowSlicing && (
+                                <div className="pl-6 animate-fade-in">
+                                    <label className="text-xs font-bold text-gray-400 block mb-1">Výchozí počet porcí (min 2)</label>
+                                    <input 
+                                        type="number" 
+                                        min="2"
+                                        className="w-full border rounded p-2 text-sm"
+                                        value={editingSub.sub.sliceCount || 8} 
+                                        onChange={e => setEditingSub({ 
+                                            ...editingSub, 
+                                            sub: {
+                                                ...editingSub.sub, 
+                                                sliceCount: Math.max(2, parseInt(e.target.value) || 2) 
+                                            }
+                                        })} 
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        
                         <div className="flex gap-2 pt-4">
                             <button type="button" onClick={() => setIsSubModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded">{t('admin.cancel')}</button>
                             <button type="submit" className="flex-1 py-2 bg-primary text-white rounded">{t('common.save')}</button>

@@ -383,7 +383,21 @@ export const Cart: React.FC = () => {
             <div className="bg-white rounded-2xl shadow-sm border overflow-hidden divide-y">
                {cart.map(item => {
                  const category = settings.categories.find(c => c.id === item.category);
-                 const canSlice = category?.allowSlicing;
+                 let subcategoryObj;
+                 if (category && item.subcategory) {
+                     subcategoryObj = category.subcategories?.map(s => typeof s === 'string' ? null : s).find(s => s && s.id === item.subcategory);
+                 }
+                 
+                 let canSlice = false;
+                 let sliceCount = 8;
+                 
+                 if (subcategoryObj && subcategoryObj.allowSlicing !== undefined) {
+                     canSlice = subcategoryObj.allowSlicing;
+                     sliceCount = subcategoryObj.sliceCount || 8;
+                 } else if (category && category.allowSlicing !== undefined) {
+                     canSlice = category.allowSlicing;
+                     sliceCount = category.sliceCount || 8;
+                 }
                  return (
                  <div key={item.id} className="p-4 flex flex-col md:flex-row md:items-center gap-4 hover:bg-gray-50 transition">
                    <div className="flex items-center gap-4 flex-1">
@@ -403,7 +417,7 @@ export const Cart: React.FC = () => {
                                  className="rounded border-gray-300 text-accent focus:ring-accent"
                              />
                              <label htmlFor={`slice_${item.id}`} className="text-gray-600 cursor-pointer">
-                                Nakrájet na {category.sliceCount || 8} porcí
+                                Nakrájet na {sliceCount} porcí
                              </label>
                          </div>
                        )}

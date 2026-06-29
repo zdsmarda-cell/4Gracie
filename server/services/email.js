@@ -273,7 +273,17 @@ const generateEmailHtml = (order, type, settings, status) => {
         if (item.sliced && settings?.categories) {
             const category = settings.categories.find(c => c.id === item.category);
             if (category) {
-                sliceText = `<div style="font-size: 11px; color: #f97316;">Nakrájeno na ${category.sliceCount || 8} porcí</div>`;
+                let sliceCount = 8;
+                let subcategoryObj;
+                if (item.subcategory) {
+                    subcategoryObj = category.subcategories?.find(s => typeof s !== 'string' && s.id === item.subcategory);
+                }
+                if (subcategoryObj && subcategoryObj.allowSlicing !== undefined) {
+                    sliceCount = subcategoryObj.sliceCount || 8;
+                } else {
+                    sliceCount = category.sliceCount || 8;
+                }
+                sliceText = `<div style="font-size: 11px; color: #f97316;">Nakrájeno na ${sliceCount} porcí</div>`;
             }
         }
 

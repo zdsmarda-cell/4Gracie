@@ -172,7 +172,17 @@ export const generateInvoicePdf = async (order, type = 'proforma', settings) => 
         if (item.sliced && settings?.categories) {
             const category = settings.categories.find(c => c.id === item.category);
             if (category) {
-                itemName += ` (Nakrájeno na ${category.sliceCount || 8} porcí)`;
+                let sliceCount = 8;
+                let subcategoryObj;
+                if (item.subcategory) {
+                    subcategoryObj = category.subcategories?.find(s => typeof s !== 'string' && s.id === item.subcategory);
+                }
+                if (subcategoryObj && subcategoryObj.allowSlicing !== undefined) {
+                    sliceCount = subcategoryObj.sliceCount || 8;
+                } else {
+                    sliceCount = category.sliceCount || 8;
+                }
+                itemName += ` (Nakrájeno na ${sliceCount} porcí)`;
             }
         }
 

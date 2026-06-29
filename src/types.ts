@@ -129,6 +129,8 @@ export interface Subcategory {
   name: string;
   order: number;
   enabled: boolean;
+  allowSlicing?: boolean;
+  sliceCount?: number;
 }
 
 export interface Translations {

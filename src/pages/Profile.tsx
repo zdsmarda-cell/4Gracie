@@ -456,6 +456,19 @@ export const Profile: React.FC = () => {
                           <div className="divide-y divide-gray-100 bg-white rounded-lg border">
                             {o.items.map(item => {
                               const category = settings.categories.find(c => c.id === item.category);
+                              let sliceCount = 8;
+                              if (category) {
+                                  let subcategoryObj;
+                                  if (item.subcategory) {
+                                      subcategoryObj = category.subcategories?.map(s => typeof s === 'string' ? null : s).find(s => s && s.id === item.subcategory);
+                                  }
+                                  if (subcategoryObj && subcategoryObj.allowSlicing !== undefined) {
+                                      sliceCount = subcategoryObj.sliceCount || 8;
+                                  } else {
+                                      sliceCount = category.sliceCount || 8;
+                                  }
+                              }
+
                               return (
                               <div key={item.id} className="p-3 flex items-center justify-between text-sm">
                                 <div className="flex items-center gap-3">
@@ -465,7 +478,7 @@ export const Profile: React.FC = () => {
                                   <div>
                                     <span className="font-bold">{item.quantity}x {item.name}</span>
                                     {item.sliced && category && (
-                                        <div className="text-[10px] text-accent">Nakrájeno ({category.sliceCount || 8} porcí)</div>
+                                        <div className="text-[10px] text-accent">Nakrájeno ({sliceCount} porcí)</div>
                                     )}
                                   </div>
                                 </div>
@@ -966,7 +979,21 @@ export const Profile: React.FC = () => {
                         <tbody className="divide-y text-xs">
                           {editingOrder.items.map(item => {
                             const category = settings.categories.find(c => c.id === item.category);
-                            const canSlice = category?.allowSlicing;
+                            let subcategoryObj;
+                            if (category && item.subcategory) {
+                                subcategoryObj = category.subcategories?.map(s => typeof s === 'string' ? null : s).find(s => s && s.id === item.subcategory);
+                            }
+                            let canSlice = false;
+                            let sliceCount = 8;
+                            
+                            if (subcategoryObj && subcategoryObj.allowSlicing !== undefined) {
+                                canSlice = subcategoryObj.allowSlicing;
+                                sliceCount = subcategoryObj.sliceCount || 8;
+                            } else if (category && category.allowSlicing !== undefined) {
+                                canSlice = category.allowSlicing;
+                                sliceCount = category.sliceCount || 8;
+                            }
+                            
                             return (
                             <tr key={item.id}>
                               <td className="px-3 py-2">
@@ -986,7 +1013,7 @@ export const Profile: React.FC = () => {
                                             onChange={(e) => handleEditOrderSliced(item.id, e.target.checked)}
                                             className="rounded border-gray-300 h-3 w-3"
                                         />
-                                        <span className="text-[10px] text-gray-500">Nakrájet ({category.sliceCount || 8} ks)</span>
+                                        <span className="text-[10px] text-gray-500">Nakrájet ({sliceCount} ks)</span>
                                     </div>
                                 )}
                               </td>
